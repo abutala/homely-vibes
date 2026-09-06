@@ -156,5 +156,159 @@ class TestPowerwallManager(unittest.TestCase):
         self.assertAlmostEqual(trigger_next, 42.92, places=2)
 
 
+class TestBatteryHistoryPoisoning(unittest.TestCase):
+    """Regression tests for the 2026-09-02 silent-failure incident.
+
+    The Fleet API began returning percentage_charged=0 on every poll. The
+    sanitizer substituted an extrapolated value and then wrote that
+    substitution back into history, so history became entirely synthetic and
+    extrapolation fed on its own output. It converged on 100% and stayed
+    there for three days while every decision point silently declined to
+    match. See Tesla/Logbook.md.
+    """
+
+    def setUp(self) -> None:
+        self.manager = PowerwallManager(
+            "test@example.com",
+            send_notifications=False,
+            pushover=MagicMock(spec=Pushover),
+        )
+
+    def _seed_real_history(self) -> list[float]:
+        observed = [99.58, 99.01, 98.4, 97.95, 97.2]
+        self.manager.battery_history.percentages = list(observed)
+        return observed
+
+    def test_zero_reading_never_enters_history(self) -> None:
+        observed = self._seed_real_history()
+        self.manager.sanitize_battery_percentage(0.0, 1.0)
+        self.assertEqual(
+            self.manager.battery_history.percentages,
+            observed,
+            "a reading the API could not supply must not be recorded as observed",
+        )
+
+    def test_sustained_zeros_do_not_pin_history(self) -> None:
+        """The exact production scenario: 1500+ consecutive zero reads."""
+        observed = self._seed_real_history()
+        for _ in range(50):
+            self.manager.sanitize_battery_percentage(0.0, 1.0)
+        self.assertEqual(self.manager.battery_history.percentages, observed)
+        self.assertNotIn(100.0, self.manager.battery_history.percentages)
+
+    def test_real_reading_still_recorded(self) -> None:
+        self._seed_real_history()
+        self.manager.sanitize_battery_percentage(96.5, 1.0)
+        self.assertEqual(self.manager.battery_history.percentages[0], 96.5)
+
+    def test_recovers_when_api_returns_real_data(self) -> None:
+        """History survives the outage, so the first good read is usable."""
+        self._seed_real_history()
+        for _ in range(20):
+            self.manager.sanitize_battery_percentage(0.0, 1.0)
+        self.assertEqual(self.manager.sanitize_battery_percentage(42.0, 1.0), 42.0)
+        self.assertEqual(self.manager.battery_history.percentages[0], 42.0)
+
+    def test_zero_with_no_history_returns_none(self) -> None:
+        """No reading and nothing to extrapolate from -> refuse to guess.
+
+        Returning 0.0 here would trip every low-battery decision point at
+        once and drive real reserve changes off a value we never observed.
+        """
+        self.assertIsNone(self.manager.sanitize_battery_percentage(0.0, 1.0))
+
+
+class TestStalenessAlert(unittest.TestCase):
+    """A bad-data streak must page, and must not page more than once a day."""
+
+    def setUp(self) -> None:
+        self.now = 1_000_000.0
+        self.pushover = MagicMock(spec=Pushover)
+        self.manager = PowerwallManager(
+            "test@example.com",
+            send_notifications=False,
+            pushover=self.pushover,
+            clock=lambda: self.now,
+        )
+        self.manager.battery_history.percentages = [99.58, 99.01, 98.4, 97.95, 97.2]
+
+    def _read_zero(self) -> None:
+        self.manager.sanitize_battery_percentage(0.0, 1.0)
+
+    def test_no_alert_before_threshold(self) -> None:
+        self._read_zero()
+        self.now += 5 * 60
+        self._read_zero()
+        self.pushover.send_message.assert_not_called()
+
+    def test_alert_fires_after_threshold(self) -> None:
+        self._read_zero()
+        self.now += 2 * 3600
+        self._read_zero()
+        self.pushover.send_message.assert_called_once()
+        self.assertEqual(self.pushover.send_message.call_args.kwargs["priority"], 1)
+
+    def test_alert_at_most_once_per_day(self) -> None:
+        self._read_zero()
+        self.now += 2 * 3600
+        self._read_zero()
+        self.assertEqual(self.pushover.send_message.call_count, 1)
+
+        for _ in range(40):
+            self.now += 1800
+            self._read_zero()
+        self.assertEqual(
+            self.pushover.send_message.call_count,
+            1,
+            "20h of further bad reads is inside the 24h window - no second page",
+        )
+
+    def test_alert_repeats_next_day(self) -> None:
+        self._read_zero()
+        self.now += 2 * 3600
+        self._read_zero()
+        self.now += 25 * 3600
+        self._read_zero()
+        self.assertEqual(self.pushover.send_message.call_count, 2)
+
+    def test_new_outage_pages_despite_recent_page(self) -> None:
+        """The re-alert gap suppresses repeats within ONE outage, not the next one."""
+        self._read_zero()
+        self.now += 2 * 3600
+        self._read_zero()
+        self.assertEqual(self.pushover.send_message.call_count, 1)
+
+        # API recovers, then breaks again well inside the 24h re-alert window.
+        self.now += 3600
+        self.manager.sanitize_battery_percentage(88.0, 1.0)
+        self.now += 2 * 3600
+        self._read_zero()
+        self.now += 2 * 3600
+        self._read_zero()
+        self.assertEqual(
+            self.pushover.send_message.call_count,
+            2,
+            "a fresh outage must page on its own schedule",
+        )
+
+    def test_page_distinguishes_skipping_from_extrapolating(self) -> None:
+        """With no history the loop skips cycles - the page must not claim otherwise."""
+        self.manager.battery_history.percentages = []
+        self._read_zero()
+        self.now += 2 * 3600
+        self._read_zero()
+        body = self.pushover.send_message.call_args.args[0]
+        self.assertIn("skipped", body)
+        self.assertNotIn("running on extrapolation", body)
+
+    def test_good_reading_resets_streak(self) -> None:
+        self._read_zero()
+        self.now += 3600
+        self.manager.sanitize_battery_percentage(88.0, 1.0)
+        self.now += 3600
+        self._read_zero()
+        self.pushover.send_message.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

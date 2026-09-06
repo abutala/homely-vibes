@@ -1,5 +1,7 @@
 # RingSecurity
 
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
+
 Daily health check for Ring devices (doorbells, cameras, chimes).
 
 - **P1 alert** — any device battery below `battery_threshold_pct` (default 25%)

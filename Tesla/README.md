@@ -1,5 +1,7 @@
 # Tesla Powerwall Management System
 
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
+
 A Python system for managing Tesla Powerwall operations via the **Tesla Fleet API**, with automated power-management decisions based on battery level, time windows, and configurable thresholds.
 
 > **2026-06 migration note:** Tesla deprecated the Owner API (`owner-api.teslamotors.com`) for energy products. This module now uses the **Fleet API** via the `tesla-fleet-api` Python SDK and a registered third-party developer app. See [Initial Fleet API Setup](#initial-fleet-api-setup) for the one-time onboarding.
@@ -170,6 +172,19 @@ Configured in `config/default.yaml` under `tesla.decision_points`. Each entry:
   always_notify: false
 ```
 
+### Staleness alerting
+
+The Fleet API occasionally returns a well-formed response with no usable
+battery reading. When that persists, the monitor pages rather than running
+blind on extrapolated values.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `tesla.staleness_alert_after_min` | `30` | Minutes of continuously unusable readings before the first page |
+| `tesla.staleness_realert_hours` | `24` | Minimum gap between repeat pages while the outage continues |
+
+Pages go out at Pushover P1. Background: [Logbook.md](Logbook.md).
+
 ### Token file shape
 
 `config/tokens/tesla_tokens.json` (0o600, gitignored):
@@ -207,37 +222,8 @@ Refresh is automatic before each API call when the access token is near expiry. 
 
 ---
 
-## Troubleshooting
-
-### `Tesla token expired - run: uv run Tesla/tesla_auth.py`
-
-Refresh token expired (>90 days unused) or revoked. Re-run the OAuth flow:
-
-```bash
-uv run Tesla/tesla_auth.py
-```
-
-### `412 invalid public key` on `--partner-login`
-
-The URL `https://<domain>/.well-known/appspecific/com.tesla.3p.public-key.pem` isn't reachable or doesn't match the public key Tesla recorded at app-registration time. Re-verify with `curl -I` and check `.nojekyll` is present.
-
-### `403 forbidden, see https://developer.tesla.com/docs/fleet-api`
-
-The legacy Owner API host. Indicates the module fell back to old code or the SDK isn't installed. `BASE_URL` should never appear in `tesla_client.py` anymore. Reinstall with `uv sync`.
-
-### `redirect_uri not registered for this client_id`
-
-The redirect URI in `config/local.yaml` (`fleet_redirect_uri`) doesn't match what's registered at developer.tesla.com. Update one or the other so they match exactly (including trailing slash).
-
-### `operation: None` in logs
-
-Pre-existing artifact, not a Fleet API regression. The live-status endpoint sometimes omits `operation`. `manage_power.py` uses `cached_op_mode` as a fallback.
-
----
-
 ## References
 
 - Tesla Fleet API docs: https://developer.tesla.com/docs/fleet-api
 - `tesla-fleet-api` Python SDK: https://pypi.org/project/tesla-fleet-api/
 - Home Assistant's Tesla Fleet integration (excellent reference for the onboarding flow): https://www.home-assistant.io/integrations/tesla_fleet/
-- Migration plan that drove this implementation: `~/.claude/plans/uv-run-tesla-manage-power-py-is-cryptic-sloth.md`

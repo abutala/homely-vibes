@@ -8,8 +8,8 @@ paths:
 
 # === Email Configuration ===
 email:
-  from_addr: user_from@gmail.com
-  to_addr: user_to@gmail.com
+  from_addr: user_from@example.com
+  to_addr: user_to@example.com
   gmail_username: user_from
   gmail_password: ""  
 
@@ -155,7 +155,31 @@ tesla:
   fleet_public_key_domain: "deviationlabs.com"
   fleet_region: "na"
 
+  # Page when the Fleet API stops returning a usable battery reading.
+  # See Tesla/Logbook.md - this ran blind for three days on 2026-09-02.
+  staleness_alert_after_min: 30
+  staleness_realert_hours: 24
+
   # Powerwall decision points
+  #
+  # Evaluated top to bottom; the FIRST rule whose window contains the current
+  # time and whose condition matches wins, applies, and stops the scan. Order
+  # is therefore priority -- an earlier overlapping rule shadows a later one.
+  #
+  #   bar        = pct_thresh - pct_gradient_per_hr * hours_until_time_end
+  #                A negative gradient makes the bar FALL to pct_thresh at the
+  #                window's end; a positive one makes it RISE to pct_thresh.
+  #                pct_thresh is thus the target at the END of the window.
+  #   iff_higher = true fires above the bar, false fires below it.
+  #   pct_min    = backup reserve written to the hardware. This is the floor
+  #                the battery will not discharge past -- the only key that
+  #                binds the resulting charge.
+  #   pct_min_trail_stop = when non-zero, pct_min is IGNORED; the reserve
+  #                instead trails actual charge, ratcheting up in steps of this
+  #                size. Zero disables it (and must stay falsy -- a zero step
+  #                would loop forever).
+  #   always_notify = false is SILENT in production, which runs with -q and no
+  #                --send-notifications. The rule still changes the hardware.
   decision_points:
     - time_start: 0
       time_end: 100
@@ -165,6 +189,9 @@ tesla:
       pct_min: 30
       pct_min_trail_stop: 0
       op_mode: autonomous
+      # Ran down overnight? Raise the reserve above current charge so the
+      # Powerwall refills on the cheapest rates. The one rule that charges
+      # from the grid on purpose.
       reason: "Prep for midnight recharge.."
       always_notify: true
 
@@ -176,6 +203,9 @@ tesla:
       pct_min: 20
       pct_min_trail_stop: 0
       op_mode: autonomous
+      # Bar ramps ~32% -> 99% by 14:55: the trajectory solar should be on.
+      # Falling short means peak arrives without a full battery, so drop the
+      # reserve and spend what is there rather than hoarding it.
       reason: "Solar recharge insufficient. Drawdown before shoulder.."
       always_notify: true
 
@@ -187,6 +217,9 @@ tesla:
       pct_min: 20
       pct_min_trail_stop: 0
       op_mode: self_consumption
+      # Unconditional -- the bar is 0, so any charge matches. Through peak,
+      # self-consume down to a 20% floor: serve the house from the battery
+      # instead of buying at peak rates.
       reason: "In Peak. Discharge.."
       always_notify: false
 
@@ -198,6 +231,9 @@ tesla:
       pct_min: 30
       pct_min_trail_stop: 10
       op_mode: self_consumption
+      # Catch-all for the rest of the day. The trailing ratchet locks in
+      # solar gains: the reserve climbs in 10-point steps behind actual
+      # charge, so what solar puts in cannot be discharged away.
       reason: "Nightly reserves rebuilt. Solar charge only.."
       always_notify: false
 
@@ -209,6 +245,9 @@ tesla:
       pct_min: 20
       pct_min_trail_stop: 0
       op_mode: self_consumption
+      # Bar decays ~60% -> 20% by midnight at an assumed 8%/hr evening draw.
+      # Below it there is only just enough to reach midnight, so stop
+      # optimizing and hold.
       reason: "Reserve for rest of shoulder.."
       always_notify: false
 
@@ -217,9 +256,15 @@ tesla:
       pct_gradient_per_hr: -35
       pct_thresh: 40
       iff_higher: true
-      pct_min: 20
+      # Floor for the dump: stop discharging at 45%, not 20%. pct_min is the
+      # lever that binds the ending charge; pct_thresh only gates whether the
+      # rule acts. See Tesla/Logbook.md "pct_min binds, pct_thresh only gates".
+      pct_min: 45
       pct_min_trail_stop: 0
       op_mode: autonomous
+      # Bar decays 110% -> 40% at an assumed 35%/hr peak draw. Above it there
+      # is more charge than is needed to reach 21:00, so hand control to
+      # autonomous and let it export the excess -- down to the 45% floor.
       reason: "Dump surplus before end of peak.."
       always_notify: false
 

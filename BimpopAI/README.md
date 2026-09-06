@@ -1,26 +1,28 @@
-sample app for building an always on sentiment analysis app
+# BimpopAI
 
-There are 3 directories:
-* aiy_hat/aiy_runner.py
--- This runs on a raspberry Pi0 with a google AIY hat, which is just what I had lying around.
--- This also needs the google raspberry image and some handholding on tokens.
--- In dev mode tokens will expire every 7 days, and then need to be purged from ~/.cache/voice_recognition/assistant-config.json
--- Also note that you may need to hack auth_helpers.py to get the callback url for authentication.
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
 
-* app/main.py
--- This is an ASGI fastapi service to deal with all the rest of the heavy lifting happening in a webapp.
--- We initially tested the webapp locally, but now we'll deploy it using AWS App runner. Cool deal!
--- Note that app runner is absolute balls. python3.11 is missing uvicorn. Also will not install fastapi.
--- other env is python8, and has issues with old versions.
+Sample app for building an always-on sentiment analysis app.
 
-launch for testing as either:
-$ python3 -m app.main
-$ uvicorn app.main:app --reload --port 8080 --host 0.0.0.0 --log-level info
+## Layout
 
-* fe/streamlit_app.py
--- simple sweet front end for testing with the ASGI.
+| Path | Role |
+|---|---|
+| `aiy_hat/aiy_runner.py` | Runs on a Raspberry Pi Zero with a Google AIY hat — just what I had lying around. Needs the Google Raspberry Pi image, and some handholding on tokens (see [Logbook.md](Logbook.md)). |
+| `app/main.py` | ASGI FastAPI service that does the rest of the heavy lifting for the webapp. |
+| `fe/streamlit_app.py` | Simple sweet front end for testing against the ASGI service. |
 
-Can be locally tested with:
-$ streamlit run fe/streamlit_app.py
+## Running
 
-Once we did the deploy, we used vanity domain names for everything, but this is not needed.
+Launch the backend for testing as either:
+
+```bash
+python3 -m app.main 2>&1 | tee /tmp/bimpop_main.log
+uvicorn app.main:app --reload --port 8080 --host 0.0.0.0 --log-level info 2>&1 | tee /tmp/bimpop_uvicorn.log
+```
+
+The front end can be locally tested with:
+
+```bash
+streamlit run fe/streamlit_app.py 2>&1 | tee /tmp/bimpop_streamlit.log
+```

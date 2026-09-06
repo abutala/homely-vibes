@@ -1,5 +1,7 @@
 # Rheem EcoNet Water Heater Monitor
 
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
+
 Monitor Rheem/EcoNet-connected water heaters and alert when available hot water is low, clearing the alert when it recovers to mid.
 
 ## How it works
@@ -65,12 +67,6 @@ Per the repo convention (`P{N}` = Pushover `priority=N`):
 - **P1** — low hot water (1/3rd full). Actionable within hours.
 - **P-1** — recovery clear (silent, informational).
 - **P0** — auth/comms failure (a chore, not an emergency).
-
-## Caveats
-
-- **Unofficial API.** `pyeconet` reverse-engineers Rheem's ClearBlade cloud (`rheem.clearblade.com`). Rheem can change endpoints without notice; the library could break at any time.
-- **Discrete levels only.** The tank exposes 0/33/66/100, not a continuous percentage. Thresholds must align to these levels (defaults: low=33, mid=66).
-- **Some tanks don't report `@HOTWATER`.** Availability is `None`; the monitor skips them with a debug log. No alert is fired for unsupported tanks.
 
 ## Testing
 

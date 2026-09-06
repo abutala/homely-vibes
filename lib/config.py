@@ -169,6 +169,8 @@ class TeslaConfig:
     fleet_redirect_uri: str
     fleet_public_key_domain: str
     fleet_region: str
+    staleness_alert_after_min: int
+    staleness_realert_hours: int
     decision_points: list[OpModeConfig]
 
 

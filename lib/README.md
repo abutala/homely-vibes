@@ -1,5 +1,7 @@
 # lib/ — shared utilities
 
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
+
 Shared library used by all homely-vibes modules. Config, logging, notifications, networking, secret I/O, and cross-process locking.
 
 ## Modules
@@ -87,14 +89,6 @@ with acquire_lock(token_path, timeout_s=60.0):
     ...
 ```
 Locks a sibling `<path>.lock` file (NOT the resource — the resource is rewritten via tmp+rename, so an fd on the pre-rename inode would dangle). Auto-released on exit/crash. Raises `LockTimeoutError(TimeoutError)` if not acquired in time.
-
-## Submodules
-- `lib/TeslaPy/` — legacy Tesla SDK, git submodule, excluded from linting. (Tesla module now uses Fleet API; submodule retained for history.)
-
-## Conventions
-- **No `patch()` in tests.** Refactor production code to accept the dependency as a parameter (factory or client). Inject fakes that satisfy a `Protocol` or duck-type the surface.
-- **Secrets live in `config/tokens/`** (symlinked to `~/bin/Common-configs/tokens/`, gitignored). Config values in `config/local.yaml` (gitignored).
-- **New module config → dataclass in `config.py` + default.yaml block.** Never ad-hoc `get()`.
 
 ## Tests
 ```bash

@@ -1,5 +1,7 @@
 # Sticky Sidebar Notes
 
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
+
 A always-editable markdown notepad sidebar for VS Code and Cursor. Notes live in a plain text file in your workspace, persist across restarts, and update live when Claude (or any other tool) writes to the file.
 
 ## Installation

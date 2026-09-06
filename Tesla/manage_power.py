@@ -5,7 +5,7 @@ import argparse
 import sys
 import time
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Any, Tuple
+from typing import Callable, List, Optional, Dict, Any, Tuple
 from lib.config import get_config, reset_config
 from lib.MyPushover import Pushover
 from Tesla.tesla_client import TeslaAPIClient, BatteryProduct
@@ -73,6 +73,7 @@ class PowerwallManager:
         send_notifications: bool = False,
         *,
         pushover: Optional["Pushover"] = None,
+        clock: Callable[[], float] = time.time,
     ):
         # Injectable Pushover so tests can pass a recording double and never
         # touch real config or the maintainer's phone. See CLAUDE.md "NEVER use patch()".
@@ -89,32 +90,89 @@ class PowerwallManager:
             cfg = get_config()
             pushover = Pushover(cfg.pushover.user, cfg.pushover.tokens["Powerwall"])
         self.pushover = pushover
+        self.clock = clock
+        # A reading the API cannot supply is never written to history, so these
+        # two timestamps are the only memory that an outage is in progress.
+        self.bad_read_since: Optional[float] = None
+        self.last_staleness_alert: Optional[float] = None
 
-    def sanitize_battery_percentage(self, pct: float, time_sampling: float) -> float:
-        """Sanitize battery percentage using history and extrapolation."""
-        pct = round(pct, 2)
-        original_pct = pct
+    def sanitize_battery_percentage(self, pct: float, time_sampling: float) -> Optional[float]:
+        """Return a usable battery percentage, or None if there is nothing to trust.
 
-        # Check for bad data
-        if len(self.battery_history.percentages) >= BatteryHistory.MAX_HISTORY and (
-            pct <= 0 or pct in self.battery_history.percentages
+        A non-positive reading means the API supplied no value. Such a reading is
+        never added to history: history holds observed values only, so that
+        extrapolation can never be fed its own output. See Tesla/Logbook.md.
+        """
+        original_pct = round(pct, 2)
+        untrusted = original_pct <= 0
+        history = self.battery_history
+        pct = original_pct
+        estimated = False
+
+        if len(history.percentages) >= BatteryHistory.MAX_HISTORY and (
+            untrusted or original_pct in history.percentages
         ):
-            extrapolated = self.battery_history.extrapolate(time_sampling)
+            extrapolated = history.extrapolate(time_sampling)
             if extrapolated is not None:
-                pct = max(min(extrapolated, 100), 0)
-                pct = round(pct, 2)
+                pct = round(max(min(extrapolated, 100), 0), 2)
+                estimated = True
 
-        # Add to history (use original if non-zero, otherwise sanitized)
-        self.battery_history.add_percentage(original_pct if original_pct != 0 else pct)
+        if not untrusted:
+            history.add_percentage(original_pct)
+            # Both clocks reset: the re-alert gap suppresses repeat pages within
+            # one outage, never the first page of the next one.
+            self.bad_read_since = None
+            self.last_staleness_alert = None
+            if abs(pct - original_pct) > 0.5:
+                self.logger.warning(
+                    f"Smoothed duplicate reading: {original_pct}% -> {pct}% "
+                    f"from history {history.percentages}"
+                )
+                return pct
+            return original_pct
 
-        if abs(pct - original_pct) > 0.5:
-            self.logger.warning(
-                f"Bad battery data: {original_pct}% -> {pct}% "
-                f"from history {self.battery_history.percentages}"
+        self._check_staleness(estimated)
+        if not estimated:
+            self.logger.error(
+                "No battery reading and no history to extrapolate from - skipping cycle"
             )
-            return pct
+            return None
+        self.logger.warning(
+            f"No battery reading: estimating {pct}% from history {history.percentages}"
+        )
+        return pct
 
-        return original_pct
+    def _check_staleness(self, estimated: bool) -> None:
+        """Track a run of unusable readings and page at most once a day."""
+        cfg = get_config()
+        now = self.clock()
+        if self.bad_read_since is None:
+            self.bad_read_since = now
+            return
+
+        stale_for = now - self.bad_read_since
+        if stale_for < cfg.tesla.staleness_alert_after_min * 60:
+            return
+        if (
+            self.last_staleness_alert is not None
+            and now - self.last_staleness_alert < cfg.tesla.staleness_realert_hours * 3600
+        ):
+            return
+
+        self.last_staleness_alert = now
+        hours = stale_for / 3600
+        detail = (
+            "Decisions are running on extrapolation."
+            if estimated
+            else "No history to extrapolate from - decision cycles are being skipped."
+        )
+        self.logger.error(f"Battery data unusable for {hours:.1f}h - paging")
+        self.pushover.send_message(
+            f"Powerwall blind for {hours:.1f}h: Fleet API is returning no battery "
+            f"reading. {detail}",
+            title="Powerwall Alert",
+            priority=1,
+        )
 
     def evaluate_condition(self, current: float, threshold: float, direction_up: bool) -> bool:
         """Evaluate if condition matches for triggering action."""
@@ -295,9 +353,14 @@ class PowerwallManager:
                 )
 
                 # Sanitize battery percentage
-                data["battery_percent"] = self.sanitize_battery_percentage(
+                battery_percent = self.sanitize_battery_percentage(
                     data["battery_percent"], sleep_time / poll_time
                 )
+                if battery_percent is None:
+                    self.fail_count = 0
+                    sleep_time = poll_time
+                    continue
+                data["battery_percent"] = battery_percent
 
                 self.logger.info(
                     f"Battery: {data['battery_percent']:.2f}%, "
