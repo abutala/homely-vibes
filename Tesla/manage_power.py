@@ -119,7 +119,10 @@ class PowerwallManager:
 
         if not untrusted:
             history.add_percentage(original_pct)
+            # Both clocks reset: the re-alert gap suppresses repeat pages within
+            # one outage, never the first page of the next one.
             self.bad_read_since = None
+            self.last_staleness_alert = None
             if abs(pct - original_pct) > 0.5:
                 self.logger.warning(
                     f"Smoothed duplicate reading: {original_pct}% -> {pct}% "
@@ -128,7 +131,7 @@ class PowerwallManager:
                 return pct
             return original_pct
 
-        self._check_staleness()
+        self._check_staleness(estimated)
         if not estimated:
             self.logger.error(
                 "No battery reading and no history to extrapolate from - skipping cycle"
@@ -139,7 +142,7 @@ class PowerwallManager:
         )
         return pct
 
-    def _check_staleness(self) -> None:
+    def _check_staleness(self, estimated: bool) -> None:
         """Track a run of unusable readings and page at most once a day."""
         cfg = get_config()
         now = self.clock()
@@ -158,10 +161,15 @@ class PowerwallManager:
 
         self.last_staleness_alert = now
         hours = stale_for / 3600
+        detail = (
+            "Decisions are running on extrapolation."
+            if estimated
+            else "No history to extrapolate from - decision cycles are being skipped."
+        )
         self.logger.error(f"Battery data unusable for {hours:.1f}h - paging")
         self.pushover.send_message(
             f"Powerwall blind for {hours:.1f}h: Fleet API is returning no battery "
-            f"reading. Decisions are running on extrapolation.",
+            f"reading. {detail}",
             title="Powerwall Alert",
             priority=1,
         )

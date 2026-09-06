@@ -271,6 +271,36 @@ class TestStalenessAlert(unittest.TestCase):
         self._read_zero()
         self.assertEqual(self.pushover.send_message.call_count, 2)
 
+    def test_new_outage_pages_despite_recent_page(self) -> None:
+        """The re-alert gap suppresses repeats within ONE outage, not the next one."""
+        self._read_zero()
+        self.now += 2 * 3600
+        self._read_zero()
+        self.assertEqual(self.pushover.send_message.call_count, 1)
+
+        # API recovers, then breaks again well inside the 24h re-alert window.
+        self.now += 3600
+        self.manager.sanitize_battery_percentage(88.0, 1.0)
+        self.now += 2 * 3600
+        self._read_zero()
+        self.now += 2 * 3600
+        self._read_zero()
+        self.assertEqual(
+            self.pushover.send_message.call_count,
+            2,
+            "a fresh outage must page on its own schedule",
+        )
+
+    def test_page_distinguishes_skipping_from_extrapolating(self) -> None:
+        """With no history the loop skips cycles - the page must not claim otherwise."""
+        self.manager.battery_history.percentages = []
+        self._read_zero()
+        self.now += 2 * 3600
+        self._read_zero()
+        body = self.pushover.send_message.call_args.args[0]
+        self.assertIn("skipped", body)
+        self.assertNotIn("running on extrapolation", body)
+
     def test_good_reading_resets_streak(self) -> None:
         self._read_zero()
         self.now += 3600
