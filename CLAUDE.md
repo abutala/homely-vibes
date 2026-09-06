@@ -252,6 +252,24 @@ uv run pytest NodeCheck
 
 Non-obvious rules that repeat across modules. Adhere to these in new code and PR reviews.
 
+### Module docs: README is usage, Logbook is learnings
+
+Every module carries two documents, and content belongs to exactly one of them.
+
+- **`README.md` — how to use it.** What it does, setup, CLI commands, config
+  reference, examples, testing. A reader who wants to *run* the thing should
+  never have to scroll past a war story to find the command.
+- **`Logbook.md` — what we learned the hard way.** Dated incidents, landmines,
+  "why we chose X over Y", options considered and rejected, troubleshooting and
+  error references, known limitations.
+
+The split exists because the two rot differently: usage docs must track the
+code, while a logbook is append-mostly and its value grows with age. Mixing
+them means the incident writeup gets deleted during a routine usage edit.
+
+When you fix a non-obvious bug, add the entry to `Logbook.md` in the same
+commit as the fix. `Tesla/Logbook.md` is the reference for tone and structure.
+
 ### Secrets on disk
 - **Never `open(path, "w")` for a secret**, and never `write_text()` + `chmod`. Both leave a TOCTOU window at 0o644 under a 0o022 umask. Use `lib.secure_io.write_secret_atomic()` — it opens with `O_CREAT|O_TRUNC|0o600` so the file is world-unreadable from birth.
 - If a **third-party library** writes the token (yalexs, SamsungTVWS, ring-client-api Node), immediately call `ensure_secret_perms(path)` after the call returns.

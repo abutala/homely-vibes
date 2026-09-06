@@ -1,5 +1,7 @@
 # RingBeams
 
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
+
 Daily health check for **Ring Beams** motion sensors and **Ring Alarm** contact/motion sensors, keypads, and range extenders.
 
 Complements `RingSecurity/`, which covers Ring's cameras and doorbells via REST. Beams + Alarm state is only available on Ring's socket.io real-time channel, which no maintained Python library speaks — so this module shells out to a small Node.js sidecar (`fetch_status.js`) built on `ring-client-api` (dgreif/ring).
@@ -49,22 +51,6 @@ pushover:
   tokens:
     Ring Security: <your-pushover-app-token>
 ```
-
-## Known failure: missing `node_modules`
-
-`node_modules/` is gitignored, so **any fresh clone or re-clone has a working Python
-side and no sidecar deps at all**. This bit the prod host on 2026-08-30: the checkout
-was replaced, the untracked directory went with it, and `git pull && uv sync` has no
-step that brings it back. Node then died at module load and its
-`ERR_MODULE_NOT_FOUND` stack became the Pushover body.
-
-`beams_manager` now pre-flights for the package and raises a one-line remedy instead.
-Fix is always `make node-deps`.
-
-Setting `NODE_PATH` will **not** rescue this. `fetch_status.js` is `"type": "module"`,
-and per [Node's ESM docs](https://nodejs.org/api/esm.html) *"`NODE_PATH` is not part of
-resolving `import` specifiers"* -- it applies only to CommonJS `require()`. Only a real
-`node_modules/` on the resolution walk works.
 
 ## Daily run
 

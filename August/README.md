@@ -1,5 +1,7 @@
 # August Smart Lock Monitor
 
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
+
 Monitor August Smart Locks with comprehensive alerting for unlock duration, door ajar detection, lock failures, and low battery warnings.
 
 ## Setup

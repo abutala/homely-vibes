@@ -1,5 +1,7 @@
 # VoiceNotes — Local Push-to-Talk Voice Transcription
 
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
+
 A Wispr Flow-style voice-to-Markdown tool for macOS Apple Silicon. Hold **⌥ right**, speak, release — phrases are transcribed and streamed to a per-session Markdown file in real time.
 
 **Fully local.** No cloud. Uses [whisper.cpp](https://github.com/ggerganov/whisper.cpp) with Metal GPU acceleration via [pywhispercpp](https://github.com/abdeladim-s/pywhispercpp).
@@ -122,23 +124,6 @@ Hello world, this is a voice notes test. The architecture uses Whisper CPP, with
 ```
 
 One file per recording session. Filename = ISO-ish timestamp from when you pressed the key.
-
-## Troubleshooting
-
-**"This process is not trusted! Input event monitoring will not be possible..."**
-Cosmetic warning from pynput at startup. If hotkey events still fire, ignore it. If they don't fire at all, re-grant Accessibility permission.
-
-**App quits immediately after pressing the key (clean exit, no traceback)**
-Was a real bug — fixed in PR #162. If you still see it, you're on stale code; `git pull` and `uv sync --extra voice` again.
-
-**Hotkey doesn't respond**
-Verify Accessibility for Terminal. After granting, fully quit and relaunch your terminal — pynput won't pick up newly-granted permissions in an already-running process.
-
-**Microphone access denied or no audio captured**
-Verify Microphone permission. macOS will silently terminate the process if it tries to capture without permission.
-
-**Slow first transcription**
-Expected — first key press triggers the 1.5 GB model download (`large-v3-turbo`). Watch download progress in the terminal.
 
 ## Files
 

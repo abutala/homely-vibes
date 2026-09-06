@@ -79,21 +79,23 @@ See `config/default.yaml` for the full structure and `config/local.yaml.example`
 
 | Component | Description | Documentation |
 |:----------|:------------|:-------------:|
-| 🔐 **August** | August Smart Lock monitoring with automated unlock alerts and pushover notifications for home security. | [📖 README](August/README.md) |
-| 🤖 **BimpopAI** | RAG (Retrieval Augmented Generation) system with AI voice assistant, indexing, and Streamlit frontend. A startup concept for business intelligence in Mom-n-Pop stores. | [📖 README](BimpopAI/README.md) |
-| 🌐 **BrowserAlert** | Web usage monitoring and alerting system for tracking browsing activity and digital wellness. | [📖 README](BrowserAlert/README.md) |
+| 📝 **AppleNotesBackup** | Versioned local backup of Apple Notes with per-note history and point-in-time recovery. | [📖 README](AppleNotesBackup/README.md) · [📓 Logbook](AppleNotesBackup/Logbook.md) |
+| 🔐 **August** | August Smart Lock monitoring with automated unlock alerts and pushover notifications for home security. | [📖 README](August/README.md) · [📓 Logbook](August/Logbook.md) |
+| 🤖 **BimpopAI** | RAG (Retrieval Augmented Generation) system with AI voice assistant, indexing, and Streamlit frontend. A startup concept for business intelligence in Mom-n-Pop stores. | [📖 README](BimpopAI/README.md) · [📓 Logbook](BimpopAI/Logbook.md) |
+| 📊 **ClaudeUsageBar** | macOS menu-bar widget showing Claude Code plan usage. Swift, own Keychain item, bootstrapped from the `claude` CLI. | [📖 README](ClaudeUsageBar/README.md) · [📓 Logbook](ClaudeUsageBar/Logbook.md) |
+| 🌐 **BrowserAlert** | Web usage monitoring and alerting system for tracking browsing activity and digital wellness. | [📖 README](BrowserAlert/README.md) · [📓 Logbook](BrowserAlert/Logbook.md) |
 | 🚗 **GarageCheck** | Machine learning-based garage door status detection using image classification and computer vision. | [📖 README](GarageCheck/README.md) |
 | 🗺️ **GPXParser** | GPX track analysis and processing tools for GPS data visualization and route analysis. | [📖 README](GPXParser/README.md) |
-| 🛠️ **lib** | Shared utilities: OmegaConf config, Pushover / Mailer / Twilio, atomic secret I/O, POSIX file lock. Used by every module. | - |
-| 🌐 **NetworkCheck** | Network uplink speedtest with outcome-driven Pushover priority and external IP reporter. | [📖 README](NetworkCheck/README.md) |
-| 🖥️ **NodeCheck** | System node monitoring with continuous heartbeat tracking and automated device management. | [📖 README](NodeCheck/README.md) |
-| 📵 **NoShorts** | iOS app that wraps YouTube and strips all Shorts content via JS injection — clean YouTube without vertical video. | [📖 README](NoShorts/README.md) |
-| 📅 **PersonalCalSync** | Google Apps Script that syncs personal calendar events to enterprise calendar as private busy-blockers, preserving real event titles visible only to you. | [📖 README](PersonalCalSync/README.md) |
-| 💧 **RachioFlume** | Water usage tracking integration between Rachio irrigation systems and Flume water monitoring. | [📖 README](RachioFlume/README.md) |
-| 🚿 **Rheem** | Rheem/EcoNet water heater monitor — P2 when the tank is empty, P1 at 1/3rd full, silent clear at 2/3rds. Cron run-once via the unofficial pyeconet (ClearBlade) API. | [📖 README](Rheem/README.md) |
-| 🚨 **RingBeams** | Ring Beams motion sensors + Ring Alarm contact/motion sensors, via Node.js sidecar over socket.io (ring-client-api). P1 battery, P0 tamper. | [📖 README](RingBeams/README.md) |
-| 📸 **RingSecurity** | Ring cameras + doorbells daily health check via REST — P1 low-battery, P0 offline. | [📖 README](RingSecurity/README.md) |
-| 🖼️ **SamsungFrame** | Samsung Frame TV art manager with batch upload, HEIC conversion, and slideshow control. | [📖 README](SamsungFrame/README.md) |
-| ⚡ **Tesla** | Tesla Powerwall monitoring and intelligent power management automation for home energy optimization. | [📖 README](Tesla/README.md) |
-| 🎙️ **VoiceNotes** | Wispr Flow-style local push-to-talk voice transcription on macOS. Hold ⌥-right, speak, release — text streams to Markdown via whisper.cpp + Metal. No cloud. | [📖 README](VoiceNotes/README.md) |
-| 🗒️ **VSCodeSidebarNotes** | VS Code / Cursor extension: markdown sidebar that persists across restarts and is writable by Claude for live session summaries. | [📖 README](VSCodeSidebarNotes/README.md) |
+| 🛠️ **lib** | Shared utilities: OmegaConf config, Pushover / Mailer / Twilio, atomic secret I/O, POSIX file lock. Used by every module. | [📖 README](lib/README.md) · [📓 Logbook](lib/Logbook.md) |
+| 🌐 **NetworkCheck** | Network uplink speedtest with outcome-driven Pushover priority and external IP reporter. | [📖 README](NetworkCheck/README.md) · [📓 Logbook](NetworkCheck/Logbook.md) |
+| 🖥️ **NodeCheck** | System node monitoring with continuous heartbeat tracking and automated device management. | [📖 README](NodeCheck/README.md) · [📓 Logbook](NodeCheck/Logbook.md) |
+| 📵 **NoShorts** | iOS app that wraps YouTube and strips all Shorts content via JS injection — clean YouTube without vertical video. | [📖 README](NoShorts/README.md) · [📓 Logbook](NoShorts/Logbook.md) |
+| 📅 **PersonalCalSync** | Google Apps Script that syncs personal calendar events to enterprise calendar as private busy-blockers, preserving real event titles visible only to you. | [📖 README](PersonalCalSync/README.md) · [📓 Logbook](PersonalCalSync/Logbook.md) |
+| 💧 **RachioFlume** | Water usage tracking integration between Rachio irrigation systems and Flume water monitoring. | [📖 README](RachioFlume/README.md) · [📓 Logbook](RachioFlume/Logbook.md) |
+| 🚿 **Rheem** | Rheem/EcoNet water heater monitor — P2 when the tank is empty, P1 at 1/3rd full, silent clear at 2/3rds. Cron run-once via the unofficial pyeconet (ClearBlade) API. | [📖 README](Rheem/README.md) · [📓 Logbook](Rheem/Logbook.md) |
+| 🚨 **RingBeams** | Ring Beams motion sensors + Ring Alarm contact/motion sensors, via Node.js sidecar over socket.io (ring-client-api). P1 battery, P0 tamper. | [📖 README](RingBeams/README.md) · [📓 Logbook](RingBeams/Logbook.md) |
+| 📸 **RingSecurity** | Ring cameras + doorbells daily health check via REST — P1 low-battery, P0 offline. | [📖 README](RingSecurity/README.md) · [📓 Logbook](RingSecurity/Logbook.md) |
+| 🖼️ **SamsungFrame** | Samsung Frame TV art manager with batch upload, HEIC conversion, and slideshow control. | [📖 README](SamsungFrame/README.md) · [📓 Logbook](SamsungFrame/Logbook.md) |
+| ⚡ **Tesla** | Tesla Powerwall monitoring and intelligent power management automation for home energy optimization. | [📖 README](Tesla/README.md) · [📓 Logbook](Tesla/Logbook.md) |
+| 🎙️ **VoiceNotes** | Wispr Flow-style local push-to-talk voice transcription on macOS. Hold ⌥-right, speak, release — text streams to Markdown via whisper.cpp + Metal. No cloud. | [📖 README](VoiceNotes/README.md) · [📓 Logbook](VoiceNotes/Logbook.md) |
+| 🗒️ **VSCodeSidebarNotes** | VS Code / Cursor extension: markdown sidebar that persists across restarts and is writable by Claude for live session summaries. | [📖 README](VSCodeSidebarNotes/README.md) · [📓 Logbook](VSCodeSidebarNotes/Logbook.md) |

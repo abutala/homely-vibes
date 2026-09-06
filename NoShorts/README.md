@@ -1,17 +1,17 @@
 # NoShorts
 
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
+
 An iOS app that wraps YouTube in a `WKWebView`, blocks all Shorts content (navigation, feed shelves, autoplay), and lands on **Playlists** (`/feed/playlists`) instead of the algorithmic home page.
 
-Architecture and V2 rationale live in [V2_PRD.md](V2_PRD.md). The iOS 26.5.2 playback outage,
-its diagnosis (Google stream attestation, not an OS network block), and the fix are in
-[V2_REMEDIATION_PLAN.md](V2_REMEDIATION_PLAN.md).
+Architecture and V2 rationale live in [V2_PRD.md](V2_PRD.md).
 
 ## Features
 
 - **Shorts blocking**: removes Shorts tab, home feed shelf, and all `/shorts/` links from the DOM.
 - **Playlists as default landing**: app launches into `/feed/playlists`. Any navigation to `/` (algorithmic home) — YouTube's in-page Home tab, the logo, the toolbar Home button, post-login redirects — is caught and rewritten via KVO on `webView.url` (SPA `pushState`) plus `WKNavigationDelegate` (full-page navs). The `/` intercept skips forward/back navs so the toolbar chevrons don't appear broken.
 - **Auto-rotate to landscape on video play**: JS reports `<video>` `play`/`pause`/`ended` events; a 400ms debounce coalesces buffering-driven pause↔play blips before flipping orientation. Portrait when not playing.
-- **Fullscreen on play**: a fresh video start (content or ad, `currentTime < 1s`) calls the element's native `webkitEnterFullscreen()`, with a retry on `playing` if media wasn't loaded yet. Resume-from-pause does *not* re-enter — a manual fullscreen exit isn't fought. Fullscreen exits automatically when the video ends. See the fullscreen gotcha below for why it's done exactly this way.
+- **Fullscreen on play**: a fresh video start (content or ad, `currentTime < 1s`) calls the element's native `webkitEnterFullscreen()`, with a retry on `playing` if media wasn't loaded yet. Resume-from-pause does *not* re-enter — a manual fullscreen exit isn't fought. Fullscreen exits automatically when the video ends. See the fullscreen entry in [Logbook.md](Logbook.md) for why it's done exactly this way.
 - **Autoplay gated natively**: `mediaTypesRequiringUserActionForPlayback = .video`. The former JS `video.play()` wrapper was removed 2026-07-09 — prototype tampering tripped YouTube's stream attestation and killed playback (see [V2_REMEDIATION_PLAN.md](V2_REMEDIATION_PLAN.md) §3a).
 - **Shorts navigation guard**: full-page navigations to `/shorts` are cancelled in `WKNavigationDelegate`; SPA (`pushState`) navigations are caught Swift-side by the KVO observer on `webView.url`, which bounces back (`goBack()`, else Playlists). The old JS `pushState` wrapper is gone for good — page-JS tampering trips attestation ([#6](https://github.com/abutala/homely-vibes/issues/6) P1).
 - **Session timer**: 30-minute countdown badge (top-right); turns orange at 5min, red at 1min, exits at 0.
@@ -44,7 +44,7 @@ Use this when you want to install on a device without attaching Xcode, via [Side
 From the repo root:
 
 ```bash
-NoShorts/scripts/build_ipa.sh
+NoShorts/scripts/build_ipa.sh 2>&1 | tee /tmp/noshorts-build-ipa.log
 ```
 
 Output: `build/NoShorts.ipa` (≈135 KB). The script runs `xcodebuild` with code-signing disabled, packages `NoShorts.app` into `Payload/`, zips it, and prints the final path.
@@ -102,68 +102,11 @@ Three `WKUserScript` injections run on every page:
 
 A `KVO` observer on `webView.url` catches SPA URL changes (`history.pushState`/`replaceState` from YouTube's own routing) — `decidePolicyFor` does NOT fire for SPA navigations, so KVO is the catch-all. When the URL becomes `/shorts…`, the observer bounces back (`goBack()` if possible, else Playlists). When the URL becomes `/`, it forces a real navigation to Playlists; rewriting the URL alone wouldn't stop YouTube's home content from being rendered.
 
-## Architecture Notes / Gotchas
-
-### Why mobile user agent?
-YouTube's mobile site (`m.youtube.com`-style layout via user agent) renders more predictably in WKWebView than the desktop site. The app uses `applicationNameForUserAgent = "Version/26.5 Mobile/15E148 Safari/604.1"`, so WebKit generates a truthful UA (real OS + WebKit version) with a Safari-shaped suffix. **Do not pin a fake `customUserAgent`**: the old iOS-17 pin contradicted the real WebKit fingerprint and contributed to YouTube's attestation failures (V2_REMEDIATION_PLAN.md §3a).
-
-### Why `@Observable` instead of `ObservableObject`?
-Swift 6 strict concurrency prevents `@MainActor` classes from conforming to `ObservableObject`. Using `@Observable` macro with `@ObservationIgnored` on the `WKWebView` property sidesteps the issue cleanly.
-
-### Why `atDocumentStart` for CSS injection?
-Injecting CSS before paint prevents the Shorts shelf from flickering in before the DOM removal JS runs. Both scripts run together — CSS hides immediately, JS removes the nodes.
-
-### Why debounced `MutationObserver` instead of `setInterval`?
-`setInterval` at 800ms caused page freezes on YouTube's heavy SPA. A debounced (300ms) `MutationObserver` fires only when the DOM actually changes and doesn't block the main thread.
-
-### Google sign-in in WKWebView
-Google detects WKWebView via `window.webkit` and can block sign-in with a "browser not supported" error. The old workaround (removing `window.webkit` on `accounts.google.com`) was stripped with the 2026-07-09 attestation fix. Existing sessions persist in the default data store's cookie jar, so this only matters for *fresh* sign-ins — if one hits the block, revisit under [#6](https://github.com/abutala/homely-vibes/issues/6) (the hide was scoped to accounts.google.com and may be safe to restore alone; verify playback with Web Inspector after).
-
-### Discovering actual mobile YouTube element names
-YouTube's mobile DOM uses custom elements not documented anywhere (`ytm-shorts-lockup-view-model`, `ytm-pivot-bar-renderer`, etc.). To discover them, inject `document.querySelectorAll('*')` filtered to custom elements via `evaluateJavaScript` with a Swift completion handler — `console.log` output is not accessible from Swift.
-
-### Xcode project settings
-- `SDKROOT` must be `iphoneos`, not `auto` — `auto` resolves to macOS SDK and breaks `UIViewRepresentable`
-- `SUPPORTED_PLATFORMS` must exclude `macosx` and `xros` for the same reason
-- `DEVELOPMENT_TEAM` is rewritten by Xcode when you pick a team in Signing & Capabilities — don't hand-edit it. If you fork the project on a fresh account, expect a one-line diff in `project.pbxproj` to commit.
-
-### Troubleshooting device deploys
-
-- **"Developer disk image could not be mounted on this device"** — Xcode can't mount the on-device debug bridge. Causes, in likelihood order:
-  1. Developer Mode is off on the iPhone (Settings → Privacy & Security → Developer Mode → On → reboot)
-  2. Xcode is not signed into your Apple ID (Xcode → Settings → Accounts) — without it, the matching DDI can't auto-download
-  3. The device's iOS minor version is newer than any DDI Xcode has — open Xcode → Window → Devices and Simulators, select the iPhone, click **Get** to fetch the matching DDI. If unavailable, update Xcode.
-  4. Mac ↔ iPhone trust didn't carry over (e.g., fresh macOS user account) — Settings → General → Transfer or Reset iPhone → Reset → Reset Location & Privacy, then replug and tap **Trust**.
-- **App installs but crashes immediately with `dyld_shared_cache_extract_dylibs` error** — different problem from the above; happens when the device's iOS is newer than Xcode's symbol cache. Edit Scheme → Run → Info → uncheck **Debug executable**.
-
-### Fullscreen in WKWebView (why `webkitEnterFullscreen`, why the retry)
-Established empirically via simulator probe, 2026-07-09:
-
-- **The Element Fullscreen API does not exist in iOS WKWebView.** `document.fullscreenEnabled` is
-  `undefined` (prefixed variant too) even with `WKPreferences.isElementFullscreenEnabled = true`.
-  Any `requestFullscreen()`-based approach is dead code here.
-- **Delegating to YouTube's own fullscreen button doesn't work.** The mweb button doesn't exist in
-  the DOM until playback starts, and once it does, YouTube ignores synthetic clicks
-  (`isTrusted: false`). Worse, a matched-but-ignored click can short-circuit fallbacks — don't.
-- **`webkitEnterFullscreen()` throws `InvalidStateError` until media is loaded**, so a `play`-time
-  call can be too early. Call it on `play` (fresh starts only) and retry on `playing`, when a
-  renderable frame guarantees valid state.
-- Native fullscreen is the **system video player** — the same fullscreen real iPhone Safari users
-  get on m.youtube.com. Captions render as text tracks (CC button in the native controls), not
-  YouTube's DOM overlay.
-
-### Autoplay interception
-Native-only: `mediaTypesRequiringUserActionForPlayback = .video`. The earlier claim that a JS-level `HTMLVideoElement.prototype.play()` override was "the reliable fix" dated from the broken-proxy era and is disproven — the wrapper itself was tripping stream attestation. If autoplay leaks through the native gate, solve it Swift-side ([#6](https://github.com/abutala/homely-vibes/issues/6)), never by re-tampering with the prototype.
-
 ## Block-YouTube-in-Chrome Setup (DNS bypass)
 
 The goal: YouTube blocked in Chrome (and Safari, and every other browser on the device), but still accessible inside this app.
 
-### Why this is hard on iOS
-- Chrome on iOS has no extensions and no per-site content blocking
-- Screen Time's "Never Allow" list requires "Limit Adult Websites" enabled, which has collateral damage
-- DNS-level blocking (NextDNS, Pi-hole, etc.) is system-wide — it affects WKWebView too, since WKWebView runs in a separate process and uses system DNS
-- iOS has no per-app DNS routing on a free developer account (`NEAppProxyProvider` requires paid entitlements)
+Why this is hard on iOS, why DoH slips past NextDNS, and what the bypass does and doesn't defend against: [Logbook.md](Logbook.md).
 
 ### How this app works around it
 1. **System level**: install [NextDNS](https://nextdns.io) as a **DNS profile** and add `youtube.com` (+ subdomains) to the deny list. This blocks YouTube in Chrome, Safari, and any other browser. Full setup steps below.
@@ -213,29 +156,9 @@ Two options — pick one.
   - `LocalProxy: incoming connection` — WKWebView reached the proxy
   - `LocalProxy: CONNECT www.youtube.com:443 -> <ip>` — DoH resolved the host
 
-**Troubleshooting**
-- **YouTube loads in Chrome too**: NextDNS not active, or denylist not saved. Re-check step 4.
-- **App shows blank page**: proxy didn't bind (check logs for port 0 or `listener failed`); reinstall app.
-- **App loads YouTube but Chrome also loads it**: device might be on cellular with no NextDNS rules for cellular profile — set up the same NextDNS config for cellular in NextDNS dashboard → **Settings** → **iOS** → enable for both Wi-Fi and cellular.
+When any of that doesn't hold, see the NextDNS bypass entries in [Logbook.md](Logbook.md).
 
 ### Components
 - [`DoHResolver.swift`](NoShorts/DoHResolver.swift) — minimal DNS-over-HTTPS client, raw DNS wire format over `URLSession`. Handles A records with TTL caching.
 - [`LocalProxy.swift`](NoShorts/LocalProxy.swift) — `NWListener` HTTP CONNECT proxy. Parses `CONNECT host:port`, resolves via DoH, opens an `NWConnection` to the IP, tunnels bytes both ways.
 - [`ContentView.swift`](NoShorts/ContentView.swift) — starts the proxy on `WebViewModel.init()` and assigns `WKWebsiteDataStore.default().proxyConfigurations = [ProxyConfiguration(httpCONNECTProxy:)]`.
-
-### Why DoH bypasses NextDNS
-NextDNS as a DNS profile reroutes the system DNS resolver. But it does **not** intercept arbitrary HTTPS traffic. A POST to `https://dns.google/dns-query` is just regular HTTPS — the request body happens to contain a DNS wire-format query. NextDNS sees an HTTPS connection to `dns.google`, not a DNS query, so it doesn't filter the response.
-
-### Threat model (what this does and doesn't defend against)
-- ✅ Defends against: typing `youtube.com` in Chrome, clicking a YouTube link in any other app, tapping the YouTube app's web bridge
-- ❌ Does not defend against: someone with the device disabling NextDNS in Settings, or installing a different browser, or using cellular data with the NextDNS profile only configured for Wi-Fi
-- This is a self-control tool, not a hardened parental control. Determined bypass is trivial. The friction is the point.
-
-### Why not Network Extension / `NEAppProxyProvider`?
-Per-app VPN via `NEAppProxyProvider` would be the textbook iOS solution. It requires `com.apple.developer.networking.networkextension` with `app-proxy-provider`, which is gated behind a **paid** Apple Developer account ($99/yr). The DoH-proxy-in-app approach above achieves the same outcome on a free account.
-
-### Why DoH (DNS wire format), not DoH (JSON)?
-Google's DoH endpoint accepts both `application/dns-message` (RFC 1035 wire format) and `application/dns-json`. Wire format is ~50 bytes vs JSON's ~500 bytes per query, and avoids JSON parsing of arbitrary RDATA.
-
-### Why HTTP CONNECT, not full HTTP proxy?
-WKWebView using `proxyConfigurations` sends `CONNECT host:443` for HTTPS targets and tunnels TLS verbatim afterward. Since YouTube is HTTPS-only, supporting only CONNECT is sufficient. Plain HTTP requests (which would arrive without CONNECT) get a `405 Method Not Allowed`.

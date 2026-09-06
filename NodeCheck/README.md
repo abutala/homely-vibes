@@ -1,5 +1,7 @@
 # NodeCheck - Device Monitoring and Management
 
+Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
+
 NodeCheck provides monitoring and management for Foscam cameras, Windows machines, and generic IoT devices.
 
 ## Architecture
