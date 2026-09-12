@@ -10,6 +10,7 @@ from RachioFlume.alert_rules import (
     ZoneThreshold,
     compact_zone_label,
     load_zone_thresholds_from_config,
+    resolve_hose_threshold,
 )
 from RachioFlume.data_storage import WaterTrackingDB
 from lib.config import get_config
@@ -95,6 +96,9 @@ class WeeklyReporter:
         za_cfg = cfg.rachio_flume.alerts.zone_anomaly
         abs_gpm = za_cfg.absolute_gpm
         pct_above = za_cfg.percent_above
+        # Same floor the alert engine applies: a seconds-long run divides a whole Flume
+        # minute by a few seconds and reads as an absurd GPM.
+        min_runtime_seconds = za_cfg.min_runtime_minutes * 60
 
         if zone_thresholds is not None:
             all_thresholds = zone_thresholds
@@ -119,8 +123,12 @@ class WeeklyReporter:
         ctrl_alerts: Dict[int, int] = {}
         for s in self.db.get_zone_sessions(period_start, period_end):
             sess_zt = ctrl_thresh.get(str(s["zone_number"]))
-            if sess_zt and (s.get("average_flow_rate") or 0) > sess_zt.compute_threshold(
-                abs_gpm, pct_above
+            long_enough = (s.get("duration_seconds") or 0) >= min_runtime_seconds
+            if (
+                sess_zt
+                and long_enough
+                and (s.get("average_flow_rate") or 0)
+                > sess_zt.compute_threshold(abs_gpm, pct_above)
             ):
                 ctrl_alerts[s["zone_number"]] = ctrl_alerts.get(s["zone_number"], 0) + 1
 
@@ -168,14 +176,16 @@ class WeeklyReporter:
             slot["duration_sec_total"] += duration_sec
             gal = float(s.get("total_water_used") or 0.0)
             slot["gal_total"] += gal
-            hose_zt = all_thresholds.get(s["base_station_label"], {}).get(s["valve_name"])
-            if hose_zt and duration_sec > 0:
+            hose_zt = resolve_hose_threshold(
+                all_thresholds.get(s["base_station_label"], {}), s["valve_name"]
+            )
+            if hose_zt and duration_sec >= min_runtime_seconds:
                 sess_avg = gal / (duration_sec / 60.0)
                 if sess_avg > hose_zt.compute_threshold(abs_gpm, pct_above):
                     hose_alerts[key] = hose_alerts.get(key, 0) + 1
 
         for (label, name), v in hose_agg.items():
-            zt = all_thresholds.get(label, {}).get(name)
+            zt = resolve_hose_threshold(all_thresholds.get(label, {}), name)
             threshold_gpm = round(zt.compute_threshold(abs_gpm, pct_above), 2) if zt else 0.0
             dur_min = v["duration_sec_total"] / 60.0
             avg_gpm = v["gal_total"] / dur_min if dur_min > 0 else 0.0

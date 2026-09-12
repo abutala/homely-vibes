@@ -15,8 +15,12 @@ from RachioFlume.rachio_client import Zone
 
 
 def _readings(values: list[float], end: datetime | None = None) -> list[WaterReading]:
-    """Build a list of per-minute WaterReadings ending at `end` (default: now)."""
-    end = end or datetime.now()
+    """Build a list of per-minute WaterReadings ending at `end`.
+
+    Defaults to the last completed minute: the minute still in progress is never part
+    of a rule window, because Flume reports it short until it closes.
+    """
+    end = end or datetime.now().replace(second=0, microsecond=0) - timedelta(minutes=1)
     return [
         WaterReading(timestamp=end - timedelta(minutes=len(values) - 1 - i), value=v)
         for i, v in enumerate(values)
@@ -198,6 +202,20 @@ async def test_evaluate_fires_priority_2_on_first_active(
     state = engine._load_state(rule)
     assert state.last_state == "active"
     assert state.last_fired_at is not None
+
+
+async def test_evaluate_ignores_the_minute_still_in_progress(
+    engine: AlertEngine, rule: AlertRule
+) -> None:
+    # At poll time Flume reports the current minute at a fraction of real flow (a
+    # median of 20% on prod). Counting it dragged sustained flow under the threshold.
+    now = datetime.now()
+    in_progress = WaterReading(timestamp=now.replace(second=0, microsecond=0), value=0.6)
+    engine.flume.get_usage.return_value = _readings([3.0, 3.0, 3.0, 3.0]) + [in_progress]  # type: ignore[attr-defined]
+
+    results = await engine.evaluate(now=now)
+
+    assert results[0]["action"] == AlertAction.FIRE.value
 
 
 async def test_evaluate_suppressed_by_active_rachio_zone(

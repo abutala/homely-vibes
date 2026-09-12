@@ -110,6 +110,26 @@ to how readings are ingested moves every zone's measured GPM, and with it which 
 cross the P2 anomaly threshold. Re-derive baselines against the new ingestion before
 deploying it, or normal runs page as anomalies.
 
+### The minute in progress reads short, so never count it
+
+At poll time Flume reports the current minute at a fraction of its real flow; the
+minute before it has already settled. Anything that reads a trailing window ending at
+"now" must drop that minute: sustained-flow rules, the zone-end estimate, the status
+rate. Counting it pulled the mean down and inflated CV past the tight caps, so Pipe
+Break and High Flow almost never matched live and household Mid Flow draws never did.
+Hose runs are totalled once their last minute has closed rather than dropping it,
+because that minute is part of the run.
+
+### Hose threshold keys must survive a prefix change
+
+Config keys and Rachio's valve names both carry a zone prefix, and prefixes drift.
+Z13's key said "Z13 FS - ..." while Rachio reported "Z13 BUD - ...", so the valve ran
+with no baseline in the alert path and the report alike, for as long as the logs go
+back. Matching compares the valve's own name (after " - ") on both sides, exact match
+first, and the report uses the same resolver as the alert path. Two valves sharing an
+own name under different prefixes would be ambiguous; the resolver warns and takes
+the first.
+
 ### The CV variance gate is what keeps the low-flow rules quiet
 
 **Final detector logic for sustained-flow rules** — implemented in
