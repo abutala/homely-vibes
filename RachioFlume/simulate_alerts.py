@@ -299,21 +299,19 @@ class DBReplayDataset:
         """
         boundaries = ", ".join("?" for _ in RUN_BOUNDARY_EVENTS)
         ends = ", ".join("?" for _ in RUN_END_EVENTS)
-        select = (
-            "SELECT event_date, zone_name, zone_number, event_type FROM watering_events "
-            f"WHERE event_type IN ({boundaries}) "
-        )
         with self.db.get_connection() as conn:
             row = conn.execute(
-                select + "AND event_date <= ? "
+                "SELECT event_date, zone_name, zone_number, event_type FROM watering_events "
+                f"WHERE event_type IN ({boundaries}) AND event_date <= ? "
                 "ORDER BY event_date DESC, event_type = 'ZONE_STARTED' DESC LIMIT 1",
                 (*RUN_BOUNDARY_EVENTS, t.strftime("%Y-%m-%d %H:%M:%S")),
             ).fetchone()
             if row is None or row["event_type"] != "ZONE_STARTED":
                 return None
             closer = conn.execute(
-                select + "AND event_date > ? ORDER BY event_date, "
-                f"(zone_number = ? AND event_type IN ({ends})) DESC LIMIT 1",
+                "SELECT zone_number, event_type FROM watering_events "
+                f"WHERE event_type IN ({boundaries}) AND event_date > ? "
+                f"ORDER BY event_date, (zone_number = ? AND event_type IN ({ends})) DESC LIMIT 1",
                 (*RUN_BOUNDARY_EVENTS, row["event_date"], row["zone_number"], *RUN_END_EVENTS),
             ).fetchone()
         end_lost = closer is not None and not (
