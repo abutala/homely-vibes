@@ -6,6 +6,39 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ## Incidents
 
+### 2026-09-12 — the weekly report showed Z9 watering for three days
+
+The 2026-09-05 → 09-12 report listed Z9 at 4336 minutes. It ran for eight minutes
+on 2026-09-08, as the Rachio app said. Our DB was missing Z9's `ZONE_COMPLETED`.
+
+- **The lost event.** Each poll asked Rachio for exactly `[last poll, now]`. The
+  07:03:02 COMPLETED was not yet published when the 07:03:19 poll ran, and the next
+  poll's window began after it, so nothing ever asked again. Rachio's API still
+  returns the event.
+- **The amplifier.** `compute_zone_sessions` paired a START with the next end event
+  for that zone however far away. One lost end became a three-day session that
+  absorbed three days of whole-house Flume usage. Earlier weeks had carried the same
+  failure at a week long.
+- **The quieter loss beside it.** Flume's newest minute or two read short at poll
+  time. Back-to-back windows plus a "newer than `MAX(timestamp)`" filter froze those
+  short values, so every irrigation run was undercounted.
+- **The signal that would have caught it was hidden.** The report's `Alrt` column
+  read `avg_flow_rate` off per-session rows, a name only the aggregate query
+  produces (`AVG(average_flow_rate) AS avg_flow_rate`). Controller zones never
+  showed an alert count, even while runs crossed their thresholds.
+
+Fix: every poll re-fetches `FETCH_OVERLAP` of both feeds; events dedup on a unique
+key and readings upsert. A START is now closed by the next controller event, since
+the controller runs one zone at a time. When that event isn't the zone's own end,
+the end was lost and is read off Flume flow: contiguous flow from the START, one dry
+minute tolerated, capped. A run with no visible flow is kept as zero-length rather
+than dropped, because the stale-zone monitor reads `MAX(start_time)` from sessions.
+
+Prod repair: re-fetched Rachio's event history and inserted the missing rows. The
+collector rebuilds sessions from events every cycle, so reports healed on the next
+poll, and the report was re-sent. One end (Z11, 2026-08-12) is missing from Rachio's
+API too, during a Flume data gap the same morning; only the estimate covers it.
+
 ### Deployment runbook — the one-time `rachio_flume.alerts` schema migration
 
 This is the ritual that landed the structured `rachio_flume.alerts` config on
@@ -61,6 +94,21 @@ beyond the threshold) the very first `Stale-zone alert sent: ...` message
 ---
 
 ## Landmines
+
+### Never poll a back-to-back window from an API that publishes late
+
+Rachio and Flume both publish late. A `[last poll, now]` window loses anything that
+lands after the poll that covered its timestamp, and a "newer than what's stored"
+filter turns a value that hadn't settled yet into a permanent one. Re-fetch an
+overlap and let the table's unique key dedup: ignore for events, which never change,
+upsert for readings, which settle.
+
+### Zone baselines are measurements of the ingestion, not of the pipes
+
+Per-zone `avg_gpm` baselines were tuned on readings that undercounted flow. Any change
+to how readings are ingested moves every zone's measured GPM, and with it which runs
+cross the P2 anomaly threshold. Re-derive baselines against the new ingestion before
+deploying it, or normal runs page as anomalies.
 
 ### The CV variance gate is what keeps the low-flow rules quiet
 

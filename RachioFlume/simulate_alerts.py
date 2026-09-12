@@ -27,7 +27,7 @@ from RachioFlume.alert_rules import (
     get_controller_zone_thresholds,
     load_zone_thresholds_from_config,
 )
-from RachioFlume.data_storage import WaterTrackingDB
+from RachioFlume.data_storage import ORPHAN_MAX_WINDOW, RUN_BOUNDARY_EVENTS, WaterTrackingDB
 from RachioFlume.flume_client import WaterReading
 from RachioFlume.rachio_client import Zone
 from lib.config import get_config
@@ -253,8 +253,7 @@ class DBReplayDataset:
 
     Implements the same duck-typed interface as SyntheticDataset so it can be passed
     directly to run_simulation(). Rachio active state is approximated from the stored
-    watering events: a zone is considered active at time `t` if there is a ZONE_STARTED
-    event before `t` with no corresponding ZONE_COMPLETED/ZONE_STOPPED after it and before `t`.
+    watering events, the same way sessions are paired (see rachio_active_at).
     """
 
     def __init__(self, db: WaterTrackingDB, start: datetime, end: datetime) -> None:
@@ -284,30 +283,31 @@ class DBReplayDataset:
             ]
 
     def rachio_active_at(self, t: datetime) -> Optional[Zone]:
+        """The zone irrigating at `t`: the latest run boundary at or before `t` is its START.
+
+        The controller runs one zone at a time, so any later boundary ends the run. A
+        START whose end was lost stops counting after ORPHAN_MAX_WINDOW rather than
+        reading as irrigating for the rest of the DB. On a same-second tie the START
+        wins, since Rachio stamps one zone's end and the next zone's start together.
+        """
+        placeholders = ", ".join("?" for _ in RUN_BOUNDARY_EVENTS)
         with self.db.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT zone_name, zone_number FROM watering_events\n"
-                "WHERE event_type = 'ZONE_STARTED' AND event_date <= ?\n"
-                "AND NOT EXISTS (\n"
-                "    SELECT 1 FROM watering_events we2\n"
-                "    WHERE we2.zone_number = watering_events.zone_number\n"
-                "      AND we2.event_type IN ('ZONE_COMPLETED', 'ZONE_STOPPED')\n"
-                "      AND we2.event_date > watering_events.event_date\n"
-                "      AND we2.event_date <= ?\n"
-                ")\n"
-                "ORDER BY event_date DESC LIMIT 1",
-                (t.strftime("%Y-%m-%d %H:%M:%S"), t.strftime("%Y-%m-%d %H:%M:%S")),
-            )
-            row = cursor.fetchone()
-            if row:
-                return Zone(
-                    id=f"z-{row['zone_number']}",
-                    zone_number=row["zone_number"],
-                    name=row["zone_name"],
-                    enabled=True,
-                )
+            row = conn.execute(
+                "SELECT event_date, zone_name, zone_number, event_type FROM watering_events "
+                f"WHERE event_type IN ({placeholders}) AND event_date <= ? "
+                "ORDER BY event_date DESC, event_type = 'ZONE_STARTED' DESC LIMIT 1",
+                (*RUN_BOUNDARY_EVENTS, t.strftime("%Y-%m-%d %H:%M:%S")),
+            ).fetchone()
+        if row is None or row["event_type"] != "ZONE_STARTED":
             return None
+        if t - datetime.fromisoformat(row["event_date"]) > ORPHAN_MAX_WINDOW:
+            return None
+        return Zone(
+            id=f"z-{row['zone_number']}",
+            zone_number=row["zone_number"],
+            name=row["zone_name"],
+            enabled=True,
+        )
 
 
 def run_replay(

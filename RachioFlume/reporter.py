@@ -3,10 +3,14 @@
 import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-from RachioFlume.alert_rules import compact_zone_label, load_zone_thresholds_from_config
+from RachioFlume.alert_rules import (
+    ZoneThreshold,
+    compact_zone_label,
+    load_zone_thresholds_from_config,
+)
 from RachioFlume.data_storage import WaterTrackingDB
 from lib.config import get_config
 from lib.logger import get_logger
@@ -66,13 +70,17 @@ class WeeklyReporter:
         self.logger.info("Weekly reporter initialized")
 
     def generate_period_report_with_dates(
-        self, period_start: datetime, period_end: datetime
+        self,
+        period_start: datetime,
+        period_end: datetime,
+        zone_thresholds: Optional[Dict[str, Dict[str, ZoneThreshold]]] = None,
     ) -> WaterUsageReport:
         """Generate a comprehensive period report.
 
         Args:
             period_start: Start of the period
             period_end: End of the period
+            zone_thresholds: Per-device zone baselines; loaded from config when omitted
 
         Returns:
             WaterUsageReport containing period statistics
@@ -88,10 +96,13 @@ class WeeklyReporter:
         abs_gpm = za_cfg.absolute_gpm
         pct_above = za_cfg.percent_above
 
-        try:
-            all_thresholds = load_zone_thresholds_from_config()
-        except Exception:
-            all_thresholds = {}
+        if zone_thresholds is not None:
+            all_thresholds = zone_thresholds
+        else:
+            try:
+                all_thresholds = load_zone_thresholds_from_config()
+            except Exception:
+                all_thresholds = {}
 
         # Controller thresholds: flatten by str(zone_number). Hose keys (non-digit)
         # skipped; they're merged into the hose section below.
@@ -108,7 +119,7 @@ class WeeklyReporter:
         ctrl_alerts: Dict[int, int] = {}
         for s in self.db.get_zone_sessions(period_start, period_end):
             sess_zt = ctrl_thresh.get(str(s["zone_number"]))
-            if sess_zt and (s.get("avg_flow_rate") or 0) > sess_zt.compute_threshold(
+            if sess_zt and (s.get("average_flow_rate") or 0) > sess_zt.compute_threshold(
                 abs_gpm, pct_above
             ):
                 ctrl_alerts[s["zone_number"]] = ctrl_alerts.get(s["zone_number"], 0) + 1

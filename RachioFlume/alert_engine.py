@@ -22,7 +22,7 @@ from typing import Optional
 from lib.logger import get_logger
 from lib.notifications import Notifier
 from RachioFlume.alert_rules import AlertRule, ZoneThreshold, send_zone_outcome_pushover
-from RachioFlume.data_storage import WaterTrackingDB
+from RachioFlume.data_storage import ACTIVE_FLOW_GPM, WaterTrackingDB
 from RachioFlume.flume_client import FlumeClient, WaterReading
 from RachioFlume.hose_timer_processor import hose_poll_key
 from RachioFlume.rachio_client import RachioClient
@@ -314,7 +314,7 @@ class AlertEngine:
             )
             window_start = last_active_at or (now - timedelta(hours=1))
             readings = self.flume.get_usage(window_start, now, bucket="MIN")
-            active_readings = [r for r in readings if r.value > 0.05]  # threshold to filter noise
+            active_readings = [r for r in readings if r.value > ACTIVE_FLOW_GPM]
             if active_readings:
                 runtime_min = len(active_readings)
                 avg_gpm = sum(r.value for r in active_readings) / len(active_readings)
