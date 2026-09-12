@@ -257,6 +257,64 @@ class TestWeeklyReportAlerts:
         assert zone.sessions == 2
         assert zone.alert_sessions == 1
 
+    def test_hose_valve_threshold_matches_despite_a_different_prefix(
+        self, db: WaterTrackingDB
+    ) -> None:
+        # The report looked hose baselines up by exact valve name, so a config key with a
+        # different prefix left the row with no threshold and no alert count.
+        db.save_hose_zone_session(
+            {
+                "valve_id": "v1",
+                "base_station_id": "bs1",
+                "valve_name": "Z13 BUD - Upper Deck Planters",
+                "base_station_label": "Hoses",
+                "start_time": at("09:00:00"),
+                "end_time": at("09:10:00"),
+                "duration_seconds": 600,
+                "flow_detected": True,
+                "total_water_used": 12.0,
+                "average_flow_rate": 1.2,
+            }
+        )
+        key = "Z13 FS - Upper Deck Planters"
+
+        report = WeeklyReporter(str(db.db_path)).generate_period_report_with_dates(
+            DAY - timedelta(days=1),
+            DAY + timedelta(days=1),
+            zone_thresholds={"Hoses": {key: ZoneThreshold(zone_key=key, avg_gpm=0.5)}},
+        )
+
+        (zone,) = report.zones
+        assert zone.threshold_gpm == 1.0
+        assert zone.alert_sessions == 1
+
+    def test_runs_shorter_than_min_runtime_are_not_counted_as_alerts(
+        self, db: WaterTrackingDB
+    ) -> None:
+        # A seconds-long manual stop divides a whole Flume minute by a few seconds and reads
+        # as 50+ GPM. The alert engine ignores runs under min_runtime_minutes; so must the report.
+        db.save_watering_events(
+            [
+                event("06:00:00", 1, "ZONE_STARTED"),
+                event("06:10:00", 1, "ZONE_COMPLETED"),
+                event("07:00:00", 1, "ZONE_STARTED"),
+                event("07:00:30", 1, "ZONE_STOPPED"),
+            ]
+        )
+        flow(db, "06:00", 10, 3.0)
+        flow(db, "07:00", 1, 3.0)
+        db.compute_zone_sessions()
+
+        report = WeeklyReporter(str(db.db_path)).generate_period_report_with_dates(
+            DAY - timedelta(days=1),
+            DAY + timedelta(days=1),
+            zone_thresholds={"Controller": {"1": ZoneThreshold(zone_key="1", avg_gpm=1.0)}},
+        )
+
+        (zone,) = report.zones
+        assert zone.sessions == 2
+        assert zone.alert_sessions == 1
+
 
 class FakeRachio:
     """Serves one scripted batch of events per poll and records each requested window."""

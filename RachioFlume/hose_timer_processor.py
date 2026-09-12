@@ -15,6 +15,7 @@ from RachioFlume.alert_rules import (
     ZoneThreshold,
     compact_zone_label,
     resolve_hose_threshold,
+    valve_suffix,
     send_zone_outcome_pushover,
 )
 from RachioFlume.data_storage import WaterTrackingDB
@@ -179,7 +180,12 @@ class HoseTimerProcessor:
                 start_dt = datetime.fromisoformat(cached["start"])
                 duration_sec = int(cached.get("duration_seconds") or 0)
                 end_dt = start_dt + timedelta(seconds=duration_sec)
-                if now >= end_dt:
+                # Flume reports the minute in progress short: wait for the run's last
+                # minute to close before totalling it.
+                last_minute_closes = (end_dt - timedelta(microseconds=1)).replace(
+                    second=0, microsecond=0
+                ) + timedelta(minutes=1)
+                if now >= last_minute_closes:
                     flow_detected = cached.get("flow_detected")
                     total_gal, avg_gpm = self._flume_window_flow(start_dt, end_dt)
                     if not dry_run:
@@ -238,10 +244,9 @@ class HoseTimerProcessor:
             return
         self._warned_unmatched = True
         names = {v.name for v in valves}
+        own_names = {valve_suffix(n) for n in names}
         unmatched = [
-            k
-            for k in self.thresholds
-            if k not in names and k.split(" - ", 1)[-1].strip() not in names
+            k for k in self.thresholds if k not in names and valve_suffix(k) not in own_names
         ]
         if unmatched:
             self.logger.warning(

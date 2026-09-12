@@ -121,23 +121,29 @@ def load_zone_thresholds_from_config() -> dict[str, dict[str, ZoneThreshold]]:
     return out
 
 
+def valve_suffix(name: str) -> str:
+    """The valve's own name, without any "<zone prefix> - " in front of it."""
+    return name.split(" - ", 1)[-1].strip()
+
+
 def resolve_hose_threshold(
     thresholds: dict[str, ZoneThreshold],
     valve_name: str,
     logger: logging.Logger | None = None,
 ) -> ZoneThreshold | None:
-    """Look up a hose valve's threshold, tolerating prefixed config keys.
+    """Look up a hose valve's threshold, tolerating zone prefixes on either side.
 
-    Config keys historically use "Z13 FS - Upper Deck Planters" style while
-    the API valve name is just "Upper Deck Planters" — an exact .get() never
-    matched, silently disabling the valve's anomaly threshold. Exact match
-    wins; otherwise any key whose segment after " - " equals the valve name.
+    Config keys and live valve names may both carry a "<zone prefix> - " in
+    front of the valve's own name, and the prefixes drift: config said "Z13 FS -
+    Upper Deck Planters" while Rachio reported "Z13 BUD - Upper Deck Planters",
+    and an exact or one-sided match silently disabled the valve's threshold.
+    Exact match wins; otherwise any key whose own name equals the valve's own name.
     Returns None when nothing matches (caller falls back to absolute_gpm).
     """
     zt = thresholds.get(valve_name)
     if zt is not None:
         return zt
-    matches = [k for k in thresholds if k.split(" - ", 1)[-1].strip() == valve_name]
+    matches = [k for k in thresholds if valve_suffix(k) == valve_suffix(valve_name)]
     if not matches:
         return None
     if logger:

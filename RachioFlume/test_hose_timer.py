@@ -189,6 +189,33 @@ class TestHoseTimerProcessor:
         assert results[0]["action"] == "run_completed"
         pushover.send_message.assert_called_once()
 
+    def test_run_is_finalized_only_after_its_last_minute_closes(
+        self, tmp_db: WaterTrackingDB
+    ) -> None:
+        # Flume reports the minute in progress short, so a poll that lands inside the run's
+        # last minute waits for it to close instead of totalling a short final minute.
+        action = {
+            "start": "2026-06-27T07:46:46Z",
+            "durationSeconds": "600",
+            "reason": "QUICK_RUN",
+            "flowDetected": True,
+        }
+        local_start = RachioHoseClient.parse_action_start(action)
+        assert local_start is not None
+        proc, pushover = _make_processor(tmp_db, _valve(action))
+        proc.evaluate(now=local_start + timedelta(seconds=14))
+        proc.client.list_valves.return_value = [_valve(action=None)]  # type: ignore[attr-defined]
+        end = local_start + timedelta(seconds=600)
+
+        inside_last_minute = proc.evaluate(now=end + timedelta(seconds=5))
+        after_it_closes = proc.evaluate(
+            now=end.replace(second=0, microsecond=0) + timedelta(minutes=1, seconds=5)
+        )
+
+        assert inside_last_minute[0]["action"] == "nothing"
+        assert after_it_closes[0]["action"] == "run_completed"
+        pushover.send_message.assert_called_once()
+
     def test_dry_run_does_not_persist(self, tmp_db: WaterTrackingDB) -> None:
         action = {
             "start": "2026-06-27T07:46:46Z",
@@ -241,6 +268,12 @@ class TestThresholdResolution:
         # Planters" while the API valve name is "Upper Deck Planters".
         thresholds = {"Z13 FS - Upper Deck Planters": self._zt}
         assert resolve_hose_threshold(thresholds, "Upper Deck Planters") is self._zt
+
+    def test_key_and_valve_name_with_different_prefixes_match(self) -> None:
+        # Rachio renamed the valve's prefix ("Z13 BUD - ...") while config still said
+        # "Z13 FS - ...": comparing only the key's suffix to the whole name matched nothing.
+        thresholds = {"Z13 FS - Upper Deck Planters": self._zt}
+        assert resolve_hose_threshold(thresholds, "Z13 BUD - Upper Deck Planters") is self._zt
 
     def test_unmatched_returns_none(self) -> None:
         assert (

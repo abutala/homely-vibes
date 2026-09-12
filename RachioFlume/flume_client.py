@@ -16,6 +16,12 @@ class WaterReading(BaseModel):
     unit: str = "GAL"
 
 
+def completed_minutes(readings: List[WaterReading], now: datetime) -> List[WaterReading]:
+    """Readings for minutes that have closed. Flume reports the minute in progress short."""
+    current_minute = now.replace(second=0, microsecond=0)
+    return [r for r in readings if r.timestamp < current_minute]
+
+
 class Device(BaseModel):
     """Flume device model."""
 
@@ -313,11 +319,10 @@ class FlumeClient:
 
     def get_current_usage_rate(self) -> Optional[float]:
         """Get current water usage rate across all devices in gallons per minute."""
-        # Get usage for last 5 minutes
         end_time = datetime.now()
-        start_time = end_time - timedelta(minutes=3)
+        start_time = end_time - timedelta(minutes=4)
 
-        readings = self.get_usage(start_time, end_time, bucket="MIN")
+        readings = completed_minutes(self.get_usage(start_time, end_time, bucket="MIN"), end_time)
 
         if not readings:
             return None

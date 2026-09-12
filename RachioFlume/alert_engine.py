@@ -23,7 +23,7 @@ from lib.logger import get_logger
 from lib.notifications import Notifier
 from RachioFlume.alert_rules import AlertRule, ZoneThreshold, send_zone_outcome_pushover
 from RachioFlume.data_storage import ACTIVE_FLOW_GPM, WaterTrackingDB
-from RachioFlume.flume_client import FlumeClient, WaterReading
+from RachioFlume.flume_client import FlumeClient, WaterReading, completed_minutes
 from RachioFlume.hose_timer_processor import hose_poll_key
 from RachioFlume.rachio_client import RachioClient
 
@@ -313,7 +313,7 @@ class AlertEngine:
                 f"No session found for zone '{zone_name}' (cycle {cycle}), estimating from Flume readings"
             )
             window_start = last_active_at or (now - timedelta(hours=1))
-            readings = self.flume.get_usage(window_start, now, bucket="MIN")
+            readings = completed_minutes(self.flume.get_usage(window_start, now, bucket="MIN"), now)
             active_readings = [r for r in readings if r.value > ACTIVE_FLOW_GPM]
             if active_readings:
                 runtime_min = len(active_readings)
@@ -934,8 +934,9 @@ class AlertEngine:
         return results
 
     def _fetch_window(self, rule: AlertRule, now: datetime) -> list[WaterReading]:
-        start = now - timedelta(minutes=rule.duration_minutes)
-        return self.flume.get_usage(start, now, bucket="MIN")
+        """The rule's trailing window of completed minutes; the current one reads short."""
+        start = now.replace(second=0, microsecond=0) - timedelta(minutes=rule.duration_minutes)
+        return completed_minutes(self.flume.get_usage(start, now, bucket="MIN"), now)
 
     # ------------------------------------------------------------------ #
     # CLI-facing helpers                                                  #
