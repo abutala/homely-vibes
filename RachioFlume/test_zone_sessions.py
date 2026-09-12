@@ -157,6 +157,11 @@ class TestEstimateRunEnd:
         readings = [(at("06:56:00"), 1.8), (at("06:57:00"), 1.8)]
         assert estimate_run_end(at("06:55:02"), at("06:57:30"), readings) == at("06:57:30")
 
+    def test_single_missing_minute_does_not_end_the_run(self) -> None:
+        # A minute Flume never stored reads the same as a dry one: one is tolerated.
+        readings = [(at("06:56:00"), 1.8), (at("06:58:00"), 1.8)]
+        assert estimate_run_end(at("06:55:02"), at("07:30:00"), readings) == at("06:59:00")
+
 
 class TestEventIngestion:
     def test_refetched_events_are_not_duplicated(self, db: WaterTrackingDB) -> None:
@@ -211,6 +216,20 @@ class TestReplayActiveZone:
         assert active("06:58:00") == 9
         assert active("07:03:02") == 12
         assert active("08:00:00") is None
+
+    def test_long_run_with_a_recorded_end_stays_active_past_the_cap(
+        self, db: WaterTrackingDB
+    ) -> None:
+        # The cap is for STARTs whose end was lost, not for runs that are simply long.
+        db.save_watering_events(
+            [event("06:00:00", 4, "ZONE_STARTED"), event("10:00:00", 4, "ZONE_COMPLETED")]
+        )
+        replay = DBReplayDataset(db, start=DAY, end=DAY + timedelta(days=1))
+
+        zone = replay.rachio_active_at(at("09:30:00"))
+
+        assert zone is not None
+        assert zone.zone_number == 4
 
 
 class TestWeeklyReportAlerts:

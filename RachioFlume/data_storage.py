@@ -18,11 +18,11 @@ MAX_FLOW_GAP = timedelta(minutes=2)
 # Cap on how far past a lost-end START to look for its flow.
 ORPHAN_MAX_WINDOW = timedelta(hours=3)
 
-_RUN_END_EVENTS = ("ZONE_COMPLETED", "ZONE_STOPPED")
+RUN_END_EVENTS = ("ZONE_COMPLETED", "ZONE_STOPPED")
 # The controller runs one zone at a time: any of these after a START closes that run.
 RUN_BOUNDARY_EVENTS = (
     "ZONE_STARTED",
-    *_RUN_END_EVENTS,
+    *RUN_END_EVENTS,
     "SCHEDULE_COMPLETED",
     "SCHEDULE_STOPPED",
     "COLD_REBOOT",
@@ -469,14 +469,15 @@ class WaterTrackingDB:
         """
         start_time, start_event = boundaries[start_index]
         boundary: Optional[datetime] = None
-        for event_time, event in boundaries[start_index + 1 :]:
+        for index in range(start_index + 1, len(boundaries)):
+            event_time, event = boundaries[index]
             if event_time == start_time:
                 continue
             if boundary is not None and event_time > boundary:
                 break
             if (
                 event["zone_number"] == start_event["zone_number"]
-                and event["event_type"] in _RUN_END_EVENTS
+                and event["event_type"] in RUN_END_EVENTS
             ):
                 return event_time, False
             if boundary is None:

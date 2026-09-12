@@ -27,7 +27,12 @@ from RachioFlume.alert_rules import (
     get_controller_zone_thresholds,
     load_zone_thresholds_from_config,
 )
-from RachioFlume.data_storage import ORPHAN_MAX_WINDOW, RUN_BOUNDARY_EVENTS, WaterTrackingDB
+from RachioFlume.data_storage import (
+    ORPHAN_MAX_WINDOW,
+    RUN_BOUNDARY_EVENTS,
+    RUN_END_EVENTS,
+    WaterTrackingDB,
+)
 from RachioFlume.flume_client import WaterReading
 from RachioFlume.rachio_client import Zone
 from lib.config import get_config
@@ -285,22 +290,36 @@ class DBReplayDataset:
     def rachio_active_at(self, t: datetime) -> Optional[Zone]:
         """The zone irrigating at `t`: the latest run boundary at or before `t` is its START.
 
-        The controller runs one zone at a time, so any later boundary ends the run. A
-        START whose end was lost stops counting after ORPHAN_MAX_WINDOW rather than
-        reading as irrigating for the rest of the DB. On a same-second tie the START
-        wins, since Rachio stamps one zone's end and the next zone's start together.
+        The controller runs one zone at a time, so any later boundary ends the run. On a
+        same-second tie the START wins, since Rachio stamps one zone's end and the next
+        zone's start together. A START whose end was lost (the next boundary after it is
+        not that zone's own end) stops counting after ORPHAN_MAX_WINDOW rather than
+        reading as irrigating for the rest of the DB; a run that closes normally stays
+        active however long it lasts.
         """
-        placeholders = ", ".join("?" for _ in RUN_BOUNDARY_EVENTS)
+        boundaries = ", ".join("?" for _ in RUN_BOUNDARY_EVENTS)
+        ends = ", ".join("?" for _ in RUN_END_EVENTS)
+        select = (
+            "SELECT event_date, zone_name, zone_number, event_type FROM watering_events "
+            f"WHERE event_type IN ({boundaries}) "
+        )
         with self.db.get_connection() as conn:
             row = conn.execute(
-                "SELECT event_date, zone_name, zone_number, event_type FROM watering_events "
-                f"WHERE event_type IN ({placeholders}) AND event_date <= ? "
+                select + "AND event_date <= ? "
                 "ORDER BY event_date DESC, event_type = 'ZONE_STARTED' DESC LIMIT 1",
                 (*RUN_BOUNDARY_EVENTS, t.strftime("%Y-%m-%d %H:%M:%S")),
             ).fetchone()
-        if row is None or row["event_type"] != "ZONE_STARTED":
-            return None
-        if t - datetime.fromisoformat(row["event_date"]) > ORPHAN_MAX_WINDOW:
+            if row is None or row["event_type"] != "ZONE_STARTED":
+                return None
+            closer = conn.execute(
+                select + "AND event_date > ? ORDER BY event_date, "
+                f"(zone_number = ? AND event_type IN ({ends})) DESC LIMIT 1",
+                (*RUN_BOUNDARY_EVENTS, row["event_date"], row["zone_number"], *RUN_END_EVENTS),
+            ).fetchone()
+        end_lost = closer is not None and not (
+            closer["zone_number"] == row["zone_number"] and closer["event_type"] in RUN_END_EVENTS
+        )
+        if end_lost and t - datetime.fromisoformat(row["event_date"]) > ORPHAN_MAX_WINDOW:
             return None
         return Zone(
             id=f"z-{row['zone_number']}",
