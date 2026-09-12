@@ -275,12 +275,13 @@ kill <process_id>
 3. **WaterTrackingDB** (`data_storage.py`)
    - SQLite database for persistent storage
    - Stores zones, events, readings, and computed sessions
-   - Handles data relationships and indexing
+   - Events are keyed on `(event_date, zone_number, event_type)` and readings on `timestamp`: a re-fetched event is ignored, a re-fetched reading replaces the stored value
+   - Rebuilds `zone_sessions` every cycle. A START is closed by the next controller event; if that isn't the zone's own end event, the end was lost and is estimated from Flume flow (a run with no visible flow is kept as zero-length)
 
 4. **WaterTrackingCollector** (`collector.py`)
    - Orchestrates data collection from both APIs
    - Runs continuously or on-demand
-   - Correlates watering events with usage data
+   - Re-fetches the last `FETCH_OVERLAP` of both feeds every poll, because both publish late
 
 5. **WeeklyReporter** (`reporter.py`)
    - Generates period reports with customizable date ranges (default 7 days)

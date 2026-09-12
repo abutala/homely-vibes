@@ -1,14 +1,52 @@
 """Data storage for water tracking integration."""
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Generator
+from typing import List, Dict, Any, Optional, Generator, Tuple
 from contextlib import contextmanager
 
 from RachioFlume.rachio_client import WateringEvent, Zone
 from RachioFlume.flume_client import WaterReading
 from lib.logger import get_logger
+
+# A per-minute Flume reading at or below this is meter noise, not irrigation.
+ACTIVE_FLOW_GPM = 0.05
+# A run whose end event was lost is over once flow has been absent this long.
+# One dry minute is tolerated: Flume minute buckets can read short.
+MAX_FLOW_GAP = timedelta(minutes=2)
+# Cap on how far past a lost-end START to look for its flow.
+ORPHAN_MAX_WINDOW = timedelta(hours=3)
+
+RUN_END_EVENTS = ("ZONE_COMPLETED", "ZONE_STOPPED")
+# The controller runs one zone at a time: any of these after a START closes that run.
+RUN_BOUNDARY_EVENTS = (
+    "ZONE_STARTED",
+    *RUN_END_EVENTS,
+    "SCHEDULE_COMPLETED",
+    "SCHEDULE_STOPPED",
+    "COLD_REBOOT",
+)
+
+
+def estimate_run_end(
+    start: datetime, bound: datetime, readings: List[Tuple[datetime, float]]
+) -> datetime:
+    """End of a zone run whose end event was lost, read off per-minute Flume flow.
+
+    The run lasts through the contiguous flow that begins at `start`, clamped to
+    `bound`. No flow at all yields a zero-length run.
+    """
+    last_active: Optional[datetime] = None
+    for timestamp, gpm in readings:
+        if gpm <= ACTIVE_FLOW_GPM:
+            continue
+        if timestamp - (last_active or start) > MAX_FLOW_GAP:
+            break
+        last_active = timestamp
+    if last_active is None:
+        return start
+    return min(last_active + timedelta(minutes=1), bound)
 
 
 class WaterTrackingDB:
@@ -163,9 +201,6 @@ class WaterTrackingDB:
                 "CREATE INDEX IF NOT EXISTS idx_watering_events_zone ON watering_events(zone_number)"
             )
             cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_water_readings_timestamp ON water_readings(timestamp)"
-            )
-            cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_zone_sessions_times ON zone_sessions(start_time, end_time)"
             )
             cursor.execute(
@@ -174,16 +209,16 @@ class WaterTrackingDB:
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_hose_sessions_times ON hose_zone_sessions(start_time, end_time)"
             )
+            self._ensure_watering_events_unique_key(cursor)
 
             conn.commit()
 
-        # One-shot dedup of legacy per-device rows in water_readings.
         # Pre-2026-06-28, the Flume collector saved one row per (timestamp,
         # device), so each minute had two rows: the real meter value and a
         # 0.0 from the bridge. Dedup by keeping MAX value per timestamp —
         # since the bridge always read 0, MAX preserves the meter's reading
         # for every minute that ever had real flow.
-        self._dedup_water_readings()
+        self._ensure_water_readings_unique_key()
 
     def _ensure_hose_session_flow_columns(self, cursor: Any) -> None:
         """Add total_water_used / average_flow_rate to legacy hose_zone_sessions."""
@@ -198,8 +233,41 @@ class WaterTrackingDB:
                 "ALTER TABLE hose_zone_sessions ADD COLUMN average_flow_rate REAL DEFAULT 0.0"
             )
 
-    def _dedup_water_readings(self) -> None:
-        """Collapse duplicate-per-timestamp rows in water_readings (one-shot).
+    def _ensure_watering_events_unique_key(self, cursor: Any) -> None:
+        """Give watering_events a natural key so re-fetched events are ignored on insert.
+
+        The collector re-fetches an overlapping window every poll because Rachio
+        publishes events late. DBs from before the key existed get duplicates
+        dropped (first row kept) before the index is created.
+        """
+        cursor.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' "
+            "AND name = 'idx_watering_events_unique'"
+        )
+        if cursor.fetchone():
+            return
+        cursor.execute(
+            """
+            DELETE FROM watering_events
+            WHERE id NOT IN (
+                SELECT MIN(id) FROM watering_events
+                GROUP BY event_date, zone_number, event_type
+            )
+            """
+        )
+        if cursor.rowcount:
+            self.logger.info(f"Dropped {cursor.rowcount} duplicate watering_events rows")
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_watering_events_unique "
+            "ON watering_events(event_date, zone_number, event_type)"
+        )
+
+    def _ensure_water_readings_unique_key(self) -> None:
+        """Collapse duplicate-per-timestamp rows, then key water_readings on timestamp.
+
+        The key lets the collector upsert: each poll re-fetches recent minutes
+        because Flume's newest minutes read short until the bridge finishes
+        uploading, and the settled value must replace the short one.
 
         Uses an atomic DML transaction (UPDATE-then-DELETE) rather than a
         DDL table-swap. sqlite3's `executescript` auto-commits between
@@ -210,35 +278,47 @@ class WaterTrackingDB:
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'index' "
+                "AND name = 'idx_water_readings_unique'"
+            )
+            if cursor.fetchone():
+                return
+            cursor.execute(
                 "SELECT COUNT(*) - COUNT(DISTINCT timestamp) AS dupes FROM water_readings"
             )
             row = cursor.fetchone()
             dupes = (row["dupes"] if row else 0) or 0
-            if dupes == 0:
-                return
-            self.logger.info(f"Deduping {dupes} legacy duplicate-per-timestamp water_readings rows")
             try:
                 cursor.execute("BEGIN")
-                # Promote every duplicate row's value to the max for its timestamp,
-                # so legacy bridge=0 / meter=N pairs all carry the meter's reading
-                # before we delete duplicates.
-                cursor.execute(
-                    """
-                    UPDATE water_readings
-                    SET value = (
-                        SELECT MAX(value) FROM water_readings AS w2
-                        WHERE w2.timestamp = water_readings.timestamp
+                if dupes:
+                    self.logger.info(
+                        f"Deduping {dupes} duplicate-per-timestamp water_readings rows"
                     )
-                    """
-                )
-                # Keep lowest-id row per timestamp; delete the rest.
-                cursor.execute(
-                    """
-                    DELETE FROM water_readings
-                    WHERE id NOT IN (
-                        SELECT MIN(id) FROM water_readings GROUP BY timestamp
+                    # Promote every duplicate row's value to the max for its timestamp,
+                    # so legacy bridge=0 / meter=N pairs all carry the meter's reading
+                    # before we delete duplicates.
+                    cursor.execute(
+                        """
+                        UPDATE water_readings
+                        SET value = (
+                            SELECT MAX(value) FROM water_readings AS w2
+                            WHERE w2.timestamp = water_readings.timestamp
+                        )
+                        """
                     )
-                    """
+                    # Keep lowest-id row per timestamp; delete the rest.
+                    cursor.execute(
+                        """
+                        DELETE FROM water_readings
+                        WHERE id NOT IN (
+                            SELECT MIN(id) FROM water_readings GROUP BY timestamp
+                        )
+                        """
+                    )
+                cursor.execute("DROP INDEX IF EXISTS idx_water_readings_timestamp")
+                cursor.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_water_readings_unique "
+                    "ON water_readings(timestamp)"
                 )
                 cursor.execute("COMMIT")
             except Exception:
@@ -279,13 +359,12 @@ class WaterTrackingDB:
             conn.commit()
             self.logger.debug(f"Successfully saved {len(zones)} zones")
 
-    def save_watering_events(self, events: List[WateringEvent]) -> None:
-        """Save watering events to database."""
+    def save_watering_events(self, events: List[WateringEvent]) -> int:
+        """Save watering events, ignoring ones already stored. Returns how many were new."""
         if not events:
-            self.logger.debug("No watering events to save")
-            return
+            return 0
 
-        self.logger.info(f"Saving {len(events)} watering events to database")
+        inserted = 0
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
@@ -304,28 +383,25 @@ class WaterTrackingDB:
                         event.duration_seconds,
                     ),
                 )
+                inserted += cursor.rowcount
 
             conn.commit()
+        return inserted
 
     def save_water_readings(self, readings: List[WaterReading]) -> None:
-        """Save water readings to database."""
+        """Save water readings; a re-fetched minute replaces the stored value."""
         if not readings:
-            self.logger.debug("No water readings to save")
             return
 
-        self.logger.info(f"Saving {len(readings)} water readings to database")
         with self.get_connection() as conn:
-            cursor = conn.cursor()
-
-            for reading in readings:
-                cursor.execute(
-                    """
-                    INSERT OR IGNORE INTO water_readings (timestamp, value, unit)
-                    VALUES (?, ?, ?)
+            conn.executemany(
+                """
+                INSERT INTO water_readings (timestamp, value, unit)
+                VALUES (?, ?, ?)
+                ON CONFLICT(timestamp) DO UPDATE SET value = excluded.value, unit = excluded.unit
                 """,
-                    (reading.timestamp, reading.value, reading.unit),
-                )
-
+                [(reading.timestamp, reading.value, reading.unit) for reading in readings],
+            )
             conn.commit()
 
     def get_zone_sessions(self, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
@@ -344,73 +420,103 @@ class WaterTrackingDB:
 
             return [dict(row) for row in cursor.fetchall()]
 
-    def compute_zone_sessions(self) -> None:
-        """Compute zone sessions from watering events."""
+    def compute_zone_sessions(self) -> int:
+        """Rebuild zone_sessions from watering events.
+
+        Returns how many sessions had no end event and were estimated from Flume.
+        """
         with self.get_connection() as conn:
             cursor = conn.cursor()
-
-            # Clear existing sessions
             cursor.execute("DELETE FROM zone_sessions")
 
-            # Get all zone start events
             cursor.execute(
-                """
-                SELECT * FROM watering_events 
-                WHERE event_type = 'ZONE_STARTED'
-                ORDER BY zone_number, event_date
-            """
+                "SELECT event_date, zone_name, zone_number, event_type "
+                "FROM watering_events ORDER BY event_date"
             )
+            boundaries = [
+                (datetime.fromisoformat(row["event_date"]), row)
+                for row in cursor.fetchall()
+                if row["event_type"] in RUN_BOUNDARY_EVENTS
+            ]
 
-            start_events = cursor.fetchall()
-
-            for start_event in start_events:
-                # Find corresponding end event
-                cursor.execute(
-                    """
-                    SELECT * FROM watering_events 
-                    WHERE zone_number = ? 
-                    AND event_type IN ('ZONE_COMPLETED', 'ZONE_STOPPED')
-                    AND event_date > ?
-                    ORDER BY event_date
-                    LIMIT 1
-                """,
-                    (start_event["zone_number"], start_event["event_date"]),
-                )
-
-                end_event = cursor.fetchone()
-
-                if end_event:
-                    # Calculate session duration
-                    start_time = datetime.fromisoformat(start_event["event_date"])
-                    end_time = datetime.fromisoformat(end_event["event_date"])
-                    duration = int((end_time - start_time).total_seconds())
-
-                    # Get water usage during this session
-                    water_used = self._get_water_usage_for_period(start_time, end_time)
-
-                    # Calculate average flow rate
-                    avg_flow_rate = (water_used / (duration / 60)) if duration > 0 else 0.0
-
-                    # Insert session
-                    cursor.execute(
-                        """
-                        INSERT INTO zone_sessions 
-                        (zone_name, zone_number, start_time, end_time, duration_seconds, 
-                         total_water_used, average_flow_rate)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                        (
-                            start_event["zone_name"],
-                            start_event["zone_number"],
-                            start_time,
-                            end_time,
-                            duration,
-                            water_used,
-                            avg_flow_rate,
-                        ),
-                    )
+            estimated = 0
+            for index, (start_time, start_event) in enumerate(boundaries):
+                if start_event["event_type"] != "ZONE_STARTED":
+                    continue
+                run_end = self._find_run_end(cursor, boundaries, index)
+                if run_end is None:
+                    continue
+                end_time, from_flume = run_end
+                if from_flume:
+                    estimated += 1
+                self._insert_zone_session(cursor, start_event, start_time, end_time)
 
             conn.commit()
+        return estimated
+
+    def _find_run_end(
+        self,
+        cursor: Any,
+        boundaries: List[Tuple[datetime, sqlite3.Row]],
+        start_index: int,
+    ) -> Optional[Tuple[datetime, bool]]:
+        """End of the run started at boundaries[start_index], and whether it was estimated.
+
+        The first boundary event after a START closes that run. When it isn't the
+        zone's own end event, that end event was lost, so the end is read off Flume
+        flow up to the boundary instead. None: nothing has happened since the START,
+        so the zone is still running.
+        """
+        start_time, start_event = boundaries[start_index]
+        boundary: Optional[datetime] = None
+        for index in range(start_index + 1, len(boundaries)):
+            event_time, event = boundaries[index]
+            if event_time == start_time:
+                continue
+            if boundary is not None and event_time > boundary:
+                break
+            if (
+                event["zone_number"] == start_event["zone_number"]
+                and event["event_type"] in RUN_END_EVENTS
+            ):
+                return event_time, False
+            if boundary is None:
+                boundary = event_time
+
+        if boundary is None:
+            return None
+        window_end = min(boundary, start_time + ORPHAN_MAX_WINDOW)
+        cursor.execute(
+            "SELECT timestamp, value FROM water_readings "
+            "WHERE timestamp >= ? AND timestamp <= ? ORDER BY timestamp",
+            (start_time, window_end),
+        )
+        readings = [(datetime.fromisoformat(r["timestamp"]), r["value"]) for r in cursor.fetchall()]
+        return estimate_run_end(start_time, window_end, readings), True
+
+    def _insert_zone_session(
+        self, cursor: Any, start_event: sqlite3.Row, start_time: datetime, end_time: datetime
+    ) -> None:
+        duration = int((end_time - start_time).total_seconds())
+        water_used = self._get_water_usage_for_period(start_time, end_time)
+        avg_flow_rate = (water_used / (duration / 60)) if duration > 0 else 0.0
+        cursor.execute(
+            """
+            INSERT INTO zone_sessions
+            (zone_name, zone_number, start_time, end_time, duration_seconds,
+             total_water_used, average_flow_rate)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                start_event["zone_name"],
+                start_event["zone_number"],
+                start_time,
+                end_time,
+                duration,
+                water_used,
+                avg_flow_rate,
+            ),
+        )
 
     def _get_water_usage_for_period(self, start_time: datetime, end_time: datetime) -> float:
         """Get total water usage for a time period."""
@@ -658,12 +764,9 @@ class WaterTrackingDB:
         with self.get_connection() as conn:
             cursor = conn.cursor()
 
-            if source == "rachio":
-                cursor.execute("SELECT MAX(event_date) as last_timestamp FROM watering_events")
-            elif source == "flume":
-                cursor.execute("SELECT MAX(timestamp) as last_timestamp FROM water_readings")
-            else:
+            if source != "flume":
                 raise ValueError(f"Unknown source: {source}")
+            cursor.execute("SELECT MAX(timestamp) as last_timestamp FROM water_readings")
 
             result = cursor.fetchone()
             if result and result["last_timestamp"]:
