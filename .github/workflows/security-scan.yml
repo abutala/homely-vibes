@@ -79,6 +79,8 @@ jobs:
             echo "A commit in this PR adds sensitive content. Deleting it in a"
             echo "follow-up commit is NOT enough — rewrite the branch history"
             echo "(git rebase -i / git commit --amend) so the blob never lands."
+            echo "Or: git reset --soft origin/main, recommit from the corrected"
+            echo "tree, then git push --force-with-lease."
             exit 1
           fi
           echo "No secret/PII patterns in blobs added by this PR."

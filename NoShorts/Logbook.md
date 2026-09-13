@@ -34,7 +34,7 @@ YouTube's mobile site (`m.youtube.com`-style layout via user agent) renders more
 Swift 6 strict concurrency prevents `@MainActor` classes from conforming to `ObservableObject`. Using `@Observable` macro with `@ObservationIgnored` on the `WKWebView` property sidesteps the issue cleanly.
 
 ### Why `atDocumentStart` for CSS injection?
-Injecting CSS before paint prevents the Shorts shelf from flickering in before the DOM removal JS runs. Both scripts run together — CSS hides immediately, JS removes the nodes.
+Injecting CSS before paint prevents the Shorts shelf from flickering in before the DOM removal JS runs. Both scripts run together — CSS hides immediately, JS removes the nodes. The same stylesheet hides YouTube's mobile bottom bar (`ytm-pivot-bar-renderer`), which would otherwise stack under the app's own SwiftUI toolbar.
 
 ### Why debounced `MutationObserver` instead of `setInterval`?
 `setInterval` at 800ms caused page freezes on YouTube's heavy SPA. A debounced (300ms) `MutationObserver` fires only when the DOM actually changes and doesn't block the main thread.
@@ -49,9 +49,25 @@ YouTube's mobile DOM uses custom elements not documented anywhere (`ytm-shorts-l
 - `SDKROOT` must be `iphoneos`, not `auto` — `auto` resolves to macOS SDK and breaks `UIViewRepresentable`
 - `SUPPORTED_PLATFORMS` must exclude `macosx` and `xros` for the same reason
 - `DEVELOPMENT_TEAM` is rewritten by Xcode when you pick a team in Signing & Capabilities — don't hand-edit it. If you fork the project on a fresh account, expect a one-line diff in `project.pbxproj` to commit.
+- The project uses Xcode 16 synchronized folder groups (`PBXFileSystemSynchronizedRootGroup`): a Swift file added under `NoShorts/` is picked up on the next build, with no `project.pbxproj` edit.
 
 ### Autoplay interception
 Native-only: `mediaTypesRequiringUserActionForPlayback = .video`. The earlier claim that a JS-level `HTMLVideoElement.prototype.play()` override was "the reliable fix" dated from the broken-proxy era and is disproven — the wrapper itself was tripping stream attestation. If autoplay leaks through the native gate, solve it Swift-side ([#6](https://github.com/abutala/homely-vibes/issues/6)), never by re-tampering with the prototype.
+
+### Orientation lock (iOS 16+): `requestGeometryUpdate` alone is not enough
+- iOS only honours a request inside the intersection of `application(_:supportedInterfaceOrientationsFor:)` and the visible view controller's supported set. SwiftUI's hosting controller returns the whole Info.plist set, so without an AppDelegate gate the sensor wins. `AppDelegate.orientationLock` (`NoShortsApp.swift`) is that gate.
+- To rotate (`setOrientation` in `ContentView.swift`): set the lock, call `setNeedsUpdateOfSupportedInterfaceOrientations()` on every window's root view controller, then `requestGeometryUpdate` on each scene with an error handler.
+- Use `.landscapeRight`, not `.landscape` — `.landscape` is a mask that allows both, and iOS flips between them on the gyroscope.
+- Native video fullscreen (`AVPlayerViewController`) presents in its **own** `UIWindow`, which does not inherit the lock. Re-assert it on `UIWindow.didBecomeVisibleNotification`.
+- Every orientation you ever request must be listed in `INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone`; anything else is rejected silently.
+- Drive rotation from `<video>` `play`/`pause`/`ended` events, not URL changes — the SPA churns watch URLs. Don't rely on `WKWebView.fullscreenState` on iPhone: `<video>` fullscreen goes through the system player and that KVO often never fires.
+- Keep the SwiftUI `App` + `@UIApplicationDelegateAdaptor` shape. A UIKit `@main` delegate that builds its own `UIWindow` bypasses scene management, and the orientation callbacks fire inconsistently.
+
+### `NWListener.port` is unknown until `.ready`
+`listener.port` is `nil` (or `0` when started on `.any`) until the listener reaches `.ready`. `LocalProxy.start()` waits for `.ready` via `stateUpdateHandler` and a semaphore before reading it. Reading it early — or polling with `sleep` — hands WKWebView `127.0.0.1:0`, which fails with `NSURLErrorDomain -1004`.
+
+### Static helpers on a `@MainActor` type inherit its isolation
+A pure `static func` called from a `nonisolated` context (KVO closures, `WKScriptMessageHandler`, delegate callbacks) fails with "main actor-isolated … in a synchronous nonisolated context". If it takes and returns only values, mark it `nonisolated static func` (see `isYouTubeHome`).
 
 ### Why blocking YouTube per-app is hard on iOS
 - Chrome on iOS has no extensions and no per-site content blocking
@@ -61,6 +77,8 @@ Native-only: `mediaTypesRequiringUserActionForPlayback = .video`. The earlier cl
 
 ### Why DoH bypasses NextDNS
 NextDNS as a DNS profile reroutes the system DNS resolver. But it does **not** intercept arbitrary HTTPS traffic. A POST to `https://dns.google/dns-query` is just regular HTTPS — the request body happens to contain a DNS wire-format query. NextDNS sees an HTTPS connection to `dns.google`, not a DNS query, so it doesn't filter the response.
+
+That reasoning assumes NextDNS is installed as a **DNS profile** (Settings → General → VPN & Device Management → DNS). A VPN-mode install can route more than DNS, so check which mode is active before trusting the bypass.
 
 ### Threat model (what this does and doesn't defend against)
 - ✅ Defends against: typing `youtube.com` in Chrome, clicking a YouTube link in any other app, tapping the YouTube app's web bridge

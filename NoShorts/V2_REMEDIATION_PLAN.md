@@ -193,8 +193,8 @@ page-JS prototype/history tampering — §3a). Parts ordered by priority; 2 and 
   sign-out/data wipe. If a fresh login is ever blocked: restore the hide scoped to
   `accounts.google.com` only, then re-verify playback attestation (the hide never ran on
   youtube.com pages, so risk is low — but verify, don't assume).
-- [ ] **Housekeeping:** issue #232 is authored by `mastrix-tech` (wrong-hat account was active).
-  Either accept it or recreate under `abutala` and update references (README ×3, this file, PR #233 body).
+- [ ] **Housekeeping:** issue `homely-vibes-archived#232` is authored by a work GitHub account (wrong-hat account was active).
+  Either accept it or recreate under `abutala` and update references (README ×3, this file, PR `homely-vibes-archived#233` body).
 
 ## References
 

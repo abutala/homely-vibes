@@ -152,6 +152,26 @@ Facts worth keeping, because they are not obvious and cost real time:
   `mdat` tracks the present: the CLI rewrites it on every token rotation, and
   each rewrite resets both access lists. That is why no grant against *that*
   item could ever be durable, and why this app owns its own instead.
+- **Only a query that returns the secret prompts.** `kSecReturnData` triggers the
+  consent dialog; an attributes-only query (`kSecReturnAttributes`) is silent, so
+  use it to check whether an item exists without prompting.
+
+### `security` CLI exit codes are not `OSStatus`
+
+`/usr/bin/security find-generic-password … -w` exits with its own small curated
+codes, not the raw `OSStatus` and not its low byte — item-not-found exits **44**.
+A Unix exit status is 0–255, so a `case` on an `errSec*` constant (25293, 25308)
+can never match. `classifySecurityFailure` maps `44` → not found and `51` → access
+denied, then classifies by stderr: `could not be found` → not found;
+`interaction` / `denied` / `cancel` / `authoriz` → access denied. Only the
+not-found code is cheap to reproduce:
+
+```bash
+security find-generic-password -s <missing-service> -w; echo "exit=$?"
+```
+
+Test each numeric arm directly (`KeychainTokenReaderTests`), not through the
+stderr fallback — a dead arm hides behind a test that only proves the fallback.
 
 ### The usage endpoint is undocumented
 
