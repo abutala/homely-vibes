@@ -28,6 +28,21 @@ and per [Node's ESM docs](https://nodejs.org/api/esm.html) *"`NODE_PATH` is not 
 resolving `import` specifiers"* -- it applies only to CommonJS `require()`. Only a real
 `node_modules/` on the resolution walk works.
 
+### The dependency preflight must run *after* the token check
+
+`run_sidecar` checks for the token file before `_require_sidecar_deps()`. Reversed, a
+missing token reports "run `make node-deps`" instead of `BeamsAuthError` -> P0
+"Ring: Auth Required", sending you after the wrong problem. Local runs cannot catch a
+regression here: with `node_modules` installed the preflight never fires. CI has no
+`node_modules`, so `test_missing_token_raises_auth_error` is where the ordering is
+actually exercised.
+
+### `npm WARN EBADENGINE` on Node 25 is noise
+
+`ring-client-api@14.3.0` declares `"node": "^20 || ^22 || ^24"`. On Node 25 npm warns
+and installs anyway, and the sidecar runs normally there. Don't downgrade Node to
+silence it.
+
 ---
 
 ## Error reference

@@ -120,6 +120,24 @@ works, so it *will* reboot every 2h indefinitely. Loud, not silent -- each one
 sends a P1 -- but it will not stop on its own. `max_actions_per_day` is the
 brake if that ever happens.
 
+### Transient admin-API timeouts: retry the reads, never the reboot
+
+Every Deco request carries a 15 s timeout (`_DEFAULT_TIMEOUT`). A timeout is easy
+to spot in the cron log by timing alone: a healthy tick finishes about 8 s past the
+minute, and each timeout adds roughly 15 s (a one-timeout tick lands around
+18–24 s). They hit any of the four handshake calls (`keys`, `auth`, `login`,
+`client_list`) and do not repeat back to back.
+
+So `DecoClient._post` retries transient transport faults — `requests.Timeout` and
+`ConnectionError` only — up to `_POST_ATTEMPTS` (3) with a `_RETRY_BACKOFF_S` (1 s)
+pause. An HTTP error status is a real answer from the router and is not retried.
+This also keeps a single timeout on the mesh listing inside `_execute` from
+aborting a reboot that is actually needed.
+
+`reboot()` opts out with `retry=False`. A timed-out reboot may already have
+landed, and re-sending it can bounce a mesh that is on its way back up. Retrying a
+read is safe; retrying the reboot is not.
+
 ### Rebooting the modem
 
 When the fault is **internet down**, the upstream Xfinity gateway is restarted

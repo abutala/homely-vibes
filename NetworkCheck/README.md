@@ -107,10 +107,10 @@ Cron runs `check` every few minutes. Each tick:
 1. **Probe the internet** — raw `ip:port` TCP connects, no DNS. A DNS-based
    probe reports a false outage when only the Deco's DNS proxy died, and false
    health when a captive resolver answers.
-2. **Probe the LAN** — ping the gateway via `lib.NetHelpers.ping_output`.
-   *LAN up + WAN down* is the Deco-wedge signature. If the LAN is **also** down
-   it is our own NIC or cable, the Deco is unreachable anyway, and rebooting
-   blind would be wrong — so the watchdog alerts and stops.
+2. **Count the radios** — only when the uplink is up and `min_wireless_clients`
+   is set: ask the Deco for its client list and count the clients that are not
+   wired. Below the floor is a fault; an unreadable census counts as zero. There
+   is deliberately no LAN/gateway probe — see [Logbook.md](Logbook.md).
 3. **Decide** — `should_act()` is the entire policy surface; see
    [Logbook.md](Logbook.md).
 4. **Act** — reboot **every** unit in the mesh over the local API, in a single

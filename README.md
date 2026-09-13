@@ -36,7 +36,7 @@ make test
 make lint           # Check code quality
 
 # Code formatting and linting
-make lint-fix        # Fix all linting issues
+make ruff           # Auto-fix lint issues and format (ruff check --fix + ruff format)
 
 # Run specific services (see individual folder READMEs for details)
 uv run python Tesla/manage_power_clean.py

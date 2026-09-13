@@ -35,6 +35,25 @@ paths:
   logging_dir: /tmp/hv-logs
 ```
 
+**Every worktree fails with `fatal: this operation must be run in a work tree`**:
+the primary checkout is a normal (non-bare) repo with `extensions.worktreeConfig=true`,
+so `core.bare=true` in its shared `.git/config` breaks every linked worktree.
+Signature: `git rev-parse --git-dir` still resolves while `--is-inside-work-tree`
+prints `false`. `git worktree list` then shows the primary as `(bare)` — that is the
+bad config talking, not evidence the repo is bare. Recover from the primary checkout:
+
+```bash
+cd "$HOMELY_VIBES"
+git config --list --local | grep -E '^core\.bare=true|^core\.worktree|^user\.'   # expect no output
+git config core.bare false                                    # only if it read true
+git config --unset core.worktree                              # stray value pointing at a test tmp dir
+git config --unset user.name; git config --unset user.email   # identity falls back to ~/.gitconfig
+```
+
+The usual cause is a test running real `git` under a hook that exported `GIT_DIR`
+(see `AppleNotesBackup/Logbook.md`). **Never export `GIT_DIR`/`GIT_WORK_TREE` to work
+around git discovery** — they leak into hook subprocesses and cause exactly this.
+
 **Development Setup** (primary checkout):
 ```bash
 make setup  # Installs Python 3.13.7, dependencies, Git submodules, and pre-commit hooks
@@ -70,6 +89,12 @@ uv run python RachioFlume/rfmanager.py
 uv run python August/august_manager.py monitor
 uv run python SamsungFrame/manage_samsung.py status
 ```
+
+`make lint` rewrites files: `ruff check --fix`, `ruff format` and `codespell -w` can
+touch files unrelated to your change, and pre-commit can sweep those edits into your
+commit. Run `git diff --stat` afterwards and revert anything you did not intend. A
+real identifier codespell mangles belongs in `[tool.codespell] ignore-words-list` in
+`pyproject.toml`.
 
 ## Architecture Overview
 
@@ -171,6 +196,7 @@ uv run pytest NodeCheck
 - `make test` - Full test suite execution
 - `.github/scripts/secret-scan.sh` - Secret scanning
 - Conventional commit message format enforcement (e.g., `feat:`, `fix:`, `docs:`)
+- `make setup` - post-merge hook: re-runs setup after every merge or `git pull`
 
 **Type Checking**: mypy with strict configuration (Python 3.13 target)
 **Security**: semgrep for security analysis, secret-scan.sh for credential detection
@@ -292,6 +318,8 @@ Convention: `P{N}` maps 1:1 to Pushover `priority=N`. Every module README uses t
 
 ### Testing
 - **Never `patch()` production code.** If a test needs to mock a subprocess/HTTP call, refactor the production code to accept the dependency as a parameter (factory or client). RingBeams's `run_sidecar(ring_factory=...)` is the reference pattern.
+- **Module-level `cfg = get_config()` binds at import.** `get_config()` caches a singleton, so patching `get_config` after the module is imported changes nothing. Inject config as a parameter; if a legacy test must patch, patch the bound name (`module.cfg`), never the factory.
+- **Test labels are neutral** (`"Controller"`, `"Zone A"`). Never copy a device name, zone label, or any other value from `config/local.yaml` into a test or fixture — those are household identifiers, and the CI denylist scan fails the PR on them.
 - **Fake sidecars via `sh` scripts** for subprocess boundaries. `.chmod(0o755)` + write a shebang + parametrize exit codes and stdout. Zero mocking, real subprocess semantics. See `RingBeams/test_beams_manager.py`.
 - **Separate deterministic assertions** (exact values, structural matches) from anything that depends on wall-clock time or network state. Freeze time via fixtures if needed.
 - **NodeCheck runs in isolation** — pytest-forked to avoid subprocess state leak into other suites.
@@ -312,6 +340,13 @@ Convention: `P{N}` maps 1:1 to Pushover `priority=N`. Every module README uses t
 - Cron entries redirect stdout+stderr to a file: `>> ~/logs/<script>.log 2>&1`. Never `> /dev/null` — you'd lose pre-logger crashes (import errors, `uv` failures, missing binaries).
 - `lib.logger.get_logger()` sets up dual handlers (stdout + per-script log file under `cfg.paths.logging_dir`). Cron file redirection is the safety net for anything that happens before the logger initializes.
 - Cron env needs `PATH` set for non-standard binaries (`node`, `uv`). Prepend `PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin` at the top of the crontab, or use absolute paths in commands.
+- **Deploying to the prod host** after a PR merges — run on `<prod-host>`:
+  ```bash
+  cd "$HOMELY_VIBES" && git pull origin main && uv sync
+  make node-deps   # only when RingBeams/ changed; needs npm on PATH (see the Makefile hint for nvm)
+  ```
+  Cron one-shots pick up new code on their next run. Long-running jobs started from `@reboot` under `run-one-constantly` (e.g. `Tesla/manage_power.py`, `NodeCheck/heartbeat_nodes.py`, `RachioFlume/rfmanager.py collect`) keep running the old code until their python process is killed — find it with `pgrep -af <script>` and kill the python child, not the wrapper; the wrapper respawns it. A plain `@reboot` job with no wrapper (e.g. `NetworkCheck/external_ip_reporter.py`) only picks up changes on the next reboot.
+- **Never run `make setup` on the prod host** — deploy with `uv sync` (plus `make node-deps`). `setup` also runs `git submodule update` and `make hooks`, and once hooks are installed the post-merge hook re-runs `make setup` on every `git pull`. (`brew-deps` itself already skips off macOS.)
 
 ### Config changes
 - Add a dataclass to `lib/config.py` for any new module's config, then register it in the root `Config` dataclass. Never `cfg_dict.get("your_key")` — the config system exists to give you type-checked access.
@@ -323,7 +358,11 @@ Convention: `P{N}` maps 1:1 to Pushover `priority=N`. Every module README uses t
 - Always `git fetch origin && git pull origin main` before creating a branch. Merging stale local `main` is the most common source of avoidable conflicts.
 - Commit messages: conventional prefix (`feat:`, `fix:`, `docs:`, `refactor:`, `chore:`) enforced by pre-commit hook.
 - **Never bypass pre-commit hooks** (`--no-verify`) unless the hook itself is broken (rare) — investigate the underlying failure. If hooks conflict with staged changes on ruff auto-fix, run `uv run ruff format` manually first, then re-stage.
-- **PR review comment threads**: read → fix → push → reply *inside each thread* → resolve thread. `gh pr comment` alone is not the right tool — reviewers won't see the reply attached to their concern.
+- **PR review comment threads**: read → fix → push → reply *inside each thread* → resolve thread. `gh pr comment` alone is not the right tool — reviewers won't see the reply attached to their concern. Reply with `gh api repos/abutala/homely-vibes/pulls/<N>/comments/<comment_id>/replies -f body='…'`, then resolve with the GraphQL `resolveReviewThread(input: {threadId: …})` mutation (thread ids from `pullRequest.reviewThreads`) once the reply has returned an id.
+- **Merge gate** (repository rulesets, so the classic branch-protection API returns 404; inspect with `gh api repos/abutala/homely-vibes/rules/branches/main`): a PR is required, squash merge only, every review thread must be resolved, 0 approvals required, and the `lint`, `test`, `review` and `security-scan` checks must pass. `main` also forbids deletion, force-push and non-linear history. There are no bypass actors — `gh pr merge --admin` does not get past it. Arm `gh pr merge <N> --squash --auto` and the PR lands once checks pass and threads are resolved.
+- **A green `review` check does not mean "no issues".** The bot reviewer posts its findings as inline threads and the check still passes; it goes red only when no review was produced. Read the threads on the latest commit — the clean verdict is its "no issues found in commit `<sha>`" comment.
+- **`security-scan` reads every blob a PR adds, not the diff.** A bad string (a real inbox, a denylisted term) anywhere in a file fails every PR that touches that file, and a follow-up commit cannot clear it because the blob stays in the PR's range. Placeholders use `example.com`; check for a placeholder before assuming a real leak. To clean a branch: `git reset --soft origin/main`, recommit from the corrected tree, `git push --force-with-lease`.
+- **History starts 2026-08-30.** The repo was re-created without history, so PR and issue numbers restarted at #1. Older references are written `homely-vibes-archived#N` and point at a private archive — never resolve them against this repo.
 
 ## Development Workflow
 
