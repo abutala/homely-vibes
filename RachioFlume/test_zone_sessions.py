@@ -233,6 +233,9 @@ class TestReplayActiveZone:
 
 
 class TestWeeklyReportAlerts:
+    # Anomaly parameters are pinned to config/default.yaml in every report call below, so
+    # a local.yaml override cannot move the thresholds these tests assert.
+
     def test_controller_sessions_over_threshold_are_counted(self, db: WaterTrackingDB) -> None:
         # The report read "avg_flow_rate" off per-session rows, a key only the aggregate
         # query produces, so the Alrt column was blank for every controller zone.
@@ -251,6 +254,9 @@ class TestWeeklyReportAlerts:
             DAY - timedelta(days=1),
             DAY + timedelta(days=7),
             zone_thresholds={"Controller": {"1": ZoneThreshold(zone_key="1", avg_gpm=1.0)}},
+            absolute_gpm=0.5,
+            percent_above=10.0,
+            min_runtime_minutes=5,
         )
 
         (zone,) = report.zones
@@ -282,6 +288,9 @@ class TestWeeklyReportAlerts:
             DAY - timedelta(days=1),
             DAY + timedelta(days=1),
             zone_thresholds={"Hoses": {key: ZoneThreshold(zone_key=key, avg_gpm=0.5)}},
+            absolute_gpm=0.5,
+            percent_above=10.0,
+            min_runtime_minutes=5,
         )
 
         (zone,) = report.zones
@@ -309,6 +318,9 @@ class TestWeeklyReportAlerts:
             DAY - timedelta(days=1),
             DAY + timedelta(days=1),
             zone_thresholds={"Controller": {"1": ZoneThreshold(zone_key="1", avg_gpm=1.0)}},
+            absolute_gpm=0.5,
+            percent_above=10.0,
+            min_runtime_minutes=5,
         )
 
         (zone,) = report.zones

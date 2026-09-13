@@ -75,6 +75,9 @@ class WeeklyReporter:
         period_start: datetime,
         period_end: datetime,
         zone_thresholds: Optional[Dict[str, Dict[str, ZoneThreshold]]] = None,
+        absolute_gpm: Optional[float] = None,
+        percent_above: Optional[float] = None,
+        min_runtime_minutes: Optional[int] = None,
     ) -> WaterUsageReport:
         """Generate a comprehensive period report.
 
@@ -82,6 +85,8 @@ class WeeklyReporter:
             period_start: Start of the period
             period_end: End of the period
             zone_thresholds: Per-device zone baselines; loaded from config when omitted
+            absolute_gpm, percent_above, min_runtime_minutes: Zone-anomaly parameters;
+                each read from config when omitted
 
         Returns:
             WaterUsageReport containing period statistics
@@ -92,13 +97,15 @@ class WeeklyReporter:
 
         # Load anomaly config once — used to compute per-zone / per-valve
         # threshold (baseline + slack) and count how many sessions crossed it.
-        cfg = get_config()
-        za_cfg = cfg.rachio_flume.alerts.zone_anomaly
-        abs_gpm = za_cfg.absolute_gpm
-        pct_above = za_cfg.percent_above
+        za_cfg = get_config().rachio_flume.alerts.zone_anomaly
+        abs_gpm = za_cfg.absolute_gpm if absolute_gpm is None else absolute_gpm
+        pct_above = za_cfg.percent_above if percent_above is None else percent_above
         # Same floor the alert engine applies: a seconds-long run divides a whole Flume
         # minute by a few seconds and reads as an absurd GPM.
-        min_runtime_seconds = za_cfg.min_runtime_minutes * 60
+        runtime_minutes = (
+            za_cfg.min_runtime_minutes if min_runtime_minutes is None else min_runtime_minutes
+        )
+        min_runtime_seconds = runtime_minutes * 60
 
         if zone_thresholds is not None:
             all_thresholds = zone_thresholds
