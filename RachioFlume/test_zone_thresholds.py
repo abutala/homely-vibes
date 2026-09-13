@@ -95,9 +95,8 @@ def mock_engine(prod_db_path: str, zone_thresholds: dict[int, ZoneThreshold]) ->
     rachio.get_active_zone.return_value = None
     pushover = MagicMock()
 
-    cfg = get_config()
-    za_cfg = cfg.rachio_flume.alerts.zone_anomaly
-
+    # Pinned to the config/default.yaml values the assertions below were written
+    # against; reading them from get_config() let a local.yaml override move 7.7.
     return AlertEngine(
         flume_client=flume,
         rachio_client=rachio,
@@ -105,9 +104,9 @@ def mock_engine(prod_db_path: str, zone_thresholds: dict[int, ZoneThreshold]) ->
         db=db,
         rules=[],
         zone_thresholds=zone_thresholds,
-        absolute_gpm=za_cfg.absolute_gpm,
-        percent_above=za_cfg.percent_above,
-        min_runtime_minutes=za_cfg.min_runtime_minutes,
+        absolute_gpm=0.5,
+        percent_above=10.0,
+        min_runtime_minutes=5,
     )
 
 
