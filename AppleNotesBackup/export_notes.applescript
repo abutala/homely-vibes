@@ -21,8 +21,8 @@
 -- lists, tables, and checklists. Attachments are reported by count only.
 
 property allRecords : {}
-property uSep : (ASCII character 31)
-property rSep : (ASCII character 30)
+property uSep : (character id 31)
+property rSep : (character id 30)
 
 set allRecords to {}
 
