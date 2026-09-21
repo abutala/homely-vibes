@@ -550,7 +550,10 @@ class WaterTrackingDB:
                     SUM(duration_seconds) as total_duration_seconds,
                     AVG(duration_seconds) as avg_duration_seconds,
                     SUM(total_water_used) as total_water_used,
-                    AVG(average_flow_rate) as avg_flow_rate
+                    CASE WHEN SUM(duration_seconds) > 0
+                        THEN SUM(total_water_used) / (SUM(duration_seconds) / 60.0)
+                        ELSE 0.0
+                    END as avg_flow_rate
                 FROM zone_sessions
                 WHERE start_time >= ? AND start_time < ?
                 GROUP BY zone_name, zone_number
