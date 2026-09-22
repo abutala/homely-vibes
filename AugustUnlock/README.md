@@ -26,7 +26,7 @@ scratch.
 
 ## Setup
 
-1. **Install Xcode 16+** from the App Store and sign in (Xcode → Settings →
+1. **Install Xcode 26.4+** from the App Store and sign in (Xcode → Settings →
    Accounts). This is what lets Xcode auto-download the on-device Developer
    Disk Image — without it, device deploys fail with "Developer disk image
    could not be mounted".

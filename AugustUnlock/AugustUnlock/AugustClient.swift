@@ -99,7 +99,11 @@ final class AugustClient {
         var request = makeRequest(path: "/validation/email", apiKey: Self.authAPIKey, accessToken: token)
         request.httpMethod = "POST"
         request.httpBody = try JSONSerialization.data(withJSONObject: ["value": email])
-        _ = try await send(request)
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw AugustError.server(code, String(data: data, encoding: .utf8) ?? "")
+        }
     }
 
     /// Validates the emailed code, then re-establishes the session (now
@@ -114,9 +118,15 @@ final class AugustClient {
         var request = makeRequest(path: "/validate/email", apiKey: Self.authAPIKey, accessToken: token)
         request.httpMethod = "POST"
         request.httpBody = try JSONSerialization.data(withJSONObject: ["email": email, "code": code])
-        let (_, response) = try await send(request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
-            throw AugustError.invalidCode
+        let (data, response) = try await send(request)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard statusCode == 200 else {
+            // August rejects a wrong/expired code with 400; anything else
+            // (401/403/5xx) is a real server problem, not a bad code.
+            if statusCode == 400 {
+                throw AugustError.invalidCode
+            }
+            throw AugustError.server(statusCode, String(data: data, encoding: .utf8) ?? "")
         }
 
         guard try await requestSession(email: email, password: password) else {
@@ -163,7 +173,10 @@ final class AugustClient {
         guard let token = KeychainStore.get("august_access_token") else { throw AugustError.notAuthenticated }
         let request = makeRequest(path: "/users/locks/mine", apiKey: Self.lockAPIKey, accessToken: token)
         let (data, response) = try await send(request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw AugustError.noLocks }
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard statusCode == 200 else {
+            throw AugustError.server(statusCode, String(data: data, encoding: .utf8) ?? "")
+        }
 
         guard let locks = try JSONSerialization.jsonObject(with: data) as? [String: [String: Any]],
             let firstEntry = locks.first,
