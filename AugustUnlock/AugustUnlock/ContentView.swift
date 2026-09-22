@@ -279,6 +279,15 @@ struct ContentView: View {
                     phase = .needsLogin
                 }
             }
+            // A lock/unlock in flight is neither cancelled nor awaited —
+            // switching lock or signing out mid-operation would let a
+            // stale completion (for the *previous* lock) overwrite
+            // isUnlocked/operationResult after the screen has already
+            // moved on, showing "Unlocked" for a lock that was never
+            // actually acted on while the one that WAS just got left in an
+            // unknown state. Blocking both while in flight is simpler and
+            // safer than trying to cancel or reconcile a stale result.
+            .disabled(operationResult == .inProgress)
             .font(.footnote)
             .foregroundStyle(.secondary)
         }

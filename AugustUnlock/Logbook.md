@@ -166,3 +166,22 @@ device that isn't already signed in, which the testing device wasn't by the
 time auto-unlock was added. **Lesson: a device smoke test proves the happy
 path works; it doesn't substitute for reasoning through every path that
 sets the same state.**
+
+## 2026-09-22 — Switching locks mid-operation could leave the wrong door "Unlocked"
+
+Third finding from the same review pass, on the fix commit itself: "Change
+Lock" and "Sign Out" were only ever guarded by nothing — only the main
+toggle button disabled itself during an in-flight operation. A lock/unlock
+in flight is neither cancelled nor awaited (it's a detached `Task`), so
+switching lock (or signing out) while, say, the ~60s garage-bridge unlock
+was still pending would: drop the *new* lock's auto-unlock silently
+(`autoUnlockIfReady`'s `operationResult == .idle` guard rejects it, nothing
+retries), while the *old* lock's request eventually completes and writes
+its success into the same shared `isUnlocked`/`operationResult` state the
+screen is now using to describe the newly-switched-to lock — showing a
+green "Unlocked" for a door that was never touched, while the door that
+actually got unlocked (the old one) has silently dropped off screen with no
+indication. Fixed the simple way: disable both buttons while an operation
+is in flight, same as the toggle button already does. No attempt to cancel
+or reconcile a stale in-flight result — not worth the complexity for a
+personal one-button app; just don't let the race start.
