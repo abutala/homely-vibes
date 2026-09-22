@@ -162,9 +162,16 @@ final class AugustClient {
         }
         KeychainStore.set(accessToken, forKey: "august_access_token")
 
+        // vPassword/vInstallId are JSON booleans (confirmed against captured
+        // August /session responses), not strings — August/august_client.py
+        // doesn't hit this directly (it goes through yalexs'
+        // _authentication_from_session_response, which does the same
+        // vPassword-then-vInstallId check).
         let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-        let vInstallId = json["vInstallId"] as? String
-        return !(vInstallId?.isEmpty ?? true)
+        guard (json["vPassword"] as? Bool) ?? false else {
+            throw AugustError.badCredentials
+        }
+        return (json["vInstallId"] as? Bool) ?? false
     }
 
     // MARK: - Locks
