@@ -263,6 +263,37 @@ class TestWeeklyReportAlerts:
         assert zone.sessions == 2
         assert zone.alert_sessions == 1
 
+    def test_report_gpm_is_duration_weighted_not_a_naive_average_of_sessions(
+        self, db: WaterTrackingDB
+    ) -> None:
+        # A short spurious session (a few seconds, one partial Flume minute counted in
+        # full) reads as an absurd instantaneous rate. Averaging session rates unweighted
+        # let that spike dominate the reported GPM even though it moved almost no water.
+        db.save_watering_events(
+            [
+                event("06:00:00", 1, "ZONE_STARTED"),
+                event("06:00:15", 1, "ZONE_COMPLETED"),
+                event("06:05:00", 1, "ZONE_STARTED"),
+                event("06:35:00", 1, "ZONE_COMPLETED"),
+            ]
+        )
+        flow(db, "06:00", 1, 20.0)  # 20 gal in the single minute overlapping the 15s run
+        flow(db, "06:05", 30, 2.0)  # 30 min real run at a steady 2 GPM
+        db.compute_zone_sessions()
+
+        report = WeeklyReporter(str(db.db_path)).generate_period_report_with_dates(
+            DAY - timedelta(days=1),
+            DAY + timedelta(days=7),
+            zone_thresholds={},
+            absolute_gpm=0.5,
+            percent_above=10.0,
+            min_runtime_minutes=5,
+        )
+
+        (zone,) = report.zones
+        assert zone.total_water_gallons == pytest.approx(80.0)
+        assert zone.average_flow_rate_gpm == pytest.approx(80.0 / 30.25, abs=0.01)
+
     def test_hose_valve_threshold_matches_despite_a_different_prefix(
         self, db: WaterTrackingDB
     ) -> None:
