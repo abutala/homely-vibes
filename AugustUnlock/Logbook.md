@@ -49,3 +49,81 @@ Python-only, with no Swift port, and implements an encrypted offline-key
 handshake that isn't publicly documented — porting it from scratch is out of
 scope for a one-button convenience app. The cloud API round-trip is the
 practical option; it's typically 1-2 seconds.
+
+## 2026-09-22 — Two auth bugs the original build never caught, because it was never run
+
+The PR that introduced `AugustUnlock` (#21) shipped without ever running the
+app — only CLT was available on the building machine, not full Xcode. Once
+actually built and signed for a real device, sign-in was completely broken,
+in two separate ways, both in `requestSession()`:
+
+1. **`vInstallId`/`vPassword` are JSON booleans, not strings.** The original
+   code cast `json["vInstallId"] as? String`, which always fails against a
+   real August response (confirmed via a captured `/session` response:
+   `"vInstallId": true, "vPassword": true`, not string values) — so the cast
+   silently returned `nil`, and `requestSession()` always reported "not
+   authenticated." Concretely: right after entering the correct emailed 2FA
+   code, `validateCode()` re-ran `requestSession()`, got the same false
+   negative, and threw "enter verification code" again — an unbreakable
+   loop. No amount of code review catches a silent `as?` cast failure; it
+   compiles clean and only misbehaves against the real API shape.
+2. **The `/session` `identifier` field needs `"<login_method>:"` prefixed.**
+   `yalexs`' `AuthenticatorAsync` builds it as
+   `self._login_method + ":" + self._username` (e.g. `"email:you@x.com"`),
+   not the bare email. The original code sent the bare email, which August
+   rejects as a malformed identifier — surfaced identically to a bad
+   password. Symptom: "incorrect August email or password" in the app, while
+   the same credentials worked fine in a browser. This is the same class of
+   bug as #1 — a detail that's undocumented outside `yalexs`' source and
+   invisible without a real login attempt.
+
+Both fixes were found the same way: build a case, then read the exact
+`yalexs` code path August/august_client.py already exercises successfully
+(`authenticator_common.py::_authentication_from_session_response`,
+`authenticator_async.py::async_authenticate`) and diff it against the Swift
+port line by line. **Lesson: for an API with no public docs, "matches the
+proven-working Python client" isn't optional polish — it's the only source
+of truth, and it has to be checked field-by-field including types, not just
+endpoint paths.**
+
+## 2026-09-22 — Multi-lock accounts: no silent lowest-ID pick
+
+The original design picked whichever lock had the lexicographically lowest
+ID and used it forever, on the theory that "single-lock household" covers
+the common case. It doesn't here: confirmed on a real multi-lock account
+(front door + garage), the app silently controlled the wrong door on first
+run. Replaced with: `fetchLocks()` returns everything, the caller decides —
+auto-select on a single-lock account (unchanged zero-tap behavior), a
+one-time picker when there's more than one, plus a "Change Lock" link on the
+main screen so a wrong pick doesn't require signing all the way out to fix.
+
+## 2026-09-22 — A bridge-connected lock can take ~60s; that's not a hang
+
+The garage lock (behind a WiFi bridge, unlike the directly-connected front
+door) spun for the better part of a minute before succeeding. Checked
+`yalexs` before assuming a bug: `ApiAsync` uses a 60s `command_timeout` for
+exactly this operation, and has dedicated exceptions for "the bridge
+(connect) is offline / is in use / failed to respond" — August's own client
+expects a bridge relay to legitimately take that long. Nothing to fix;
+documented in the README so it doesn't read as broken next time.
+
+## 2026-09-22 — Auto-unlock on app open (deliberate trade-off, not a default)
+
+Changed from "tap a button to unlock" to "opening the app unlocks
+immediately, tap again to lock" — requested explicitly, not a design
+decision made unilaterally. Flagged the trade-off before building it: this
+means an accidental app open (pocket touch, a curious kid swiping through
+apps) unlocks the front door with zero confirmation. Accepted knowingly.
+Implementation notes:
+
+- Fires from both `.onAppear` (cold launch) and `scenePhase == .active`
+  (resuming from background) — `.onAppear` alone only fires once per view
+  lifetime and misses "reopen from background," which is the common case in
+  practice.
+- Guarded on the door's local `isUnlocked` state so reopening an
+  already-unlocked session doesn't resend the command every time you glance
+  at the phone.
+- The door's lock/unlock state is optimistic and session-local (whatever the
+  last command issued was) — there's no status poll, so a lock operated by
+  someone else (the physical keypad, another household member's app) won't
+  be reflected until this app issues its own command.

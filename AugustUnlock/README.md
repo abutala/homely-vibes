@@ -42,7 +42,10 @@ scratch.
 6. On first launch, sign in with your August email + password. If August asks
    for a verification code, it's emailed (not texted) — enter it once. After
    that the app stays signed in like the official app does; you should never
-   need to sign in again on that phone.
+   need to sign in again on that phone. If your account has more than one
+   lock, you'll get a one-time picker — see [How it works](#how-it-works).
+   The moment setup finishes, the app unlocks (see
+   [Security notes](#security-notes)) — that's expected, not a bug.
 
 ## Building an IPA (for Sideloadly)
 
