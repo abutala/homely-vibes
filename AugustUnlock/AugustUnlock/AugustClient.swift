@@ -163,7 +163,7 @@ final class AugustClient {
         KeychainStore.set(accessToken, forKey: "august_access_token")
 
         let json = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-        let vInstallId = json?["vInstallId"] as? String
+        let vInstallId = json["vInstallId"] as? String
         return !(vInstallId?.isEmpty ?? true)
     }
 
@@ -178,8 +178,12 @@ final class AugustClient {
             throw AugustError.server(statusCode, String(data: data, encoding: .utf8) ?? "")
         }
 
+        // Dictionary iteration order is arbitrary (JSONSerialization does not
+        // preserve key order, and Swift's is not stable across launches
+        // either), so for a multi-lock account, sort by lock ID to pick the
+        // same lock every time rather than a different one each login.
         guard let locks = try JSONSerialization.jsonObject(with: data) as? [String: [String: Any]],
-            let firstEntry = locks.first,
+            let firstEntry = locks.min(by: { $0.key < $1.key }),
             let name = firstEntry.value["LockName"] as? String
         else { throw AugustError.noLocks }
 
