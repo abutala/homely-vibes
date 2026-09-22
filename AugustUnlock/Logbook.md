@@ -140,8 +140,15 @@ added auto-unlock, before it merged:
    .active` without ever passing through `.background`. The original guard
    (`if newPhase == .active`) re-fired the auto-unlock on every one of
    those — including right after the user deliberately locked the door via
-   the button, silently undoing it. Fixed by checking the transition is
-   specifically `.background -> .active`, not just landing on `.active`.
+   the button, silently undoing it. First fix attempt (`oldPhase ==
+   .background && newPhase == .active` in the same `onChange` call) was
+   itself wrong — a real background resume is `.background -> .inactive ->
+   .active`, two separate `onChange` calls, so that exact single-step
+   pairing never occurs and the fix made *all* auto-unlock-on-resume dead
+   code (caught by a second review pass on the fix itself). Landed on:
+   track having actually seen `.background` in a flag, consume it on the
+   next `.active`. That's the only version that both ignores transient
+   interruptions and still fires on a genuine resume.
 2. **Auto-unlock never actually fired the first time.** `submitLogin`,
    `submitCode`, and the lock-picker's selection all set `phase = .ready`
    directly; `autoUnlockIfReady()` only ran from `.onAppear` and the

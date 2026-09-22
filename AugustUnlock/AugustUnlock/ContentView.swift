@@ -23,6 +23,12 @@ struct ContentView: View {
     /// there's no status poll, just the outcome of the last lock/unlock this
     /// app issued. Resets to `false` (locked) on every fresh launch.
     @State private var isUnlocked = false
+    /// Set when the scene actually reaches `.background`, consumed on the
+    /// next `.active`. A real background resume is `.background ->
+    /// .inactive -> .active` (two onChange calls, never one direct
+    /// `.background -> .active` pairing), so this can't be a same-call
+    /// oldPhase/newPhase check — see the Logbook entry for why.
+    @State private var wasBackgrounded = false
 
     private enum OperationResult: Equatable {
         case idle
@@ -51,17 +57,24 @@ struct ContentView: View {
             phase = AugustClient.shared.isReady ? .ready : .needsLogin
             autoUnlockIfReady()
         }
-        .onChange(of: scenePhase) { oldPhase, newPhase in
+        .onChange(of: scenePhase) { _, newPhase in
             // Covers reopening from the background, not just cold launch —
-            // onAppear alone only fires once per view lifetime. Must be
-            // .background -> .active specifically, not merely == .active:
-            // Control Center, Notification Center, and the incoming-call
-            // banner all bounce the scene .active -> .inactive -> .active
-            // without ever backgrounding it, so a bare `newPhase == .active`
-            // re-unlocks the door every time one of those is dismissed --
-            // including right after the user deliberately locked it.
-            if oldPhase == .background, newPhase == .active {
+            // onAppear alone only fires once per view lifetime. A real
+            // resume is .background -> .inactive -> .active (two separate
+            // onChange calls, so a same-call oldPhase check never matches);
+            // a transient interruption (Control Center, Notification
+            // Center, the incoming-call banner) is .active -> .inactive ->
+            // .active and never touches .background at all. Track having
+            // actually seen .background and consume it on .active, instead
+            // of pattern-matching a single transition.
+            switch newPhase {
+            case .background:
+                wasBackgrounded = true
+            case .active where wasBackgrounded:
+                wasBackgrounded = false
                 autoUnlockIfReady()
+            default:
+                break
             }
         }
     }
