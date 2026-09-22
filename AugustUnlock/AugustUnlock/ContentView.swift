@@ -4,6 +4,7 @@ private enum Phase {
     case loading
     case needsLogin
     case needsCode
+    case pickLock
     case ready
 }
 
@@ -13,6 +14,7 @@ struct ContentView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var code = ""
+    @State private var availableLocks: [AugustLock] = []
     @State private var errorMessage: String?
     @State private var isBusy = false
     @State private var unlockResult: UnlockResult = .idle
@@ -33,6 +35,8 @@ struct ContentView: View {
                 loginForm
             case .needsCode:
                 codeForm
+            case .pickLock:
+                pickLockView
             case .ready:
                 unlockScreen
             }
@@ -79,10 +83,35 @@ struct ContentView: View {
         do {
             let authenticated = try await AugustClient.shared.login(email: email, password: password)
             if authenticated {
-                phase = .ready
+                await resolveLock()
             } else {
                 try await AugustClient.shared.sendVerificationCode()
                 phase = .needsCode
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// After a fresh login/verification: keep an already-chosen lock as-is,
+    /// auto-select the only lock on a single-lock account (today's
+    /// zero-tap behavior), or ask when there's more than one.
+    private func resolveLock() async {
+        if AugustClient.shared.hasSelectedLock {
+            phase = .ready
+            return
+        }
+        do {
+            let locks = try await AugustClient.shared.fetchLocks()
+            switch locks.count {
+            case 0:
+                errorMessage = AugustError.noLocks.errorDescription
+            case 1:
+                AugustClient.shared.selectLock(locks[0])
+                phase = .ready
+            default:
+                availableLocks = locks
+                phase = .pickLock
             }
         } catch {
             errorMessage = error.localizedDescription
@@ -123,10 +152,32 @@ struct ContentView: View {
         defer { isBusy = false }
         do {
             try await AugustClient.shared.validateCode(code)
-            phase = .ready
+            await resolveLock()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - Lock picker
+
+    private var pickLockView: some View {
+        VStack(spacing: 16) {
+            Text("Choose a Lock")
+                .font(.title2).bold()
+            Text("Your August account has more than one lock.")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            ForEach(availableLocks) { lock in
+                Button(lock.name) {
+                    AugustClient.shared.selectLock(lock)
+                    phase = .ready
+                }
+                .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .frame(maxWidth: 320)
     }
 
     // MARK: - Unlock
@@ -159,15 +210,36 @@ struct ContentView: View {
 
             statusText
 
-            Button("Sign Out") {
-                AugustClient.shared.signOut()
-                email = ""
-                password = ""
-                code = ""
-                phase = .needsLogin
+            HStack(spacing: 24) {
+                Button("Change Lock") {
+                    Task { await presentLockPicker() }
+                }
+                Button("Sign Out") {
+                    AugustClient.shared.signOut()
+                    email = ""
+                    password = ""
+                    code = ""
+                    phase = .needsLogin
+                }
             }
             .font(.footnote)
             .foregroundStyle(.secondary)
+        }
+    }
+
+    /// Re-fetches the account's locks and shows the picker again, even if
+    /// there's only one — lets a wrong first-time pick be corrected without
+    /// signing all the way out.
+    private func presentLockPicker() async {
+        errorMessage = nil
+        do {
+            availableLocks = try await AugustClient.shared.fetchLocks()
+            phase = availableLocks.isEmpty ? .ready : .pickLock
+            if availableLocks.isEmpty {
+                errorMessage = AugustError.noLocks.errorDescription
+            }
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 

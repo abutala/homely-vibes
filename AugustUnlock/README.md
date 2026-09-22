@@ -64,8 +64,9 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
   ID. Standard practice for a personal-use app — this is the same trust model
   the official August app uses.
 - `ContentView.swift` — the whole UI: sign-in form → one-time verification
-  code entry → the unlock button. No settings screen; the first lock found on
-  the account is used automatically.
+  code entry → the unlock button. A single-lock account skips straight to the
+  button; a multi-lock account gets a one-time picker on first sign-in (and a
+  "Change Lock" link on the main screen to redo it later).
 
 ## Security notes
 

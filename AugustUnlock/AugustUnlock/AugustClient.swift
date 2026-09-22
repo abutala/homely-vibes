@@ -20,6 +20,11 @@ enum AugustError: LocalizedError {
     }
 }
 
+struct AugustLock: Identifiable, Equatable {
+    let id: String
+    let name: String
+}
+
 /// Talks to August's cloud API directly from the device — no home server in
 /// the loop. Mirrors the request shapes in August/august_client.py (this
 /// repo's Python client, built on the `yalexs` library) since there is no
@@ -77,18 +82,16 @@ final class AugustClient {
 
     // MARK: - Login flow
 
-    /// Logs in with email+password. Returns true once fully authenticated
-    /// and a lock has been discovered; false if August still wants a
-    /// verification code — call `sendVerificationCode()` next.
+    /// Logs in with email+password. Returns true once fully authenticated;
+    /// false if August still wants a verification code — call
+    /// `sendVerificationCode()` next. Lock selection is a separate step
+    /// (see `fetchLocks`/`selectLock`) since the caller decides how to
+    /// handle a multi-lock account.
     @discardableResult
     func login(email: String, password: String) async throws -> Bool {
         KeychainStore.set(email, forKey: "august_email")
         KeychainStore.set(password, forKey: "august_password")
-        let authenticated = try await requestSession(email: email, password: password)
-        if authenticated {
-            try await discoverLock()
-        }
-        return authenticated
+        return try await requestSession(email: email, password: password)
     }
 
     func sendVerificationCode() async throws {
@@ -107,8 +110,7 @@ final class AugustClient {
     }
 
     /// Validates the emailed code, then re-establishes the session (now
-    /// fully authenticated, since this install_id is verified) and
-    /// discovers the lock to unlock.
+    /// fully authenticated, since this install_id is verified).
     func validateCode(_ code: String) async throws {
         guard let token = KeychainStore.get("august_access_token"),
             let email = KeychainStore.get("august_email"),
@@ -132,7 +134,6 @@ final class AugustClient {
         guard try await requestSession(email: email, password: password) else {
             throw AugustError.requiresVerification
         }
-        try await discoverLock()
     }
 
     /// POSTs /session and stores the resulting access token. Returns true if
@@ -180,7 +181,11 @@ final class AugustClient {
 
     // MARK: - Locks
 
-    private func discoverLock() async throws {
+    var hasSelectedLock: Bool { KeychainStore.get("august_lock_id") != nil }
+
+    /// Fetches every lock on the account. Doesn't select one — the caller
+    /// decides (auto-select when there's exactly one, otherwise prompt).
+    func fetchLocks() async throws -> [AugustLock] {
         guard let token = KeychainStore.get("august_access_token") else { throw AugustError.notAuthenticated }
         let request = makeRequest(path: "/users/locks/mine", apiKey: Self.lockAPIKey, accessToken: token)
         let (data, response) = try await send(request)
@@ -189,17 +194,22 @@ final class AugustClient {
             throw AugustError.server(statusCode, String(data: data, encoding: .utf8) ?? "")
         }
 
+        guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else {
+            throw AugustError.noLocks
+        }
         // Dictionary iteration order is arbitrary (JSONSerialization does not
         // preserve key order, and Swift's is not stable across launches
-        // either), so for a multi-lock account, sort by lock ID to pick the
-        // same lock every time rather than a different one each login.
-        guard let locks = try JSONSerialization.jsonObject(with: data) as? [String: [String: Any]],
-            let firstEntry = locks.min(by: { $0.key < $1.key }),
-            let name = firstEntry.value["LockName"] as? String
-        else { throw AugustError.noLocks }
+        // either) — sort by lock ID so the list order is at least stable
+        // across launches, even though it's arbitrary relative to the
+        // account's real-world lock order.
+        return raw.sorted { $0.key < $1.key }.compactMap { id, fields in
+            (fields["LockName"] as? String).map { AugustLock(id: id, name: $0) }
+        }
+    }
 
-        KeychainStore.set(firstEntry.key, forKey: "august_lock_id")
-        KeychainStore.set(name, forKey: "august_lock_name")
+    func selectLock(_ lock: AugustLock) {
+        KeychainStore.set(lock.id, forKey: "august_lock_id")
+        KeychainStore.set(lock.name, forKey: "august_lock_name")
     }
 
     // MARK: - Unlock
