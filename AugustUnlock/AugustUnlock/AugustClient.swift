@@ -140,9 +140,13 @@ final class AugustClient {
     private func requestSession(email: String, password: String) async throws -> Bool {
         var request = makeRequest(path: "/session", apiKey: Self.authAPIKey, accessToken: nil)
         request.httpMethod = "POST"
+        // identifier must be "<login method>:<username>" (yalexs:
+        // AuthenticatorAsync builds it as self._login_method + ":" +
+        // self._username) — the bare email is rejected as a bad identifier,
+        // which August's API surfaces identically to a bad password.
         request.httpBody = try JSONSerialization.data(withJSONObject: [
             "installId": installID,
-            "identifier": email,
+            "identifier": "email:\(email)",
             "password": password,
         ])
 
