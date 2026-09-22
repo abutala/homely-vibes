@@ -116,10 +116,11 @@ means an accidental app open (pocket touch, a curious kid swiping through
 apps) unlocks the front door with zero confirmation. Accepted knowingly.
 Implementation notes:
 
-- Fires from both `.onAppear` (cold launch) and `scenePhase == .active`
-  (resuming from background) — `.onAppear` alone only fires once per view
-  lifetime and misses "reopen from background," which is the common case in
-  practice.
+- Fires from both `.onAppear` (cold launch) and `scenePhase` transitioning
+  `.background -> .active` (resuming from background) — `.onAppear` alone
+  only fires once per view lifetime and misses "reopen from background,"
+  which is the common case in practice. See the next entry for why it must
+  check the *old* phase too, not just `newPhase == .active`.
 - Guarded on the door's local `isUnlocked` state so reopening an
   already-unlocked session doesn't resend the command every time you glance
   at the phone.
@@ -127,3 +128,34 @@ Implementation notes:
   last command issued was) — there's no status poll, so a lock operated by
   someone else (the physical keypad, another household member's app) won't
   be reflected until this app issues its own command.
+
+## 2026-09-22 — Two bugs in the auto-unlock feature, caught by PR review before merge
+
+The automated PR reviewer (`agent-review.yml`) flagged both on the PR that
+added auto-unlock, before it merged:
+
+1. **`scenePhase == .active` fires on more than "reopened from
+   background."** Control Center, Notification Center, and the
+   incoming-call banner all bounce the scene `.active -> .inactive ->
+   .active` without ever passing through `.background`. The original guard
+   (`if newPhase == .active`) re-fired the auto-unlock on every one of
+   those — including right after the user deliberately locked the door via
+   the button, silently undoing it. Fixed by checking the transition is
+   specifically `.background -> .active`, not just landing on `.active`.
+2. **Auto-unlock never actually fired the first time.** `submitLogin`,
+   `submitCode`, and the lock-picker's selection all set `phase = .ready`
+   directly; `autoUnlockIfReady()` only ran from `.onAppear` and the
+   `scenePhase` handler, neither of which fires when setup finishes while
+   the app is already in the foreground. So the very case the feature was
+   built for — finish signing in, expect the door to already be open — did
+   nothing until the *next* cold launch or background resume. Fixed by
+   routing every "setup just finished" transition through one
+   `enterReady()` helper that sets the phase and fires the auto-unlock.
+
+Neither would have been caught by the local build-and-run testing this PR
+otherwise did — the first only reproduces via a real interruption (a call,
+Control Center) at just the right moment; the second only reproduces on a
+device that isn't already signed in, which the testing device wasn't by the
+time auto-unlock was added. **Lesson: a device smoke test proves the happy
+path works; it doesn't substitute for reasoning through every path that
+sets the same state.**

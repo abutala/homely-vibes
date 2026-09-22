@@ -51,10 +51,16 @@ struct ContentView: View {
             phase = AugustClient.shared.isReady ? .ready : .needsLogin
             autoUnlockIfReady()
         }
-        .onChange(of: scenePhase) { _, newPhase in
+        .onChange(of: scenePhase) { oldPhase, newPhase in
             // Covers reopening from the background, not just cold launch —
-            // onAppear alone only fires once per view lifetime.
-            if newPhase == .active {
+            // onAppear alone only fires once per view lifetime. Must be
+            // .background -> .active specifically, not merely == .active:
+            // Control Center, Notification Center, and the incoming-call
+            // banner all bounce the scene .active -> .inactive -> .active
+            // without ever backgrounding it, so a bare `newPhase == .active`
+            // re-unlocks the door every time one of those is dismissed --
+            // including right after the user deliberately locked it.
+            if oldPhase == .background, newPhase == .active {
                 autoUnlockIfReady()
             }
         }
@@ -121,7 +127,7 @@ struct ContentView: View {
     /// zero-tap behavior), or ask when there's more than one.
     private func resolveLock() async {
         if AugustClient.shared.hasSelectedLock {
-            phase = .ready
+            enterReady()
             return
         }
         do {
@@ -131,7 +137,7 @@ struct ContentView: View {
                 errorMessage = AugustError.noLocks.errorDescription
             case 1:
                 AugustClient.shared.selectLock(locks[0])
-                phase = .ready
+                enterReady()
             default:
                 availableLocks = locks
                 phase = .pickLock
@@ -139,6 +145,16 @@ struct ContentView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// Enters the ready/unlock screen and fires the auto-unlock — the single
+    /// path every "setup just finished" transition (already-signed-in,
+    /// single-lock auto-select, or a fresh lock pick) must go through so the
+    /// promised "opens unlocked" behavior actually holds the first time,
+    /// not just on a later cold launch or background resume.
+    private func enterReady() {
+        phase = .ready
+        autoUnlockIfReady()
     }
 
     // MARK: - 2FA code
@@ -194,7 +210,11 @@ struct ContentView: View {
             ForEach(availableLocks) { lock in
                 Button(lock.name) {
                     AugustClient.shared.selectLock(lock)
-                    phase = .ready
+                    // isUnlocked tracked the *previous* lock (relevant when
+                    // reached via "Change Lock"), not this one — reset so
+                    // enterReady()'s auto-unlock actually fires for it.
+                    isUnlocked = false
+                    enterReady()
                 }
                 .buttonStyle(.bordered)
                 .frame(maxWidth: .infinity)
