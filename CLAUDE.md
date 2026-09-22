@@ -105,7 +105,7 @@ This is a **modular IoT home automation system** with independent components tha
 - **Home / IoT modules**: August, NetworkCheck, NodeCheck, RachioFlume, RingBeams, RingSecurity, SamsungFrame, Tesla
 - **AI / ML modules**: BimpopAI (RAG system), GarageCheck (computer vision), VoiceNotes (local STT)
 - **Ops modules**: PersonalCalSync (Google Apps Script)
-- **Client / adjacent**: NoShorts (iOS app), VSCodeSidebarNotes (VS Code / Cursor extension), BrowserAlert, GPXParser
+- **Client / adjacent**: NoShorts (iOS app), AugustUnlock (iOS app), VSCodeSidebarNotes (VS Code / Cursor extension), BrowserAlert, GPXParser
 
 ### Key Architectural Patterns
 
@@ -214,6 +214,12 @@ uv run pytest NodeCheck
 - **Initial Setup**: Run `august_manager.py test` to trigger 2FA, then use `validate_2fa.py` with verification code
 - **Key Classes**: AugustManager with state persistence for alert tracking
 - **Alert Thresholds**: Configurable via CLI (default: 5min unlock, 10min ajar, 20% battery)
+
+### AugustUnlock Module (`AugustUnlock/`)
+- **Stack**: SwiftUI iOS app (NOT Python — no uv, no pytest). Same Xcode-project pattern as `NoShorts/` (`PBXFileSystemSynchronizedRootGroup`, sideload via `scripts/build_ipa.sh` + Sideloadly).
+- **Purpose**: One button — tap it, the August front door unlocks. Talks to August's cloud API directly (`api-production.august.com`), no home server or VPN in the loop; see the module README's "Why no server" section.
+- **Key files**: `AugustClient.swift` (whole August REST client — login, email 2FA, token refresh, unlock), `KeychainStore.swift` (on-device credential storage), `ContentView.swift` (the whole UI).
+- **Gotchas**: two non-obvious August API details (a revoked API key; lock operations using a different key than login) are ported from `August/august_client.py` — see [AugustUnlock/Logbook.md](AugustUnlock/Logbook.md) before touching API keys or endpoints.
 
 ### BimpopAI Module (`BimpopAI/`)
 - **Architecture**: FastAPI backend + Streamlit frontend
