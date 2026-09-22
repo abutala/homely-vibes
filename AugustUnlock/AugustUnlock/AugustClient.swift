@@ -212,18 +212,22 @@ final class AugustClient {
         KeychainStore.set(lock.name, forKey: "august_lock_name")
     }
 
-    // MARK: - Unlock
+    // MARK: - Lock / unlock
 
     func unlock() async throws {
-        try await unlock(isRetry: false)
+        try await operate(action: "unlock", isRetry: false)
     }
 
-    private func unlock(isRetry: Bool) async throws {
+    func lock() async throws {
+        try await operate(action: "lock", isRetry: false)
+    }
+
+    private func operate(action: String, isRetry: Bool) async throws {
         guard let token = KeychainStore.get("august_access_token") else { throw AugustError.notAuthenticated }
         guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
 
         var request = makeRequest(
-            path: "/remoteoperate/\(lockID)/unlock", apiKey: Self.lockAPIKey, accessToken: token)
+            path: "/remoteoperate/\(lockID)/\(action)", apiKey: Self.lockAPIKey, accessToken: token)
         request.httpMethod = "PUT"
 
         let (data, response) = try await send(request)
@@ -241,7 +245,7 @@ final class AugustClient {
             else {
                 throw AugustError.notAuthenticated
             }
-            try await unlock(isRetry: true)
+            try await operate(action: action, isRetry: true)
             return
         }
 

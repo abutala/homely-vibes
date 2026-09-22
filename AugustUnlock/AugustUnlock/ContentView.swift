@@ -9,6 +9,7 @@ private enum Phase {
 }
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var phase: Phase = .loading
 
     @State private var email = ""
@@ -17,11 +18,15 @@ struct ContentView: View {
     @State private var availableLocks: [AugustLock] = []
     @State private var errorMessage: String?
     @State private var isBusy = false
-    @State private var unlockResult: UnlockResult = .idle
+    @State private var operationResult: OperationResult = .idle
+    /// Optimistic, session-local belief about the door's current state —
+    /// there's no status poll, just the outcome of the last lock/unlock this
+    /// app issued. Resets to `false` (locked) on every fresh launch.
+    @State private var isUnlocked = false
 
-    private enum UnlockResult: Equatable {
+    private enum OperationResult: Equatable {
         case idle
-        case unlocking
+        case inProgress
         case success
         case failure(String)
     }
@@ -44,7 +49,25 @@ struct ContentView: View {
         .padding()
         .onAppear {
             phase = AugustClient.shared.isReady ? .ready : .needsLogin
+            autoUnlockIfReady()
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Covers reopening from the background, not just cold launch —
+            // onAppear alone only fires once per view lifetime.
+            if newPhase == .active {
+                autoUnlockIfReady()
+            }
+        }
+    }
+
+    /// Fires the unlock the moment the app is opened, with no button tap —
+    /// requested explicitly: opening the app is the confirmation. Guarded on
+    /// `.idle` so a mid-operation re-open can't double-fire, and on
+    /// `!isUnlocked` so re-opening an already-unlocked session doesn't
+    /// needlessly resend the command.
+    private func autoUnlockIfReady() {
+        guard phase == .ready, operationResult == .idle, !isUnlocked else { return }
+        Task { await performUnlock() }
     }
 
     // MARK: - Login
@@ -191,22 +214,22 @@ struct ContentView: View {
             }
 
             Button {
-                Task { await performUnlock() }
+                Task { await performToggle() }
             } label: {
                 ZStack {
                     Circle()
-                        .fill(unlockButtonColor)
+                        .fill(buttonColor)
                         .frame(width: 200, height: 200)
-                    if unlockResult == .unlocking {
+                    if operationResult == .inProgress {
                         ProgressView().tint(.white).scaleEffect(1.5)
                     } else {
-                        Image(systemName: unlockResult == .success ? "lock.open.fill" : "lock.fill")
+                        Image(systemName: isUnlocked ? "lock.open.fill" : "lock.fill")
                             .font(.system(size: 64))
                             .foregroundStyle(.white)
                     }
                 }
             }
-            .disabled(unlockResult == .unlocking)
+            .disabled(operationResult == .inProgress)
 
             statusText
 
@@ -219,6 +242,7 @@ struct ContentView: View {
                     email = ""
                     password = ""
                     code = ""
+                    isUnlocked = false
                     phase = .needsLogin
                 }
             }
@@ -243,38 +267,54 @@ struct ContentView: View {
         }
     }
 
-    private var unlockButtonColor: Color {
-        switch unlockResult {
-        case .idle, .unlocking: return .accentColor
-        case .success: return .green
+    private var buttonColor: Color {
+        switch operationResult {
         case .failure: return .red
+        case .inProgress: return .accentColor
+        case .idle, .success: return isUnlocked ? .green : .accentColor
         }
     }
 
     @ViewBuilder
     private var statusText: some View {
-        switch unlockResult {
-        case .idle: Text("Tap to unlock").foregroundStyle(.secondary)
-        case .unlocking: Text("Unlocking\u{2026}").foregroundStyle(.secondary)
-        case .success: Text("Unlocked").foregroundStyle(.green)
+        switch operationResult {
+        case .idle: Text(isUnlocked ? "Unlocked — tap to lock" : "Tap to unlock").foregroundStyle(.secondary)
+        case .inProgress: Text(isUnlocked ? "Locking\u{2026}" : "Unlocking\u{2026}").foregroundStyle(.secondary)
+        case .success: Text(isUnlocked ? "Unlocked" : "Locked").foregroundStyle(isUnlocked ? .green : .secondary)
         case .failure(let message): Text(message).foregroundStyle(.red).font(.footnote)
         }
     }
 
+    /// Auto-unlock on app open always unlocks — it never locks on your
+    /// behalf without a tap.
     private func performUnlock() async {
-        unlockResult = .unlocking
+        await performOperation(unlocking: true)
+    }
+
+    /// Button tap: toggles based on the last known state.
+    private func performToggle() async {
+        await performOperation(unlocking: !isUnlocked)
+    }
+
+    private func performOperation(unlocking: Bool) async {
+        operationResult = .inProgress
         let feedback = UINotificationFeedbackGenerator()
         do {
-            try await AugustClient.shared.unlock()
-            unlockResult = .success
+            if unlocking {
+                try await AugustClient.shared.unlock()
+            } else {
+                try await AugustClient.shared.lock()
+            }
+            isUnlocked = unlocking
+            operationResult = .success
             feedback.notificationOccurred(.success)
         } catch {
-            unlockResult = .failure(error.localizedDescription)
+            operationResult = .failure(error.localizedDescription)
             feedback.notificationOccurred(.error)
         }
         try? await Task.sleep(for: .seconds(2))
-        if case .unlocking = unlockResult {} else {
-            unlockResult = .idle
+        if case .inProgress = operationResult {} else {
+            operationResult = .idle
         }
     }
 }
