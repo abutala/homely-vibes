@@ -217,9 +217,9 @@ uv run pytest NodeCheck
 
 ### AugustUnlock Module (`AugustUnlock/`)
 - **Stack**: SwiftUI iOS app (NOT Python — no uv, no pytest). Same Xcode-project pattern as `NoShorts/` (`PBXFileSystemSynchronizedRootGroup`, sideload via `scripts/build_ipa.sh` + Sideloadly).
-- **Purpose**: One button — tap it, the August front door unlocks. Talks to August's cloud API directly (`api-production.august.com`), no home server or VPN in the loop; see the module README's "Why no server" section.
-- **Key files**: `AugustClient.swift` (whole August REST client — login, email 2FA, token refresh, unlock), `KeychainStore.swift` (on-device credential storage), `ContentView.swift` (the whole UI).
-- **Gotchas**: two non-obvious August API details (a revoked API key; lock operations using a different key than login) are ported from `August/august_client.py` — see [AugustUnlock/Logbook.md](AugustUnlock/Logbook.md) before touching API keys or endpoints.
+- **Purpose**: Open it and the door unlocks — no tap needed; tap the button again to lock. Talks to August's cloud API directly (`api-production.august.com`), no home server or VPN in the loop; see the module README's "Why no server" and "Security notes" sections.
+- **Key files**: `AugustClient.swift` (whole August REST client — login, email 2FA, token refresh, lock discovery, lock/unlock), `KeychainStore.swift` (on-device credential storage), `ContentView.swift` (the whole UI, incl. the multi-lock picker).
+- **Gotchas**: two non-obvious August API details (a revoked API key; lock operations using a different key than login), plus two auth-flow bugs only a real device build surfaced (JSON booleans miscast as strings; a missing `"email:"` prefix on the session identifier) — see [AugustUnlock/Logbook.md](AugustUnlock/Logbook.md) before touching API keys, endpoints, or the auth flow.
 
 ### BimpopAI Module (`BimpopAI/`)
 - **Architecture**: FastAPI backend + Streamlit frontend

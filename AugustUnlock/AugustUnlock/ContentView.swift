@@ -4,22 +4,35 @@ private enum Phase {
     case loading
     case needsLogin
     case needsCode
+    case pickLock
     case ready
 }
 
 struct ContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var phase: Phase = .loading
 
     @State private var email = ""
     @State private var password = ""
     @State private var code = ""
+    @State private var availableLocks: [AugustLock] = []
     @State private var errorMessage: String?
     @State private var isBusy = false
-    @State private var unlockResult: UnlockResult = .idle
+    @State private var operationResult: OperationResult = .idle
+    /// Optimistic, session-local belief about the door's current state —
+    /// there's no status poll, just the outcome of the last lock/unlock this
+    /// app issued. Resets to `false` (locked) on every fresh launch.
+    @State private var isUnlocked = false
+    /// Set when the scene actually reaches `.background`, consumed on the
+    /// next `.active`. A real background resume is `.background ->
+    /// .inactive -> .active` (two onChange calls, never one direct
+    /// `.background -> .active` pairing), so this can't be a same-call
+    /// oldPhase/newPhase check — see the Logbook entry for why.
+    @State private var wasBackgrounded = false
 
-    private enum UnlockResult: Equatable {
+    private enum OperationResult: Equatable {
         case idle
-        case unlocking
+        case inProgress
         case success
         case failure(String)
     }
@@ -33,6 +46,8 @@ struct ContentView: View {
                 loginForm
             case .needsCode:
                 codeForm
+            case .pickLock:
+                pickLockView
             case .ready:
                 unlockScreen
             }
@@ -40,7 +55,38 @@ struct ContentView: View {
         .padding()
         .onAppear {
             phase = AugustClient.shared.isReady ? .ready : .needsLogin
+            autoUnlockIfReady()
         }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Covers reopening from the background, not just cold launch —
+            // onAppear alone only fires once per view lifetime. A real
+            // resume is .background -> .inactive -> .active (two separate
+            // onChange calls, so a same-call oldPhase check never matches);
+            // a transient interruption (Control Center, Notification
+            // Center, the incoming-call banner) is .active -> .inactive ->
+            // .active and never touches .background at all. Track having
+            // actually seen .background and consume it on .active, instead
+            // of pattern-matching a single transition.
+            switch newPhase {
+            case .background:
+                wasBackgrounded = true
+            case .active where wasBackgrounded:
+                wasBackgrounded = false
+                autoUnlockIfReady()
+            default:
+                break
+            }
+        }
+    }
+
+    /// Fires the unlock the moment the app is opened, with no button tap —
+    /// requested explicitly: opening the app is the confirmation. Guarded on
+    /// `.idle` so a mid-operation re-open can't double-fire, and on
+    /// `!isUnlocked` so re-opening an already-unlocked session doesn't
+    /// needlessly resend the command.
+    private func autoUnlockIfReady() {
+        guard phase == .ready, operationResult == .idle, !isUnlocked else { return }
+        Task { await performUnlock() }
     }
 
     // MARK: - Login
@@ -79,7 +125,7 @@ struct ContentView: View {
         do {
             let authenticated = try await AugustClient.shared.login(email: email, password: password)
             if authenticated {
-                phase = .ready
+                await resolveLock()
             } else {
                 try await AugustClient.shared.sendVerificationCode()
                 phase = .needsCode
@@ -87,6 +133,41 @@ struct ContentView: View {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    /// After a fresh login/verification: keep an already-chosen lock as-is,
+    /// auto-select the only lock on a single-lock account (today's
+    /// zero-tap behavior), or ask when there's more than one.
+    private func resolveLock() async {
+        if AugustClient.shared.hasSelectedLock {
+            enterReady()
+            return
+        }
+        do {
+            let locks = try await AugustClient.shared.fetchLocks()
+            switch locks.count {
+            case 0:
+                errorMessage = AugustError.noLocks.errorDescription
+            case 1:
+                AugustClient.shared.selectLock(locks[0])
+                enterReady()
+            default:
+                availableLocks = locks
+                phase = .pickLock
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Enters the ready/unlock screen and fires the auto-unlock — the single
+    /// path every "setup just finished" transition (already-signed-in,
+    /// single-lock auto-select, or a fresh lock pick) must go through so the
+    /// promised "opens unlocked" behavior actually holds the first time,
+    /// not just on a later cold launch or background resume.
+    private func enterReady() {
+        phase = .ready
+        autoUnlockIfReady()
     }
 
     // MARK: - 2FA code
@@ -123,10 +204,36 @@ struct ContentView: View {
         defer { isBusy = false }
         do {
             try await AugustClient.shared.validateCode(code)
-            phase = .ready
+            await resolveLock()
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - Lock picker
+
+    private var pickLockView: some View {
+        VStack(spacing: 16) {
+            Text("Choose a Lock")
+                .font(.title2).bold()
+            Text("Your August account has more than one lock.")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+            ForEach(availableLocks) { lock in
+                Button(lock.name) {
+                    AugustClient.shared.selectLock(lock)
+                    // isUnlocked tracked the *previous* lock (relevant when
+                    // reached via "Change Lock"), not this one — reset so
+                    // enterReady()'s auto-unlock actually fires for it.
+                    isUnlocked = false
+                    enterReady()
+                }
+                .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .frame(maxWidth: 320)
     }
 
     // MARK: - Unlock
@@ -140,69 +247,116 @@ struct ContentView: View {
             }
 
             Button {
-                Task { await performUnlock() }
+                Task { await performToggle() }
             } label: {
                 ZStack {
                     Circle()
-                        .fill(unlockButtonColor)
+                        .fill(buttonColor)
                         .frame(width: 200, height: 200)
-                    if unlockResult == .unlocking {
+                    if operationResult == .inProgress {
                         ProgressView().tint(.white).scaleEffect(1.5)
                     } else {
-                        Image(systemName: unlockResult == .success ? "lock.open.fill" : "lock.fill")
+                        Image(systemName: isUnlocked ? "lock.open.fill" : "lock.fill")
                             .font(.system(size: 64))
                             .foregroundStyle(.white)
                     }
                 }
             }
-            .disabled(unlockResult == .unlocking)
+            .disabled(operationResult == .inProgress)
 
             statusText
 
-            Button("Sign Out") {
-                AugustClient.shared.signOut()
-                email = ""
-                password = ""
-                code = ""
-                phase = .needsLogin
+            HStack(spacing: 24) {
+                Button("Change Lock") {
+                    Task { await presentLockPicker() }
+                }
+                Button("Sign Out") {
+                    AugustClient.shared.signOut()
+                    email = ""
+                    password = ""
+                    code = ""
+                    isUnlocked = false
+                    phase = .needsLogin
+                }
             }
+            // A lock/unlock in flight is neither cancelled nor awaited —
+            // switching lock or signing out mid-operation would let a
+            // stale completion (for the *previous* lock) overwrite
+            // isUnlocked/operationResult after the screen has already
+            // moved on, showing "Unlocked" for a lock that was never
+            // actually acted on while the one that WAS just got left in an
+            // unknown state. Blocking both while in flight is simpler and
+            // safer than trying to cancel or reconcile a stale result.
+            .disabled(operationResult == .inProgress)
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
     }
 
-    private var unlockButtonColor: Color {
-        switch unlockResult {
-        case .idle, .unlocking: return .accentColor
-        case .success: return .green
+    /// Re-fetches the account's locks and shows the picker again, even if
+    /// there's only one — lets a wrong first-time pick be corrected without
+    /// signing all the way out.
+    private func presentLockPicker() async {
+        errorMessage = nil
+        do {
+            availableLocks = try await AugustClient.shared.fetchLocks()
+            phase = availableLocks.isEmpty ? .ready : .pickLock
+            if availableLocks.isEmpty {
+                errorMessage = AugustError.noLocks.errorDescription
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private var buttonColor: Color {
+        switch operationResult {
         case .failure: return .red
+        case .inProgress: return .accentColor
+        case .idle, .success: return isUnlocked ? .green : .accentColor
         }
     }
 
     @ViewBuilder
     private var statusText: some View {
-        switch unlockResult {
-        case .idle: Text("Tap to unlock").foregroundStyle(.secondary)
-        case .unlocking: Text("Unlocking\u{2026}").foregroundStyle(.secondary)
-        case .success: Text("Unlocked").foregroundStyle(.green)
+        switch operationResult {
+        case .idle: Text(isUnlocked ? "Unlocked — tap to lock" : "Tap to unlock").foregroundStyle(.secondary)
+        case .inProgress: Text(isUnlocked ? "Locking\u{2026}" : "Unlocking\u{2026}").foregroundStyle(.secondary)
+        case .success: Text(isUnlocked ? "Unlocked" : "Locked").foregroundStyle(isUnlocked ? .green : .secondary)
         case .failure(let message): Text(message).foregroundStyle(.red).font(.footnote)
         }
     }
 
+    /// Auto-unlock on app open always unlocks — it never locks on your
+    /// behalf without a tap.
     private func performUnlock() async {
-        unlockResult = .unlocking
+        await performOperation(unlocking: true)
+    }
+
+    /// Button tap: toggles based on the last known state.
+    private func performToggle() async {
+        await performOperation(unlocking: !isUnlocked)
+    }
+
+    private func performOperation(unlocking: Bool) async {
+        operationResult = .inProgress
         let feedback = UINotificationFeedbackGenerator()
         do {
-            try await AugustClient.shared.unlock()
-            unlockResult = .success
+            if unlocking {
+                try await AugustClient.shared.unlock()
+            } else {
+                try await AugustClient.shared.lock()
+            }
+            isUnlocked = unlocking
+            operationResult = .success
             feedback.notificationOccurred(.success)
         } catch {
-            unlockResult = .failure(error.localizedDescription)
+            operationResult = .failure(error.localizedDescription)
             feedback.notificationOccurred(.error)
         }
         try? await Task.sleep(for: .seconds(2))
-        if case .unlocking = unlockResult {} else {
-            unlockResult = .idle
+        if case .inProgress = operationResult {} else {
+            operationResult = .idle
         }
     }
 }
