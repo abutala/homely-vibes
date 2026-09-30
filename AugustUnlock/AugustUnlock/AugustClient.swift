@@ -25,6 +25,27 @@ struct AugustLock: Identifiable, Equatable {
     let name: String
 }
 
+enum LockState: Equatable {
+    case locked
+    case unlocked
+    /// Jammed, mid-motion, or a value August hasn't sent before.
+    case unknown
+
+    /// The status strings yalexs' `determine_lock_status()` (lock.py)
+    /// recognizes — August sends both the short and `kAugLockState_` forms.
+    /// Unlatched counts as unlocked: the door opens either way.
+    init(augustStatus: String?) {
+        switch augustStatus {
+        case "lock", "locked", "kAugLockState_Locked", "kAugLockState_SecureMode":
+            self = .locked
+        case "unlock", "unlocked", "kAugLockState_Unlocked", "unlatched", "kAugLockState_Unlatched":
+            self = .unlocked
+        default:
+            self = .unknown
+        }
+    }
+}
+
 /// Talks to August's cloud API directly from the device — no home server in
 /// the loop. Mirrors the request shapes in August/august_client.py (this
 /// repo's Python client, built on the `yalexs` library) since there is no
@@ -186,14 +207,7 @@ final class AugustClient {
     /// Fetches every lock on the account. Doesn't select one — the caller
     /// decides (auto-select when there's exactly one, otherwise prompt).
     func fetchLocks() async throws -> [AugustLock] {
-        guard let token = KeychainStore.get("august_access_token") else { throw AugustError.notAuthenticated }
-        let request = makeRequest(path: "/users/locks/mine", apiKey: Self.lockAPIKey, accessToken: token)
-        let (data, response) = try await send(request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
-        guard statusCode == 200 else {
-            throw AugustError.server(statusCode, String(data: data, encoding: .utf8) ?? "")
-        }
-
+        let data = try await sendLockRequest(method: "GET", path: "/users/locks/mine")
         guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else {
             throw AugustError.noLocks
         }
@@ -212,49 +226,73 @@ final class AugustClient {
         KeychainStore.set(lock.name, forKey: "august_lock_name")
     }
 
-    // MARK: - Lock / unlock
+    // MARK: - Lock state / lock / unlock
 
-    func unlock() async throws {
-        try await operate(action: "unlock", isRetry: false)
-    }
-
-    func lock() async throws {
-        try await operate(action: "lock", isRetry: false)
-    }
-
-    private func operate(action: String, isRetry: Bool) async throws {
-        guard let token = KeychainStore.get("august_access_token") else { throw AugustError.notAuthenticated }
+    /// The selected lock's state as August's cloud last heard it from the
+    /// lock — `LockStatus.status` on GET /locks/{id}, the same field
+    /// August/august_client.py's `get_lock_status()` reads through yalexs'
+    /// `LockDetail`.
+    func fetchLockState() async throws -> LockState {
         guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
+        let data = try await sendLockRequest(method: "GET", path: "/locks/\(lockID)")
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let lockStatus = json?["LockStatus"] as? [String: Any]
+        return LockState(augustStatus: lockStatus?["status"] as? String)
+    }
 
-        var request = makeRequest(
-            path: "/remoteoperate/\(lockID)/\(action)", apiKey: Self.lockAPIKey, accessToken: token)
-        request.httpMethod = "PUT"
+    /// Returns the state the lock reported back, not the state requested.
+    func unlock() async throws -> LockState {
+        try await operate(action: "unlock")
+    }
+
+    /// Returns the state the lock reported back, not the state requested.
+    func lock() async throws -> LockState {
+        try await operate(action: "lock")
+    }
+
+    private func operate(action: String) async throws -> LockState {
+        guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
+        let data = try await sendLockRequest(method: "PUT", path: "/remoteoperate/\(lockID)/\(action)")
+        // The synchronous remoteoperate reply carries the lock's resulting
+        // state in `status` — yalexs' async_lock/async_unlock read it the
+        // same way. Ask again rather than guess if it isn't one we recognize;
+        // the command already succeeded, so a failed re-ask is `.unknown`,
+        // not an error.
+        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let reported = LockState(augustStatus: json?["status"] as? String)
+        guard reported == .unknown else { return reported }
+        return (try? await fetchLockState()) ?? .unknown
+    }
+
+    // MARK: - HTTP plumbing
+
+    /// Sends a lock-API request and returns the body of a 2xx reply. On a
+    /// 401 the access token has expired: re-authenticate silently with the
+    /// stored password (the install_id is already trusted, so this does not
+    /// trigger 2FA) and retry exactly once.
+    private func sendLockRequest(method: String, path: String, isRetry: Bool = false) async throws -> Data {
+        guard let token = KeychainStore.get("august_access_token") else { throw AugustError.notAuthenticated }
+        var request = makeRequest(path: path, apiKey: Self.lockAPIKey, accessToken: token)
+        request.httpMethod = method
 
         let (data, response) = try await send(request)
-        guard let http = response as? HTTPURLResponse else {
-            throw AugustError.server(-1, "no response")
-        }
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
 
-        if http.statusCode == 401, !isRetry {
-            // Access token expired — silently re-authenticate with the
-            // stored password (the install_id is already trusted, so this
-            // does not trigger 2FA) and retry exactly once.
+        if statusCode == 401, !isRetry {
             guard let email = KeychainStore.get("august_email"),
                 let password = KeychainStore.get("august_password"),
                 try await requestSession(email: email, password: password)
             else {
                 throw AugustError.notAuthenticated
             }
-            try await operate(action: action, isRetry: true)
-            return
+            return try await sendLockRequest(method: method, path: path, isRetry: true)
         }
 
-        guard (200...299).contains(http.statusCode) else {
-            throw AugustError.server(http.statusCode, String(data: data, encoding: .utf8) ?? "")
+        guard (200...299).contains(statusCode) else {
+            throw AugustError.server(statusCode, String(data: data, encoding: .utf8) ?? "")
         }
+        return data
     }
-
-    // MARK: - HTTP plumbing
 
     private func makeRequest(path: String, apiKey: String, accessToken: String?) -> URLRequest {
         var request = URLRequest(url: URL(string: Self.baseURL + path)!)

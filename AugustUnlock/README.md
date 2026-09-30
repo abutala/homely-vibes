@@ -60,7 +60,7 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
 ## How it works
 
 - `AugustClient.swift` — the whole August cloud client: login, email 2FA,
-  token refresh, lock discovery, lock/unlock. See its header comments and
+  token refresh, lock discovery, lock status, lock/unlock. See its header comments and
   [Logbook.md](Logbook.md) for the two non-obvious API details (a revoked API
   key, and lock operations using a different key than login). A lock
   connected through a WiFi bridge (e.g. a detached garage) can take up to
@@ -73,9 +73,12 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
 - `ContentView.swift` — the whole UI: sign-in form → one-time verification
   code entry → the unlock screen. A single-lock account skips straight to the
   button; a multi-lock account gets a one-time picker on first sign-in (and a
-  "Change Lock" link on the main screen to redo it later). The door's
-  lock/unlock state is optimistic and session-local (whatever the last
-  command issued was) — there's no live status poll.
+  "Change Lock" link on the main screen to redo it later). Every open — cold
+  launch or back from the background — first fetches the lock's current
+  state from August, then unlocks only if it isn't unlocked already. The
+  state shown after a tap is what the lock reported back, not what was
+  requested, so a door that auto-locked or was operated elsewhere is picked
+  up the next time the app opens.
 
 ## Security notes
 

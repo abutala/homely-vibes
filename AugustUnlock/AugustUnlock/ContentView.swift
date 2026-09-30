@@ -19,10 +19,13 @@ struct ContentView: View {
     @State private var errorMessage: String?
     @State private var isBusy = false
     @State private var operationResult: OperationResult = .idle
-    /// Optimistic, session-local belief about the door's current state —
-    /// there's no status poll, just the outcome of the last lock/unlock this
-    /// app issued. Resets to `false` (locked) on every fresh launch.
-    @State private var isUnlocked = false
+    /// What August last reported for the selected lock — fetched on every
+    /// open and taken from each lock/unlock reply, never inferred from the
+    /// command this app sent.
+    @State private var lockState: LockState = .unknown
+    /// The status check, lock or unlock in flight, kept so a newer one can
+    /// cancel it — see `run(_:)`.
+    @State private var operationTask: Task<Void, Never>?
     /// Set when the scene actually reaches `.background`, consumed on the
     /// next `.active`. A real background resume is `.background ->
     /// .inactive -> .active` (two onChange calls, never one direct
@@ -32,9 +35,17 @@ struct ContentView: View {
 
     private enum OperationResult: Equatable {
         case idle
-        case inProgress
+        case checking
+        case inProgress(unlocking: Bool)
         case success
         case failure(String)
+    }
+
+    private var isOperating: Bool {
+        switch operationResult {
+        case .checking, .inProgress: return true
+        case .idle, .success, .failure: return false
+        }
     }
 
     var body: some View {
@@ -55,7 +66,7 @@ struct ContentView: View {
         .padding()
         .onAppear {
             phase = AugustClient.shared.isReady ? .ready : .needsLogin
-            autoUnlockIfReady()
+            syncThenUnlock()
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Covers reopening from the background, not just cold launch —
@@ -72,21 +83,34 @@ struct ContentView: View {
                 wasBackgrounded = true
             case .active where wasBackgrounded:
                 wasBackgrounded = false
-                autoUnlockIfReady()
+                syncThenUnlock()
             default:
                 break
             }
         }
     }
 
-    /// Fires the unlock the moment the app is opened, with no button tap —
-    /// requested explicitly: opening the app is the confirmation. Guarded on
-    /// `.idle` so a mid-operation re-open can't double-fire, and on
-    /// `!isUnlocked` so re-opening an already-unlocked session doesn't
-    /// needlessly resend the command.
-    private func autoUnlockIfReady() {
-        guard phase == .ready, operationResult == .idle, !isUnlocked else { return }
-        Task { await performUnlock() }
+    /// Opening the app — cold launch, finishing setup, or returning from the
+    /// background — fetches the lock's real state from August, then unlocks
+    /// unless it already is; opening the app is the confirmation (requested
+    /// explicitly). Nothing from before is trusted: the door may have
+    /// auto-locked or been operated elsewhere meanwhile, and a request iOS
+    /// suspended with the app tends to come back as a lost connection — so
+    /// whatever is still in flight is cancelled and its result discarded.
+    private func syncThenUnlock() {
+        guard phase == .ready else { return }
+        run {
+            lockState = .unknown
+            operationResult = .checking
+            let state = try await AugustClient.shared.fetchLockState()
+            try Task.checkCancellation()
+            lockState = state
+            if state == .unlocked {
+                operationResult = .idle
+            } else {
+                try await performOperation(unlocking: true)
+            }
+        }
     }
 
     // MARK: - Login
@@ -160,14 +184,14 @@ struct ContentView: View {
         }
     }
 
-    /// Enters the ready/unlock screen and fires the auto-unlock — the single
+    /// Enters the ready/unlock screen and syncs + auto-unlocks — the single
     /// path every "setup just finished" transition (already-signed-in,
     /// single-lock auto-select, or a fresh lock pick) must go through so the
     /// promised "opens unlocked" behavior actually holds the first time,
     /// not just on a later cold launch or background resume.
     private func enterReady() {
         phase = .ready
-        autoUnlockIfReady()
+        syncThenUnlock()
     }
 
     // MARK: - 2FA code
@@ -223,10 +247,10 @@ struct ContentView: View {
             ForEach(availableLocks) { lock in
                 Button(lock.name) {
                     AugustClient.shared.selectLock(lock)
-                    // isUnlocked tracked the *previous* lock (relevant when
-                    // reached via "Change Lock"), not this one — reset so
-                    // enterReady()'s auto-unlock actually fires for it.
-                    isUnlocked = false
+                    // lockState described the *previous* lock (relevant when
+                    // reached via "Change Lock") — clear it so the screen
+                    // doesn't show that lock's state until this one's arrives.
+                    lockState = .unknown
                     enterReady()
                 }
                 .buttonStyle(.bordered)
@@ -247,22 +271,22 @@ struct ContentView: View {
             }
 
             Button {
-                Task { await performToggle() }
+                performToggle()
             } label: {
                 ZStack {
                     Circle()
                         .fill(buttonColor)
                         .frame(width: 200, height: 200)
-                    if operationResult == .inProgress {
+                    if isOperating {
                         ProgressView().tint(.white).scaleEffect(1.5)
                     } else {
-                        Image(systemName: isUnlocked ? "lock.open.fill" : "lock.fill")
+                        Image(systemName: lockIcon)
                             .font(.system(size: 64))
                             .foregroundStyle(.white)
                     }
                 }
             }
-            .disabled(operationResult == .inProgress)
+            .disabled(isOperating)
 
             statusText
 
@@ -275,19 +299,16 @@ struct ContentView: View {
                     email = ""
                     password = ""
                     code = ""
-                    isUnlocked = false
+                    lockState = .unknown
                     phase = .needsLogin
                 }
             }
-            // A lock/unlock in flight is neither cancelled nor awaited —
-            // switching lock or signing out mid-operation would let a
-            // stale completion (for the *previous* lock) overwrite
-            // isUnlocked/operationResult after the screen has already
-            // moved on, showing "Unlocked" for a lock that was never
-            // actually acted on while the one that WAS just got left in an
-            // unknown state. Blocking both while in flight is simpler and
-            // safer than trying to cancel or reconcile a stale result.
-            .disabled(operationResult == .inProgress)
+            // Switching lock or signing out mid-operation would drop the
+            // lock being acted on off screen with its outcome unknown —
+            // the request still reaches August even if the app stops
+            // listening. Blocking both while in flight is simpler and safer
+            // than reconciling a result for a lock no longer shown.
+            .disabled(isOperating)
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
@@ -312,51 +333,76 @@ struct ContentView: View {
     private var buttonColor: Color {
         switch operationResult {
         case .failure: return .red
-        case .inProgress: return .accentColor
-        case .idle, .success: return isUnlocked ? .green : .accentColor
+        case .checking, .inProgress: return .accentColor
+        case .idle, .success: return lockState == .unlocked ? .green : .accentColor
+        }
+    }
+
+    private var lockIcon: String {
+        switch lockState {
+        case .locked: return "lock.fill"
+        case .unlocked: return "lock.open.fill"
+        case .unknown: return "lock.trianglebadge.exclamationmark.fill"
+        }
+    }
+
+    private var stateLabel: String {
+        switch lockState {
+        case .locked: return "Locked"
+        case .unlocked: return "Unlocked"
+        case .unknown: return "State unknown"
         }
     }
 
     @ViewBuilder
     private var statusText: some View {
         switch operationResult {
-        case .idle: Text(isUnlocked ? "Unlocked — tap to lock" : "Tap to unlock").foregroundStyle(.secondary)
-        case .inProgress: Text(isUnlocked ? "Locking\u{2026}" : "Unlocking\u{2026}").foregroundStyle(.secondary)
-        case .success: Text(isUnlocked ? "Unlocked" : "Locked").foregroundStyle(isUnlocked ? .green : .secondary)
+        case .idle:
+            Text("\(stateLabel) \u{2014} tap to \(lockState == .unlocked ? "lock" : "unlock")")
+                .foregroundStyle(.secondary)
+        case .checking: Text("Checking lock\u{2026}").foregroundStyle(.secondary)
+        case .inProgress(let unlocking):
+            Text(unlocking ? "Unlocking\u{2026}" : "Locking\u{2026}").foregroundStyle(.secondary)
+        case .success: Text(stateLabel).foregroundStyle(lockState == .unlocked ? .green : .secondary)
         case .failure(let message): Text(message).foregroundStyle(.red).font(.footnote)
         }
     }
 
-    /// Auto-unlock on app open always unlocks — it never locks on your
-    /// behalf without a tap.
-    private func performUnlock() async {
-        await performOperation(unlocking: true)
+    /// Button tap: locks if August last reported unlocked, otherwise
+    /// unlocks — including when the state is unknown, since unlocking is
+    /// what this app is for.
+    private func performToggle() {
+        run { try await performOperation(unlocking: lockState != .unlocked) }
     }
 
-    /// Button tap: toggles based on the last known state.
-    private func performToggle() async {
-        await performOperation(unlocking: !isUnlocked)
+    private func performOperation(unlocking: Bool) async throws {
+        operationResult = .inProgress(unlocking: unlocking)
+        let state = try await (unlocking ? AugustClient.shared.unlock() : AugustClient.shared.lock())
+        try Task.checkCancellation()
+        lockState = state
+        operationResult = .success
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
-    private func performOperation(unlocking: Bool) async {
-        operationResult = .inProgress
-        let feedback = UINotificationFeedbackGenerator()
-        do {
-            if unlocking {
-                try await AugustClient.shared.unlock()
-            } else {
-                try await AugustClient.shared.lock()
+    /// Runs one operation at a time, cancelling any still in flight. Every
+    /// state write in an operation follows a cancellation check, so a
+    /// cancelled one's late reply can't overwrite its replacement's.
+    private func run(_ operation: @escaping () async throws -> Void) {
+        operationTask?.cancel()
+        operationTask = Task {
+            do {
+                try await operation()
+            } catch {
+                guard !Task.isCancelled else { return }
+                operationResult = .failure(error.localizedDescription)
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
-            isUnlocked = unlocking
-            operationResult = .success
-            feedback.notificationOccurred(.success)
-        } catch {
-            operationResult = .failure(error.localizedDescription)
-            feedback.notificationOccurred(.error)
-        }
-        try? await Task.sleep(for: .seconds(2))
-        if case .inProgress = operationResult {} else {
-            operationResult = .idle
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            switch operationResult {
+            case .success, .failure: operationResult = .idle
+            case .idle, .checking, .inProgress: break
+            }
         }
     }
 }
