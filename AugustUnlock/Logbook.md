@@ -128,6 +128,8 @@ Implementation notes:
   last command issued was) — there's no status poll, so a lock operated by
   someone else (the physical keypad, another household member's app) won't
   be reflected until this app issues its own command.
+- *Both bullets above were replaced on 2026-09-30 by a status fetch on every
+  open — see that entry.*
 
 ## 2026-09-22 — Two bugs in the auto-unlock feature, caught by PR review before merge
 
@@ -185,3 +187,33 @@ indication. Fixed the simple way: disable both buttons while an operation
 is in flight, same as the toggle button already does. No attempt to cancel
 or reconcile a stale in-flight result — not worth the complexity for a
 personal one-button app; just don't let the race start.
+
+## 2026-09-30 — Resuming from the background left the screen lying about the door
+
+Reported from real use: background the app, come back, and the state was
+wrong. Two causes, both in the optimistic `isUnlocked` design above:
+
+1. **The belief outlived the truth.** `isUnlocked` changed only when this app
+   sent a command. August's auto-lock, the keypad, or another phone changed
+   the door without telling it — and the `!isUnlocked` guard then
+   *suppressed* the auto-unlock on resume, showing "Unlocked — tap to lock"
+   for a locked door.
+2. **A request suspended with the app wedged the next open.** iOS gives a
+   backgrounded app a few seconds; a ~60s bridge unlock still in flight is
+   frozen and typically comes back as a lost connection. Meanwhile
+   `operationResult` sat at `.inProgress`, so the resume path's
+   `operationResult == .idle` guard skipped the auto-unlock entirely.
+
+Fix: every open (cold launch, setup finishing, return from background) now
+cancels whatever is in flight, fetches the lock's state from August
+(`GET /locks/{id}`, `LockStatus.status` — the field
+`August/august_client.py` already reads through yalexs' `LockDetail`), and
+unlocks only if the lock is not already unlocked. After a lock/unlock the
+screen shows the `status` from August's reply (what yalexs'
+`async_unlock` returns), re-fetching if that is a value we don't recognize.
+Cancellation alone doesn't stop a late reply from landing, so every state
+write in an operation follows a `Task.checkCancellation()`.
+
+Rejected: `GET /locks/{id}/status`. yalexs has it (`async_get_lock_status`),
+but `august_client.py` never calls it, so nothing in this repo proves its
+shape; `/locks/{id}` is the path the Python monitor already exercises.
