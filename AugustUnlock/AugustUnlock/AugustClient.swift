@@ -255,10 +255,13 @@ final class AugustClient {
         let data = try await sendLockRequest(method: "PUT", path: "/remoteoperate/\(lockID)/\(action)")
         // The synchronous remoteoperate reply carries the lock's resulting
         // state in `status` — yalexs' async_lock/async_unlock read it the
-        // same way. Ask again rather than guess if it isn't one we recognize.
+        // same way. Ask again rather than guess if it isn't one we recognize;
+        // the command already succeeded, so a failed re-ask is `.unknown`,
+        // not an error.
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         let reported = LockState(augustStatus: json?["status"] as? String)
-        return reported == .unknown ? try await fetchLockState() : reported
+        guard reported == .unknown else { return reported }
+        return (try? await fetchLockState()) ?? .unknown
     }
 
     // MARK: - HTTP plumbing

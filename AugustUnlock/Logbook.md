@@ -128,7 +128,7 @@ Implementation notes:
   last command issued was) — there's no status poll, so a lock operated by
   someone else (the physical keypad, another household member's app) won't
   be reflected until this app issues its own command.
-- *Both bullets above were replaced on 2026-09-30 by a status fetch on every
+- *The last two bullets were replaced on 2026-09-30 by a status fetch on every
   open — see that entry.*
 
 ## 2026-09-22 — Two bugs in the auto-unlock feature, caught by PR review before merge
@@ -186,7 +186,9 @@ actually got unlocked (the old one) has silently dropped off screen with no
 indication. Fixed the simple way: disable both buttons while an operation
 is in flight, same as the toggle button already does. No attempt to cancel
 or reconcile a stale in-flight result — not worth the complexity for a
-personal one-button app; just don't let the race start.
+personal one-button app; just don't let the race start. *Since 2026-09-30,
+reopening the app does cancel in-flight work (see that entry); the buttons
+stay disabled.*
 
 ## 2026-09-30 — Resuming from the background left the screen lying about the door
 
@@ -212,7 +214,9 @@ unlocks only if the lock is not already unlocked. After a lock/unlock the
 screen shows the `status` from August's reply (what yalexs'
 `async_unlock` returns), re-fetching if that is a value we don't recognize.
 Cancellation alone doesn't stop a late reply from landing, so every state
-write in an operation follows a `Task.checkCancellation()`.
+write after an await is guarded by a cancellation check. The screen resets to
+"State unknown" when a re-check starts, so a failed check never leaves the
+pre-background reading on display.
 
 Rejected: `GET /locks/{id}/status`. yalexs has it (`async_get_lock_status`),
 but `august_client.py` never calls it, so nothing in this repo proves its

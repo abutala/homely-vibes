@@ -100,6 +100,7 @@ struct ContentView: View {
     private func syncThenUnlock() {
         guard phase == .ready else { return }
         run {
+            lockState = .unknown
             operationResult = .checking
             let state = try await AugustClient.shared.fetchLockState()
             try Task.checkCancellation()
@@ -279,7 +280,7 @@ struct ContentView: View {
                     if isOperating {
                         ProgressView().tint(.white).scaleEffect(1.5)
                     } else {
-                        Image(systemName: lockState == .unlocked ? "lock.open.fill" : "lock.fill")
+                        Image(systemName: lockIcon)
                             .font(.system(size: 64))
                             .foregroundStyle(.white)
                     }
@@ -334,6 +335,14 @@ struct ContentView: View {
         case .failure: return .red
         case .checking, .inProgress: return .accentColor
         case .idle, .success: return lockState == .unlocked ? .green : .accentColor
+        }
+    }
+
+    private var lockIcon: String {
+        switch lockState {
+        case .locked: return "lock.fill"
+        case .unlocked: return "lock.open.fill"
+        case .unknown: return "lock.trianglebadge.exclamationmark.fill"
         }
     }
 
