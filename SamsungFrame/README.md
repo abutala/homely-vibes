@@ -147,7 +147,7 @@ How it chooses:
 3. Average-linkage clustering merges the closest pairs until `--keep` is reached; photos more than `--window` seconds apart never merge, and nothing merges past `--max-distance` even if `--keep` is not reached
 4. Per cluster, the sharpest frame is kept; a landscape frame beats a portrait one unless the portrait is 2x sharper
 
-Videos (`.MOV`) and sidecars (`.AAE`) are ignored. Upload the result with `batch_upload.py ... --no-purge`.
+Videos (`.MOV`) and sidecars (`.AAE`) are ignored. Upload the result with `batch_upload.py "<out>"`; it then purges user art older than 24h (add `--no-purge` to keep it). The step-by-step routine is in [CLAUDE.md](CLAUDE.md).
 
 ### Check TV Status
 

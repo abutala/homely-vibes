@@ -1,5 +1,23 @@
 # Samsung Frame TV Module
 
+## Playbook: "upload this photo folder to the Frame"
+
+Amit's standing preference. Do all four steps without asking; each is the default, not a question. `HV` = the primary checkout (`dirname "$(git rev-parse --path-format=absolute --git-common-dir)"`); run from the repo root or a worktree that has `config/local.yaml` and a `config/tokens` symlink.
+
+1. **Resize + dedup** (macOS only): `"$HV/.venv/bin/python" -m SamsungFrame.dedup_photos "<SRC>"`. Downsizes to 4K JPG, keeps ~50% (`--keep`), writes `"<SRC> - dedup"`. The source is never modified. Skip only if Amit says the folder is already curated.
+2. **Upload, in the background, with the long timeout**: `"$HV/.venv/bin/python" -m SamsungFrame.batch_upload "<SRC> - dedup" 2>&1 | tee /tmp/<name>.log` via Bash `run_in_background` with `timeout: 7200000`. Roughly 10s per image, so a 10-minute timeout kills it mid-run. Purge is ON by default and is step 4, so do not pass `--no-purge`.
+3. **Give Amit the tail command the moment the upload starts**, without waiting to be asked (substitute the real log name; `tr` is needed because the progress bar redraws with carriage returns):
+
+   ```bash
+   tail -f /tmp/<name>.log | tr '\r' '\n' | grep --line-buffered -E "Uploading images|ERROR|WARNING|Skipped|Complete"
+   ```
+
+4. **Cleanup = delete older art**: the end-of-upload purge removes user-uploaded art (`MY_F…` ids) older than 24h, never below `min_images`, never Samsung's pre-installed art. If the upload ran without purge (an interrupted run resumed with `--start-index`, or `--no-purge`), run `manage_samsung.py purge --days 1` once it completes: first with `< /dev/null` (logs the count, deletes nothing), then with `--force`.
+
+Report at the end: files found, uploaded, skipped (portraits, files under `min_size_mb`), failed, and how many old items were purged.
+
+Landmines: purge is relative to the TV's `image_date`, so finish a batch (and its purge) the same day or the next day's purge deletes the batch's own earlier uploads. `batch_upload` silently skips portraits and files under `min_size_mb`; see [Logbook.md](Logbook.md).
+
 ## Bootstrap — Centralized Connection
 **All code MUST use `connect_ready()` or the context manager to connect.** Never call bare `connect()`.
 
@@ -47,7 +65,7 @@ Key for this codebase:
 - Purge is ON by default; use `--no-purge` to skip
 - `get_stale_art_ids()` uses `image_date` from TV API — no local state needed for age
 - `min_images` config value is safety cap against deleting everything
-- Art with empty `image_date` (Samsung pre-installed or very old uploads) treated as stale
+- Art with empty `image_date` (very old uploads) treated as stale; only `MY_F` ids are ever considered, so Samsung's pre-installed art is never purged
 
 ## CLI Commands
 - `batch_upload.py <source_dir>` — `--no-purge`, `--include-portraits`, `--start-index`, `--max-files`, `--timeout`, `--matte`

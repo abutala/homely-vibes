@@ -230,7 +230,7 @@ def main() -> int:
         kept = dedup(args.source_dir, out, args.keep, args.window, args.max_distance, work)
 
     logger.info(f"Kept {len(kept)} photos in {out}")
-    logger.info(f'Upload: python -m SamsungFrame.batch_upload "{out}" --no-purge')
+    logger.info(f'Upload: python -m SamsungFrame.batch_upload "{out}"')
     return 0
 
 
