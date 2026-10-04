@@ -9,7 +9,7 @@ A Python client for managing art mode on Samsung Frame TVs. Upload images, confi
 - **Batch Upload with HEIC Conversion**: Convert iPhone/iOS HEIC images to 4K JPG and upload
 - **Recursive Directory Scanning**: Process images from nested subdirectories
 - **Smart Filtering**: Exclude thumbnails, small files and portraits automatically
-- **Photo Dedup**: `dedup_photos.py` thins a folder to a fraction of its size by dropping near-duplicates
+- **Ingest + Photo Dedup**: `ingest.py` turns a local or network folder into checkpointed <=4K JPGs; `dedup_photos.py` drops near-duplicates and reference shots (signs, plates, receipts), keeping the best-scored frame of each cluster
 - **Filename Trimming**: Automatically trims filenames to <50 chars (preserves extension, handles collisions)
 - **Start Index / Pagination**: Skip first N files with `--start-index` for resuming interrupted uploads
 - **Smart Purge**: Delete stale art (uploaded >24h ago or with no upload date) while respecting minimum image count
@@ -123,31 +123,41 @@ uv run python SamsungFrame/batch_upload.py ~/Photos --start-index 10 --max-files
 - `--include-portraits` - Upload portrait photos too (default: skipped)
 - `--start-index N` - Skip first N discovered files (applied before --max-files)
 - `--max-files N` - Maximum number of files to upload (0 = all)
+- `--timeout N` - WebSocket timeout in seconds (default 60)
 
-**Note**: Pushover notifications sent automatically. Files below `min_size_mb` are filtered as thumbnails. Art carries no label or caption: the uploader sends image bytes and a matte only, so filenames are never shown on the TV.
+**Note**: Pushover notifications sent automatically. Files below `min_size_mb` and files named like thumbnails are skipped. Art carries no label or caption: the uploader sends image bytes and a matte only, so filenames are never shown on the TV.
 
 **Supported Formats**: HEIC, JPG, JPEG, PNG
 
-### Dedup Photos Before Uploading
+### Ingest and Dedup Photos Before Uploading
 
-A trip folder is full of near-identical bursts. `dedup_photos.py` thins it to a fraction of its size and writes the survivors, as 4K JPGs, to a new folder. The source is never modified. macOS only (uses Apple Vision via `swiftc`).
+A trip folder is full of near-identical bursts, videos and portraits. Ingest and dedup prepare it, and ingest is resumable; the source (a local folder or a network mount) is never modified, and the originals are never copied. Dedup is macOS only (Apple Vision via `swiftc`).
 
 ```bash
-# Keep ~50%; writes "~/Photos/Trip - dedup"
-uv run python SamsungFrame/dedup_photos.py ~/Photos/Trip 2>&1 | tee /tmp/dedup.log
+# Stage 1: filter and downsize to local <=4K JPGs; prints the job dir (under /tmp/frame-jobs)
+uv run python -m SamsungFrame.ingest "/Volumes/share/Trip" 2>&1 | tee /tmp/ingest.log
 
-# Keep ~30%, only treat photos within 2 minutes of each other as duplicates
-uv run python SamsungFrame/dedup_photos.py ~/Photos/Trip --keep 0.3 --window 120 --out ~/Photos/Trip-small
+# Stage 2: drop duplicates and utility shots; survivors are hard-linked into <job>/deduped
+uv run python -m SamsungFrame.dedup_photos /tmp/frame-jobs/Trip-ab12cd
+
+# Stricter: only near-exact repeats within 2 minutes of each other count as duplicates
+uv run python -m SamsungFrame.dedup_photos /tmp/frame-jobs/Trip-ab12cd --max-distance 0.3 --window 120
 ```
 
-How it chooses:
+**Ingest** (`ingest.py`):
 
-1. Every HEIC/JPG/PNG in the folder's top level (no subfolders, unlike `batch_upload.py`) is downsized to <=3840x2160 JPG (EXIF-rotated), so the rest runs on small files
-2. Apple Vision feature prints give a distance per pair (~0 identical, ~0.5 same scene, >0.8 unrelated)
-3. Average-linkage clustering merges the closest pairs until `--keep` is reached; photos more than `--window` seconds apart never merge, and nothing merges past `--max-distance` even if `--keep` is not reached
-4. Per cluster, the sharpest frame is kept; a landscape frame beats a portrait one unless the portrait is 2x sharper
+1. Lists the folder recursively and drops, by name and size alone and without reading a byte, videos, `.AAE` sidecars, other non-images, thumbnails and files under `samsung_frame.min_size_mb`
+2. Reads each remaining original once, into memory, and decodes from there; portraits are dropped after that read unless `--include-portraits`
+3. Writes an EXIF-rotated JPG of at most 3840x2160 into the job dir and records it, with capture time and sharpness, in `manifest.json`, saved after every small batch of files
+4. Rerun after any interruption: files already in the manifest are not read again, unreadable ones are retried, and name/size skips are recomputed from the folder each time
 
-Videos (`.MOV`) and sidecars (`.AAE`) are ignored. Upload the result with `batch_upload.py "<out>"`; it then purges user art older than 24h (add `--no-purge` to keep it). The step-by-step routine is in [CLAUDE.md](CLAUDE.md).
+**Dedup** (`dedup_photos.py`), working only on the local JPGs and the manifest:
+
+1. Apple Vision gives each photo a feature print (similarity: ~0 identical, ~0.4 near-identical, ~0.5 same scene, >0.8 unrelated), an aesthetics score and a "utility" flag; utility photos (signs, plates, receipts, screenshots) are dropped first
+2. Average-linkage clustering merges the closest pairs until none is within `--max-distance` (default 0.4); photos more than `--window` seconds apart never merge. There is no target fraction: how much is dropped depends on how many near-duplicates the folder has
+3. Per cluster, the frame with the best aesthetics score is kept (a landscape frame gets a small bonus, since the TV is landscape; sharpness only breaks ties), and the manifest records why every other photo was dropped
+
+The job dir lives in `/tmp` because it is scratch: if macOS clears it, the stages redo their work. Upload with `batch_upload.py "<job>/deduped"`; it then purges user art older than 24h (add `--no-purge` to keep it). The step-by-step routine is in [CLAUDE.md](CLAUDE.md).
 
 ### Check TV Status
 
@@ -175,7 +185,7 @@ Available Art: 42 items
 Art Mode: Supported and working
 ```
 
-**Note:** Status command uses REST API only, so it won't trigger the pairing prompt. Run an upload command first to establish authentication.
+**Note:** The status command connects over the WebSocket like any other command, so on a fresh token it triggers the TV's pairing prompt (accept it on the TV).
 
 ### List Available Art
 
@@ -300,8 +310,12 @@ This command:
   - Phase 2: Upload via `upload_images_from_folder()` with automatic health checks
   - Smart purge using the TV's `image_date`
 
-- **`dedup_photos.py`** + **`feature_prints.swift`**: Photo dedup (macOS only)
-  - Downsizes to 4K JPG, embeds with Apple Vision, clusters, keeps the sharpest of each cluster
+- **`frame_job.py`**: Job dir (`/tmp/frame-jobs/...`) and the manifest shared by the pipeline stages
+
+- **`ingest.py`**: Stage 1, name/size filtering, single read per original, local <=4K JPGs, manifest saved per batch
+
+- **`dedup_photos.py`** + **`vision_features.swift`**: Stage 2, photo dedup (macOS only)
+  - Scores the ingested JPGs with Apple Vision, clusters near-duplicates, keeps the best-scored frame of each, drops utility shots
 
 - **`manage_samsung.py`**: CLI entry point
   - Argparse-based command interface for TV management
@@ -310,7 +324,7 @@ This command:
 - **`test_batch_upload.py`**: Comprehensive test suite
   - Tests for discovery, conversion, deletion, filename trimming, start-index
 
-- **`test_dedup_photos.py`**: Clustering, best-pick and image-prep tests; one real-Vision smoke test (skipped off macOS)
+- **`test_frame_job.py`**, **`test_ingest.py`**, **`test_dedup_photos.py`**: Manifest, ingest filtering and resume, clustering and best-pick tests; one real-Vision smoke test (skipped off macOS)
 
 ### Data Models (Pydantic)
 

@@ -50,7 +50,7 @@ Connection attempts use exponential backoff:
 
 ### Token Security
 
-- Token file stored in `~/logs/` with 600 permissions (owner read/write only)
+- Token file stored at `samsung_frame.token_file` (default `config/tokens/samsung_frame_token.txt`) with 600 permissions (owner read/write only)
 - Token automatically saved on first successful pairing
 - No credentials stored in code or logs
 
@@ -60,10 +60,10 @@ Choices that took trial to find, so they are not re-litigated:
 
 - **Perceptual hashes (dHash) fail on handheld bursts.** Photos taken seconds apart differed by a median 124 of 256 bits (unrelated images average 128; the 10th percentile was 87), so no threshold separates duplicates from neighbours. Apple Vision feature prints do: adjacent-in-time pairs had median distance 0.6 and a 10th percentile of 0.24. No install needed, but it makes the tool macOS-only.
 - **Single linkage chains.** One photo bridging two scenes merges both. With a 300s window, threshold 0.8 collapsed 593 photos to 174 clusters, and with no window to 27. Average linkage inside a time window, plus a `--max-distance` cap, keeps clusters tight.
-- **A wider window merges less distant things.** Reaching 50% took an average merge distance of 0.58 with a 600s window but 0.73 with 120s, because the larger window offers more close pairs to merge first.
-- **Sharpness is a tie-breaker, not a quality score.** Laplacian variance favours harsh contrast and HDR-looking frames, so it is only meaningful between frames of the same cluster.
-- **50% means "same scene", not "exact duplicate".** Frames of the same spot with different people can be dropped. Raise `--keep` if that matters more than a short slideshow.
-- **Landscape beats portrait** within a cluster (unless the portrait is 2x sharper), because `batch_upload.py` skips portraits by default and the scene would otherwise vanish from the TV.
+- **A fixed target fraction is the wrong control.** Forcing 50% needed an average merge distance of 0.58, which merges the same place with different people; it also kept every reference shot. The distance limit is now the only control (default 0.4), so a folder keeps whatever is genuinely different. On one 332-photo trip folder, limits of 0.3 / 0.4 / 0.5 kept 278 / 242 / 199, against 166 for a forced 50%.
+- **Pick the best frame with Apple's aesthetics score, not sharpness.** Laplacian variance favours harsh contrast and HDR-looking frames, and the two picks differed in 30 of 49 multi-photo clusters; on a sampled sheet the aesthetics pick was the better composed frame (a visual check, not a blind test). Sharpness now only breaks ties.
+- **Apple's "utility" flag finds reference shots.** It flagged 8 photos on that trip (car wheels and bumpers, licence plates, park signs, a napkin on a tray) and all 8 were reference shots that do not belong on a TV, so they are dropped and recorded as such. It is Apple's model, so an odd miss in either direction is possible; the manifest lists every drop.
+- **Landscape beats portrait** within a cluster by a small aesthetics bonus. Ingest already drops portraits by default, so this only matters with `--include-portraits`, which must also be passed to `batch_upload` (it filters portraits again by default).
 
 ### Fresh Worktrees Have No Token Dir
 
@@ -73,13 +73,20 @@ Choices that took trial to find, so they are not re-litigated:
 ln -s ~/bin/Common-configs/tokens config/tokens
 ```
 
+### Ingest and the Job Dir
+
+- **A network folder is read once per candidate original.** Name and size filtering costs no bytes, but a portrait is only recognisable after its file is read (HEIC metadata is not reliably in the first bytes), so portrait originals still cross the network once. Each candidate is read whole into memory and decoded from there, which avoids the many small seeks a decode straight off an SMB mount makes.
+- **State is scratch under `/tmp/frame-jobs`**, keyed by folder name plus a hash of the full path so two `Trip` folders never share a job. It survives a killed script, a dropped TV or a network blip; macOS clears `/tmp` on reboot and after a few idle days, and the stages then redo their work.
+- **Name and size skips are recomputed every run and never cached**, otherwise a file that was too small once (or a video renamed) would stay skipped after it changed. Only content-derived skips (portrait, unreadable) are cached, and unreadable ones always retry.
+- **The size floor now applies to the original**, not the 4K JPG. `batch_upload.py` applies it again to the JPGs it is given, so a low-detail photo can be dropped there.
+
 ### Dedup Scaling
 
 `dedup_photos.py` holds a dense n×n distance matrix and scans it once per merge, so cost grows roughly with n³. A few hundred photos take seconds; a folder of several thousand needs splitting first.
 
 ### Slideshow Behavior
 
-The slideshow uses the TV's configured rotation interval (fastest available). The interval cannot be customized via the API - adjust it directly on the TV's art mode settings.
+The interval is set by `start-slideshow --duration` (minutes, default 3) and `batch_upload` always uses 3 minutes with shuffle on. The TV then cycles on its own after the command exits.
 
 ---
 
