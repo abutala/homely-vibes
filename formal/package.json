@@ -1,0 +1,8 @@
+{
+  "name": "homely-vibes-formal",
+  "private": true,
+  "description": "Formal models (Quint). Dev tooling only; not a runtime dependency.",
+  "devDependencies": {
+    "@informalsystems/quint": "0.33.0"
+  }
+}

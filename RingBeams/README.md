@@ -86,4 +86,6 @@ cron ──> beams_manager.py ──subprocess──> fetch_status.js ──sock
              └──> Pushover alerts                 └──> writes rotated refresh_token back
 ```
 
+`beams_manager` holds the Ring token flock (shared with RingSecurity) across the sidecar and hands the sidecar the lock's fd, so the lock outlives a hard-killed parent for as long as the sidecar runs. The sidecar bounds itself with `RING_BEAMS_TIMEOUT_S` (set from `sidecar_timeout_seconds`) via `watchdog.js`.
+
 The sidecar exits promptly (~3s on your account) after emitting one JSON burst. It also writes any rotated refresh_token back to the same file, preserving the Python OAuth JSON envelope.

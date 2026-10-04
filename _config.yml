@@ -59,6 +59,7 @@ exclude:
 - BrowserAlert/
 - ClaudeUsageBar/
 - config/
+- formal/
 - GarageCheck/
 - GPXParser/
 - lib/

@@ -8,12 +8,19 @@ missing-token file.
 from __future__ import annotations
 
 import logging
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from lib.config import RingBeamsConfig
+from lib.file_lock import LockTimeoutError, acquire_lock
 from lib.MyPushover import Pushover
 from RingBeams.beams_manager import (
     SIDECAR_PACKAGE,
@@ -327,3 +334,79 @@ def test_alert_text_caps_length() -> None:
 def test_alert_text_falls_back_to_class_name() -> None:
     """An exception with an empty message still needs an identifiable alert."""
     assert _alert_text(RuntimeError("")) == "RuntimeError"
+
+
+def test_orphaned_sidecar_keeps_token_lock_after_parent_is_killed(
+    tmp_path: Path,
+) -> None:
+    """End to end through run_sidecar: SIGKILL the parent mid-sidecar and the
+    token lock must stay held while the orphan runs, so RingSecurity cannot
+    refresh concurrently. Guards the lock_fd -> pass_fds wiring."""
+    tok = tmp_path / "tok.json"
+    tok.write_text('{"refresh_token": "fake"}')
+    pidfile = tmp_path / "sidecar.pid"
+    fake = tmp_path / "fake.sh"
+    fake.write_text(f"#!/bin/sh\necho $$ > {pidfile}\nexec sleep 60\n")
+    fake.chmod(0o755)
+    repo = Path(__file__).resolve().parent.parent
+    parent_script = tmp_path / "parent.py"
+    parent_script.write_text(
+        f"import logging, sys\nsys.path.insert(0, {str(repo)!r})\n"
+        "from lib.config import RingBeamsConfig\n"
+        "from lib.file_lock import acquire_lock\n"
+        "from RingBeams.beams_manager import run_sidecar\n"
+        f"cfg = RingBeamsConfig(token_file={str(tok)!r}, battery_threshold_pct=25,"
+        " sidecar_timeout_seconds=60)\n"
+        f"with acquire_lock(cfg.token_file) as fd:\n"
+        f"    run_sidecar(cfg, logging.getLogger('t'), node_path={str(fake)!r},"
+        f" script_path={str(tmp_path / 'x.js')!r}, lock_fd=fd)\n"
+    )
+    parent = subprocess.Popen([sys.executable, str(parent_script)])
+    sidecar_pid = None
+    try:
+        deadline = time.monotonic() + 10
+        while not pidfile.exists() or not pidfile.read_text().strip():
+            assert time.monotonic() < deadline, "sidecar never started"
+            time.sleep(0.05)
+        sidecar_pid = int(pidfile.read_text())
+        parent.kill()
+        parent.wait(timeout=5)
+
+        with pytest.raises(LockTimeoutError):
+            with acquire_lock(tok, timeout_s=0.5, poll_interval_s=0.05):
+                pass
+
+        os.kill(sidecar_pid, signal.SIGKILL)
+        with acquire_lock(tok, timeout_s=5.0, poll_interval_s=0.05):
+            pass
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+        if sidecar_pid is not None:
+            try:
+                os.kill(sidecar_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+def test_watchdog_exits_hung_sidecar_with_code_4(tmp_path: Path) -> None:
+    """An orphan holds the token lock with no parent to time it out, so the
+    sidecar must bound itself. A live event loop stands in for a hung socket."""
+    watchdog = Path(__file__).resolve().parent / "watchdog.js"
+    harness = tmp_path / "hang.mjs"
+    harness.write_text(
+        f"import {{ armWatchdog }} from {watchdog.as_uri()!r};\n"
+        "armWatchdog();\nsetInterval(() => {}, 1000);\n"
+    )
+    env = {**os.environ, "RING_BEAMS_TIMEOUT_S": "1"}
+    proc = subprocess.run(
+        [shutil.which("node") or "node", str(harness)],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 4
+    assert "watchdog" in proc.stderr

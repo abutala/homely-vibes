@@ -6,6 +6,8 @@
 //   RING_BEAMS_TOKEN_FILE  path to refresh-token file. Two formats accepted:
 //     - plain refresh_token string
 //     - Python ring-doorbell OAuth JSON dict (extracts .refresh_token)
+// Env vars (optional):
+//   RING_BEAMS_TIMEOUT_S   self-timeout in seconds (see watchdog.js)
 //
 // stdout: {"devices": [{zid, name, deviceType, categoryId, batteryLevel,
 //                       batteryStatus, tamperStatus, faulted, locationName}, ...]}
@@ -15,7 +17,7 @@
 //   1  uncaught Node crash / module-load failure (reserved for Node itself)
 //   2  missing RING_BEAMS_TOKEN_FILE env var
 //   3  token file unreadable / malformed         → auth-class
-//   4  post-auth unhandled JS exception
+//   4  post-auth unhandled JS exception, or watchdog timeout
 //   5  auth / list-locations failure (bad token) → auth-class
 // Python (beams_manager.run_sidecar) maps 3 and 5 to BeamsAuthError; every
 // other non-zero code is a generic RuntimeError so a Node-version drift (e.g.
@@ -23,6 +25,9 @@
 // "Ring: Auth Required".
 import { RingApi } from 'ring-client-api';
 import fs from 'node:fs';
+import { armWatchdog } from './watchdog.js';
+
+armWatchdog();
 
 const tokenFile = process.env.RING_BEAMS_TOKEN_FILE;
 if (!tokenFile) {

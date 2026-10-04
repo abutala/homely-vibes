@@ -9,6 +9,7 @@ This is a **modular IoT home automation system** with independent components tha
 - **Home / IoT modules**: August, NetworkCheck, NodeCheck, RachioFlume, RingBeams, RingSecurity, SamsungFrame, Tesla
 - **AI / ML modules**: BimpopAI (RAG system), GarageCheck (computer vision), VoiceNotes (local STT)
 - **Ops modules**: PersonalCalSync (Google Apps Script)
+- **Formal models**: formal (Quint specs of concurrency designs)
 - **Client / adjacent**: NoShorts (iOS app), AugustUnlock (iOS app), VSCodeSidebarNotes (VS Code / Cursor extension), BrowserAlert, GPXParser
 
 ## Key Architectural Patterns

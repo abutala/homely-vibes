@@ -84,11 +84,13 @@ Cross-process critical sections. Used to serialize Ring token refresh across Rin
 
 ```python
 from lib.file_lock import acquire_lock, LockTimeoutError
-with acquire_lock(token_path, timeout_s=60.0):
+with acquire_lock(token_path, timeout_s=60.0) as lock_fd:
     # exclusive access across processes
-    ...
+    subprocess.run(cmd, pass_fds=(lock_fd,))  # optional: the child keeps the lock too
 ```
 Locks a sibling `<path>.lock` file (NOT the resource — the resource is rewritten via tmp+rename, so an fd on the pre-rename inode would dangle). Auto-released on exit/crash. Raises `LockTimeoutError(TimeoutError)` if not acquired in time.
+
+Yields the lock's fd. flock belongs to the open file description, so a child given the fd via `pass_fds` holds the lock until it exits, even if the parent is SIGKILLed. Release is a plain `close()`, never `LOCK_UN`, which would drop the lock for every inheritor. A child that inherits the lock needs its own timeout: nothing else bounds it once the parent is gone (see `RingBeams/watchdog.js`).
 
 ## Tests
 ```bash

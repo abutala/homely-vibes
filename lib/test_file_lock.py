@@ -6,6 +6,8 @@ mocked flock would let the tests pass even if the real primitive was wrong.
 
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import sys
 import time
@@ -107,3 +109,48 @@ def test_lock_released_when_holder_crashes(tmp_path: Path) -> None:
         if holder.poll() is None:
             holder.terminate()
             holder.wait(timeout=5)
+
+
+def test_inherited_child_keeps_lock_after_parent_is_killed(tmp_path: Path) -> None:
+    """A child spawned with the lock fd outlives a SIGKILLed parent *inside* the
+    critical section. flock belongs to the open file description, which the
+    child shares via ``pass_fds``, so the kernel keeps the lock until the last
+    holder exits. Without this an orphaned Ring sidecar keeps rotating the
+    refresh token after the parent dies, racing the next job."""
+    resource = tmp_path / "token.json"
+    parent_script = tmp_path / "parent.py"
+    parent_script.write_text(
+        "import subprocess, sys, time\n"
+        "sys.path.insert(0, '" + str(Path(__file__).resolve().parent.parent) + "')\n"
+        "from lib.file_lock import acquire_lock\n"
+        f"with acquire_lock('{resource}') as lock_fd:\n"
+        "    child = subprocess.Popen(['sleep', '60'], pass_fds=(lock_fd,))\n"
+        "    print(child.pid, flush=True)\n"
+        "    time.sleep(60)\n"
+    )
+    parent = subprocess.Popen(
+        [sys.executable, str(parent_script)], stdout=subprocess.PIPE, text=True
+    )
+    child_pid = None
+    try:
+        assert parent.stdout is not None
+        child_pid = int(parent.stdout.readline())
+        parent.kill()
+        parent.wait(timeout=5)
+
+        with pytest.raises(LockTimeoutError):
+            with acquire_lock(resource, timeout_s=0.5, poll_interval_s=0.05):
+                pass
+
+        os.kill(child_pid, signal.SIGKILL)
+        with acquire_lock(resource, timeout_s=5.0, poll_interval_s=0.05):
+            pass
+    finally:
+        if parent.poll() is None:
+            parent.kill()
+            parent.wait(timeout=5)
+        if child_pid is not None:
+            try:
+                os.kill(child_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass

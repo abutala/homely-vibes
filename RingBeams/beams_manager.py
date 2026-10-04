@@ -97,8 +97,13 @@ def run_sidecar(
     *,
     node_path: Optional[str] = None,
     script_path: Optional[str] = None,
+    lock_fd: Optional[int] = None,
 ) -> tuple[list[DeviceRecord], list[str]]:
     """Invoke fetch_status.js. Returns (devices, per-location errors).
+
+    ``lock_fd`` is the token flock's fd from ``acquire_lock``. The sidecar
+    inherits it, so a hard-killed parent leaves the lock held until the orphan
+    exits rather than letting it rotate the refresh token unserialized.
 
     Per-location errors are surfaced (not raised) so a partial failure never
     masks itself as "all healthy" — the caller pushes them to Pushover at P1.
@@ -120,6 +125,7 @@ def run_sidecar(
 
     env = os.environ.copy()
     env["RING_BEAMS_TOKEN_FILE"] = token_file
+    env["RING_BEAMS_TIMEOUT_S"] = str(cfg.sidecar_timeout_seconds)
 
     logger.info(f"Spawning node sidecar: {node} {script}")
     proc = subprocess.run(
@@ -128,6 +134,7 @@ def run_sidecar(
         capture_output=True,
         text=True,
         timeout=cfg.sidecar_timeout_seconds,
+        pass_fds=() if lock_fd is None else (lock_fd,),
     )
     if proc.returncode != 0:
         # Exits 2..5 carry a JSON {"error": ...} envelope on stderr; exit 1 is
@@ -246,9 +253,10 @@ def main() -> None:
         # Serialize against RingSecurity — both share cfg.ring_beams.token_file
         # (== cfg.ring.token_file); Ring OAuth rotates the refresh_token on
         # every use. Parent Python holds the flock across the Node sidecar
-        # spawn; the child inherits serialization implicitly.
-        with acquire_lock(cfg.ring_beams.token_file):
-            devices, errors = run_sidecar(cfg.ring_beams, logger)
+        # spawn and passes its fd to the child, so the lock outlives the parent
+        # for as long as the sidecar runs.
+        with acquire_lock(cfg.ring_beams.token_file) as lock_fd:
+            devices, errors = run_sidecar(cfg.ring_beams, logger, lock_fd=lock_fd)
         logger.info(f"Fetched {len(devices)} devices from sidecar ({len(errors)} location errors)")
         low, tamper = classify(devices, cfg.ring_beams.battery_threshold_pct)
         notify(pushover, low, tamper, errors, logger)
