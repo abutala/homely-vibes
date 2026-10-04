@@ -179,6 +179,16 @@ def run_pipeline(
     return 1 if failed_stage else 0
 
 
+def pushover_sender() -> Callable[[str, str, int], object]:
+    """Send (message, title, priority) on the SamsungFrame Pushover app."""
+    cfg = get_config()
+    token = cfg.pushover.tokens.get("SamsungFrame", cfg.pushover.default_token)
+    pushover = Pushover(cfg.pushover.user, token)
+    return lambda message, title, priority: pushover.send_message(
+        message, title=title, priority=priority
+    )
+
+
 def _raise_interrupt(_signum: int, _frame: Optional[FrameType]) -> None:
     raise KeyboardInterrupt
 
@@ -197,6 +207,9 @@ def main() -> int:
     parser.add_argument("--upload-attempts", type=int, default=3, help="Upload stage tries")
     parser.add_argument("--no-cleanup", action="store_true", help="Keep the old catalog")
     parser.add_argument("--duration", type=int, default=3, help="Slideshow minutes per photo")
+    parser.add_argument(
+        "--no-notify", action="store_true", help="Send no Pushover (a caller reports instead)"
+    )
     args = parser.parse_args()
 
     if not args.source_dir.is_dir():
@@ -204,18 +217,9 @@ def main() -> int:
         return 1
     job = Job(args.job or default_job_dir(args.source_dir))
     job.create()
-    cfg = get_config()
-    token = cfg.pushover.tokens.get("SamsungFrame", cfg.pushover.default_token)
-    pushover = Pushover(cfg.pushover.user, token)
     signal.signal(signal.SIGTERM, _raise_interrupt)
-    return run_pipeline(
-        args,
-        job,
-        lambda command: subprocess.run(command).returncode,
-        lambda message, title, priority: pushover.send_message(
-            message, title=title, priority=priority
-        ),
-    )
+    send = (lambda _message, _title, _priority: None) if args.no_notify else pushover_sender()
+    return run_pipeline(args, job, lambda command: subprocess.run(command).returncode, send)
 
 
 if __name__ == "__main__":

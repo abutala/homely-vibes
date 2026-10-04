@@ -100,6 +100,17 @@ Three photos uploaded at 14:58 local (21:58 UTC) came back with `image_date` `20
 
 The upload loop used to follow every image, successful or not, with a Wake-on-LAN burst and a full art-list read. That check now runs only after a failed image; a TV that has just accepted an upload needs no proof it is in art mode. Measured on the real Frame after the change: three images in 25.6s, about 8.5s each, of which 5s is the fixed pause. The old loop also ended in a `break` inside `finally`, which discarded any exception in flight, Ctrl-C included.
 
+### The Album Queue (2026-10-04)
+
+Decisions behind `frame_album.py`, so they are not re-litigated:
+
+- **Captions in file names are the selection.** In the library, the albums someone went through have files renamed `<camera name>-<caption>`. Those are the pictures worth showing, so a labelled album uploads only them and is never deduplicated. A handful of captioned files in a large album are strays, not curation, hence `labelled_album_min`.
+- **The picks CSV lives in the album folder**, on the library itself, not in local state: it survives a rebuilt machine, anyone browsing the album can see what was chosen, and its presence is what tells the next visit to skip dedup. Files are never renamed; a write failure is only a warning and costs a second dedup later.
+- **Recommended names are generic.** Apple Vision's classifier returns taxonomy labels (`people`, `adult`, `outdoor`), not descriptions of the scene. Good enough to tell pictures apart in a list; not a caption a person would write.
+- **A job is keyed by album and month, and records its choice** (`album.json`: the source folder and the usable pictures). Without the record, a rerun after dedup had written the CSV would switch to the CSV path, start a new job, lose the upload checkpoints and upload everything twice.
+- **Parts are cut from the usable list in capture order**, so a later month's part can be recomputed from the CSV and lines up with the first.
+- **The scheduler cannot say "first Monday"**, so the routine fires every Monday and `run --scheduled` exits at once on the others.
+
 ### Dedup Scaling
 
 `dedup_photos.py` holds a dense n×n distance matrix and scans it once per merge, so cost grows roughly with n³. A few hundred photos take seconds; a folder of several thousand needs splitting first.

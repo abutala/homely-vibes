@@ -2,10 +2,12 @@ import Foundation
 import Vision
 
 // usage: vision_features <dir-of-jpgs> <out.json>
-// Writes {"names": [...], "dist": [[...]], "scores": [...], "utility": [...]} for every .jpg:
+// Writes {"names": [...], "dist": [[...]], "scores": [...], "utility": [...], "labels": [[...]]}
+// for every .jpg:
 //   dist     pairwise feature-print distance (0 = identical; ~0.5 = same scene; >0.8 = unrelated)
 //   scores   Apple's overall aesthetics score, about -1...1 (higher is better composed)
 //   utility  true for reference shots (signs, plates, receipts, screenshots), not "nice photos"
+//   labels   up to three of Apple's classification labels for the photo, most confident first
 // Driven by dedup_photos.py.
 let args = CommandLine.arguments
 guard args.count == 3 else {
@@ -24,23 +26,31 @@ struct NoResult: Error {}
 var prints: [VNFeaturePrintObservation?] = []
 var scores: [Float] = []
 var utility: [Bool] = []
+var labels: [[String]] = []
+let minLabelConfidence: Float = 0.3
 for name in names {
     let handler = VNImageRequestHandler(url: dir.appendingPathComponent(name), options: [:])
     let printRequest = VNGenerateImageFeaturePrintRequest()
     let aestheticsRequest = VNCalculateImageAestheticsScoresRequest()
+    let classifyRequest = VNClassifyImageRequest()
     do {
-        try handler.perform([printRequest, aestheticsRequest])
+        try handler.perform([printRequest, aestheticsRequest, classifyRequest])
         guard let print = printRequest.results?.first, let aesthetics = aestheticsRequest.results?.first else {
             throw NoResult()
         }
         prints.append(print)
         scores.append(aesthetics.overallScore)
         utility.append(aesthetics.isUtility)
+        labels.append((classifyRequest.results ?? [])
+            .filter { $0.confidence >= minLabelConfidence }
+            .prefix(3)
+            .map { $0.identifier })
     } catch {
         FileHandle.standardError.write("vision_features: \(name) unreadable (\(error)); treating as unique\n".data(using: .utf8)!)
         prints.append(nil)
         scores.append(0)
         utility.append(false)
+        labels.append([])
     }
 }
 
@@ -55,5 +65,7 @@ for i in 0..<names.count {
         dist[j][i] = d
     }
 }
-let out: [String: Any] = ["names": names, "dist": dist, "scores": scores, "utility": utility]
+let out: [String: Any] = [
+    "names": names, "dist": dist, "scores": scores, "utility": utility, "labels": labels,
+]
 try JSONSerialization.data(withJSONObject: out).write(to: URL(fileURLWithPath: args[2]))

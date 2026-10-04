@@ -178,6 +178,20 @@ class TestDedupFlow:
         job = self.job(tmp_path)
         assert len(dedup(job, features_of=lambda _j, _b: self.features(), max_photos=10)) == 3
 
+    def test_kept_photos_get_a_caption_from_their_labels(self, tmp_path: Path) -> None:
+        job = self.job(tmp_path)
+        features = self.features()
+        labelled = VisionFeatures(
+            names=features.names,
+            dist=features.dist,
+            scores=features.scores,
+            utility=features.utility,
+            labels=[["sky"], ["mountain", "blue_sky"], [], ["lake"]],
+        )
+        kept = self.run(job, labelled)
+        assert job.load().captions == {"b.jpg": "Mountain blue sky", "c.jpg": "", "d.jpg": "Lake"}
+        assert kept == ["b.jpg", "c.jpg", "d.jpg"]
+
     def test_everything_utility_keeps_nothing(self, tmp_path: Path) -> None:
         job = self.job(tmp_path)
         assert self.run(job, self.features(utility=[True] * 4)) == []
@@ -209,6 +223,7 @@ class TestRealVision:
         assert features.dist[0, 1] < features.dist[0, 2]
         assert len(features.scores) == 3 and all(isinstance(s, float) for s in features.scores)
         assert len(features.utility) == 3
+        assert len(features.labels) == 3 and all(len(found) <= 3 for found in features.labels)
 
     def test_an_unreadable_jpg_is_unique_and_does_not_abort_the_run(self, tmp_path: Path) -> None:
         pattern(1).save(tmp_path / "a.jpg")

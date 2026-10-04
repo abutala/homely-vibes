@@ -11,6 +11,7 @@ import pytest
 from PIL import Image
 
 from lib.config import SamsungFrameConfig
+from SamsungFrame.test_album_queue import config as album_config
 from SamsungFrame.samsung_client import (
     MY_PICTURES_CATEGORY,
     SamsungFrameClient,
@@ -42,6 +43,7 @@ def fake_config(**overrides: Any) -> SamsungFrameConfig:
         min_size_mb=0.75,
         min_images=100,
         slideshow_delay_seconds=0,
+        albums=album_config(),
     )
     return SamsungFrameConfig(**(values | overrides))
 
