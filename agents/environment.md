@@ -81,6 +81,10 @@ make coverage-lcov  # Generate lcov coverage report
 # Docker environment (if needed)
 make colima         # Start colima Docker environment with disk space checks
 
+# Formal models (Quint; not part of setup, lint or test)
+make formal-deps    # Install the pinned Quint
+make formal         # Check the pinned holds/violated outcomes of every model
+
 # Run specific modules
 uv run python Tesla/manage_power_clean.py
 uv run python RachioFlume/rfmanager.py
