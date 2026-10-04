@@ -393,7 +393,7 @@ def test_orphaned_sidecar_keeps_token_lock_after_parent_is_killed(
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
 def test_watchdog_exits_hung_sidecar_with_code_4(tmp_path: Path) -> None:
     """An orphan holds the token lock with no parent to time it out, so the
-    sidecar must bound itself. A busy event loop stands in for a hung socket."""
+    sidecar must bound itself. A live event loop stands in for a hung socket."""
     watchdog = Path(__file__).resolve().parent / "watchdog.js"
     harness = tmp_path / "hang.mjs"
     harness.write_text(

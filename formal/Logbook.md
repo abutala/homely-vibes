@@ -8,7 +8,7 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ### 2026-10-04 — The model found a hole the lock tests could not
 
-`lib/test_file_lock.py` proved the flock works; nothing checked that *callers* keep the
+`lib/test_file_lock.py` showed the flock works; nothing checked that *callers* keep the
 critical section airtight. Modelling the callers showed that a SIGKILLed RingBeams
 parent leaves its Node sidecar alive and refreshing outside the lock, because flock is
 released when the holder dies and the sidecar never held it. Reproduced with a real

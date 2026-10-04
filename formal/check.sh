@@ -24,7 +24,7 @@ check() { # instance invariant expected(holds|violated)
     fi
 }
 
-# Sidecar orphaned by a killed parent: the bug this model was written for.
+# `current` must violate: it models a sidecar that does not inherit the lock.
 check current      lockedWritersExclusive violated
 check orphanFixed  lockedWritersExclusive holds
 check allFixed     lockedWritersExclusive holds

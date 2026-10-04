@@ -8,7 +8,7 @@ the implementation is in. Gotchas and findings: [Logbook.md](Logbook.md).
 
 | Model | Question it answers |
 |---|---|
-| [ring_token_lock.qnt](ring_token_lock.qnt) | Is the flock around the shared Ring refresh token airtight? Three instances: `current` (before the sidecar inherited the lock), `orphanFixed` (the code now), `allFixed` (`auth` also locked: not built). |
+| [ring_token_lock.qnt](ring_token_lock.qnt) | Is the flock around the shared Ring refresh token airtight? Instances: `current` (before the sidecar inherited the lock), `orphanFixed` (the code now), `allFixed` (`auth` also locked: not built). |
 
 ## Setup and run
 

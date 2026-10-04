@@ -84,6 +84,7 @@ See `config/default.yaml` for the full structure and `config/local.yaml.example`
 | 🤖 **BimpopAI** | RAG (Retrieval Augmented Generation) system with AI voice assistant, indexing, and Streamlit frontend. A startup concept for business intelligence in Mom-n-Pop stores. | [📖 README](BimpopAI/README.md) · [📓 Logbook](BimpopAI/Logbook.md) |
 | 📊 **ClaudeUsageBar** | macOS menu-bar widget showing Claude Code plan usage. Swift, own Keychain item, bootstrapped from the `claude` CLI. | [📖 README](ClaudeUsageBar/README.md) · [📓 Logbook](ClaudeUsageBar/Logbook.md) |
 | 🌐 **BrowserAlert** | Web usage monitoring and alerting system for tracking browsing activity and digital wellness. | [📖 README](BrowserAlert/README.md) · [📓 Logbook](BrowserAlert/Logbook.md) |
+| 🧪 **formal** | Quint models of concurrency designs the tests exercise badly, starting with the Ring token lock. | [📖 README](formal/README.md) · [📓 Logbook](formal/Logbook.md) |
 | 🚗 **GarageCheck** | Machine learning-based garage door status detection using image classification and computer vision. | [📖 README](GarageCheck/README.md) |
 | 🗺️ **GPXParser** | GPX track analysis and processing tools for GPS data visualization and route analysis. | [📖 README](GPXParser/README.md) |
 | 🛠️ **lib** | Shared utilities: OmegaConf config, Pushover / Mailer / Twilio, atomic secret I/O, POSIX file lock. Used by every module. | [📖 README](lib/README.md) · [📓 Logbook](lib/Logbook.md) |

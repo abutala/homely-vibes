@@ -241,7 +241,7 @@ uv run pytest NodeCheck
 - **File lock**: `lib/file_lock.py` — POSIX `fcntl.flock` context manager for cross-process serialization on shared resources (e.g. Ring token file used by RingSecurity + RingBeams). Yields its fd: a child given it via `pass_fds` keeps the lock after a killed parent.
 - **TeslaPy Submodule**: External dependency managed as Git submodule
 
-### formal (`formal/`)
+### formal Module (`formal/`)
 - **Stack**: Quint models (Node tooling, NOT Python). `make formal-deps` then `make formal`; deliberately outside `setup`, `lint` and `test`, so the prod host never installs it.
 - **Result semantics**: `quint run` is a randomized search, so "holds" is never "proved"; `quint verify` needs JDK 17+. See [formal/Logbook.md](formal/Logbook.md) before trusting or extending a model.
 
