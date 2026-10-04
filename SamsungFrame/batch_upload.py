@@ -710,7 +710,15 @@ def run_batch_upload(args: argparse.Namespace) -> int:
 
             if not start_slideshow_with_retry():
                 logger.error("Slideshow start failed")
+                client.close()
                 return 1
+            problems = client.verify_slideshow(duration=3, shuffle=True)
+            for problem in problems:
+                logger.error(f"Slideshow not verified: {problem}")
+            if problems:
+                client.close()
+                return 1
+            logger.info("Slideshow verified on the TV")
 
         if client:
             client.close()

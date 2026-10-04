@@ -300,12 +300,16 @@ def start_slideshow(args: argparse.Namespace) -> int:
     try:
         with SamsungFrameClient() as client:
             shuffle = not args.no_shuffle
-            if client.start_slideshow(duration=args.duration, shuffle=shuffle):
-                logger.info("Slideshow started successfully")
-                return 0
-            else:
+            if not client.start_slideshow(duration=args.duration, shuffle=shuffle):
                 logger.error("Failed to start slideshow")
                 return 1
+            problems = client.verify_slideshow(args.duration, shuffle)
+            for problem in problems:
+                logger.error(f"Slideshow not verified: {problem}")
+            if problems:
+                return 1
+            logger.info("Slideshow started and verified on the TV")
+            return 0
 
     except Exception as e:
         logger.error(f"Error starting slideshow: {e}")

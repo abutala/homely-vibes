@@ -73,13 +73,17 @@ Choices that took trial to find, so they are not re-litigated:
 ln -s ~/bin/Common-configs/tokens config/tokens
 ```
 
+### Purge After the Slideshow Started Leaves No Autoplay
+
+After a `--no-purge` upload and a separate `purge`, the TV did not start cycling although the upload log said "Slideshow started". Re-running `start-slideshow` fixed it and the TV then read back a playlist of exactly the uploaded photos. Deleting art after the slideshow is configured is the likely cause (not proven; the playlist was not read before the restart). `batch_upload` is unaffected because it purges first and starts the slideshow after. Both `batch_upload` and `start-slideshow` now read the slideshow back from the TV and fail when it does not match.
+
 ### Dedup Scaling
 
 `dedup_photos.py` holds a dense n×n distance matrix and scans it once per merge, so cost grows roughly with n³. A few hundred photos take seconds; a folder of several thousand needs splitting first.
 
 ### Slideshow Behavior
 
-The slideshow uses the TV's configured rotation interval (fastest available). The interval cannot be customized via the API - adjust it directly on the TV's art mode settings.
+The interval is set by `start-slideshow --duration` (minutes, default 3) and `batch_upload` always uses 3 minutes with shuffle on. The TV then cycles on its own after the command exits.
 
 ---
 

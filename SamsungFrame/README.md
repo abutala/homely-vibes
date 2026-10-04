@@ -113,7 +113,7 @@ uv run python SamsungFrame/batch_upload.py ~/Photos --start-index 10 --max-files
 5. **Quality Compression**: Reduces JPG quality (95→90→85→80→75→70) if needed to meet 10MB TV limit
 6. **Phase 2 — Upload**: Uploads all prepared images with health checking (3 consecutive failures reboot the TV and reconnect; the upload aborts only if that fails)
 7. **Smart Purge**: Deletes art uploaded >24h ago or with no upload date, using the TV's own `image_date` (respects minimum image count); skip with `--no-purge`
-8. **Enable Art Mode**: Automatically enables slideshow after upload
+8. **Enable Art Mode**: Starts the slideshow (3 minutes, shuffle) after an upload with at least one success, then reads it back from the TV; a mismatch logs `Slideshow not verified: ...` and exits 1
 
 **Command Options:**
 
@@ -256,7 +256,10 @@ This command:
 - Starts the TV's built-in slideshow for user-uploaded photos
 - Configures the interval between image changes (in minutes)
 - Optionally enables shuffle or sequential mode
-- Returns after starting the slideshow (TV continues cycling independently)
+- Reads the slideshow back from the TV and exits non-zero unless art mode is on, the category is My Pictures, interval and shuffle match, and the playlist is exactly the photos on the TV
+- Returns after verifying (TV continues cycling independently)
+
+`batch_upload.py` runs the same verification at the end of an upload that had at least one success. Run `start-slideshow` again after any separate purge: deleting art after the slideshow started leaves a stale playlist.
 
 **Note**: This uses the TV's native slideshow feature, which continues running even after the command exits. The TV will cycle through images automatically based on the configured interval.
 

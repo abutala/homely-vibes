@@ -1,5 +1,6 @@
 """Samsung Frame TV client for art mode management."""
 
+import json
 import os
 import signal
 import socket
@@ -58,6 +59,67 @@ class ImageUploadSummary(BaseModel):
     failed_uploads: int
     uploaded_image_ids: List[str]
     errors: List[Dict[str, str]]
+
+
+MY_PICTURES_CATEGORY = "MY-C0002"
+SHUFFLE_SLIDESHOW_TYPE = "shuffleslideshow"
+SLIDESHOW_SETTLE_SECONDS = 2
+
+
+class SlideshowStatus(BaseModel):
+    """What the TV reports it is playing."""
+
+    interval_minutes: int
+    category_id: str
+    shuffle: bool
+    current_id: str
+    playlist_ids: List[str]
+
+
+def parse_slideshow_status(raw: Dict[str, Any]) -> SlideshowStatus:
+    """Turn the TV's `get_slideshow_status` reply into a SlideshowStatus."""
+    playlist = json.loads(raw.get("content_list") or "[]")
+    interval = str(raw.get("value", ""))
+    return SlideshowStatus(
+        interval_minutes=int(interval) if interval.isdigit() else 0,  # "off" when disabled
+        category_id=raw.get("category_id", ""),
+        shuffle=raw.get("type") == SHUFFLE_SLIDESHOW_TYPE,
+        current_id=raw.get("current_content_id", ""),
+        playlist_ids=[item["content_id"] for item in playlist],
+    )
+
+
+def slideshow_problems(
+    status: SlideshowStatus,
+    user_art_ids: set[str],
+    interval_minutes: int,
+    shuffle: bool,
+    art_mode_on: bool,
+) -> List[str]:
+    """Differences between what the TV is playing and what should be playing; [] = verified."""
+    playlist = set(status.playlist_ids)
+    problems = []
+    if not art_mode_on:
+        problems.append("art mode is off")
+    if not user_art_ids:
+        problems.append("no user-uploaded photos are on the TV")
+    if status.category_id != MY_PICTURES_CATEGORY:
+        problems.append(f"playing category {status.category_id!r}, expected My Pictures")
+    if status.interval_minutes == 0:
+        problems.append("slideshow is off")
+    elif status.interval_minutes != interval_minutes:
+        problems.append(f"interval is {status.interval_minutes} min, expected {interval_minutes}")
+    if status.shuffle != shuffle:
+        problems.append(
+            f"shuffle is {'on' if status.shuffle else 'off'}, expected {'on' if shuffle else 'off'}"
+        )
+    if missing := user_art_ids - playlist:
+        problems.append(f"playlist is missing {len(missing)} photos that are on the TV")
+    if stale := playlist - user_art_ids:
+        problems.append(f"playlist holds {len(stale)} items that are not on the TV")
+    if status.current_id and status.current_id not in user_art_ids:
+        problems.append(f"current item {status.current_id} is not a photo on the TV")
+    return problems
 
 
 class SamsungFrameClient:
@@ -849,6 +911,39 @@ class SamsungFrameClient:
 
         self.logger.error("Failed to start slideshow after 3 attempts")
         return False
+
+    def get_slideshow_status(self) -> SlideshowStatus:
+        if not self.tv:
+            raise RuntimeError("Not connected to TV - call connect() first")
+        return parse_slideshow_status(self.tv.art().get_slideshow_status())
+
+    def verify_slideshow(
+        self, duration: int, shuffle: bool, settle_seconds: float = SLIDESHOW_SETTLE_SECONDS
+    ) -> List[str]:
+        """Read the slideshow back from the TV; returns the problems found (empty = verified).
+
+        A TV that cannot be read back is a problem, not an exception: the caller's question is
+        "is it verified", and an unreadable TV is not.
+        """
+        if not self.tv:
+            raise RuntimeError("Not connected to TV - call connect() first")
+        time.sleep(settle_seconds)
+        try:
+            status = self.get_slideshow_status()
+            user_art_ids = {
+                art["content_id"]
+                for art in self.get_available_art_strict()
+                if art.get("content_id", "").startswith("MY_F")
+            }
+            art_mode_on = self.tv.art().get_artmode() == "on"
+        except Exception as e:
+            return [f"could not read the slideshow back from the TV: {e}"]
+        self.logger.info(
+            f"Slideshow reads back as {len(status.playlist_ids)} photos, "
+            f"{status.interval_minutes} min, {'shuffle' if status.shuffle else 'sequential'}, "
+            f"current {status.current_id}"
+        )
+        return slideshow_problems(status, user_art_ids, duration, shuffle, art_mode_on)
 
     def cycle_images(
         self, period: int = 15, user_photos_only: bool = True, shuffle: bool = True

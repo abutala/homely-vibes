@@ -1,5 +1,6 @@
 """Tests for Samsung Frame TV client."""
 
+import json
 import os
 import socket
 import tempfile
@@ -8,7 +9,13 @@ import pytest
 from PIL import Image
 from unittest.mock import Mock, patch, MagicMock
 
-from SamsungFrame.samsung_client import SamsungFrameClient
+from SamsungFrame.samsung_client import (
+    MY_PICTURES_CATEGORY,
+    SamsungFrameClient,
+    SlideshowStatus,
+    parse_slideshow_status,
+    slideshow_problems,
+)
 
 TV_HOST = "192.0.2.4"
 TOKEN_FILE = "/tmp/token.txt"
@@ -613,3 +620,145 @@ class TestTimeout:
         mock_tv_cls.assert_called_once_with(
             host=TV_HOST, port=8002, token_file=TOKEN_FILE, timeout=120
         )
+
+
+def raw_slideshow_reply(ids: list[str], **overrides: str) -> dict[str, str]:
+    reply = {
+        "event": "get_slideshow_status",
+        "value": "3",
+        "category_id": MY_PICTURES_CATEGORY,
+        "current_content_id": ids[0],
+        "type": "shuffleslideshow",
+        "content_list": json.dumps(
+            [{"content_id": i, "category_id": MY_PICTURES_CATEGORY} for i in ids]
+        ),
+    }
+    reply.update(overrides)
+    return reply
+
+
+class TestParseSlideshowStatus:
+    def test_reads_every_field(self) -> None:
+        status = parse_slideshow_status(raw_slideshow_reply(["MY_F1", "MY_F2"]))
+        assert status == SlideshowStatus(
+            interval_minutes=3,
+            category_id=MY_PICTURES_CATEGORY,
+            shuffle=True,
+            current_id="MY_F1",
+            playlist_ids=["MY_F1", "MY_F2"],
+        )
+
+    def test_sequential_type_is_not_shuffle(self) -> None:
+        assert not parse_slideshow_status(raw_slideshow_reply(["MY_F1"], type="slideshow")).shuffle
+
+    def test_off_value_parses_as_zero_interval(self) -> None:
+        assert (
+            parse_slideshow_status(raw_slideshow_reply(["MY_F1"], value="off")).interval_minutes
+            == 0
+        )
+
+    def test_missing_playlist_parses_as_empty(self) -> None:
+        assert parse_slideshow_status({"value": "3"}).playlist_ids == []
+
+
+class FakeArt:
+    def __init__(self, ids: list[str], reply: dict[str, str] | None = None, artmode: str = "on"):
+        self.ids, self.reply, self.artmode = ids, reply, artmode
+
+    def get_slideshow_status(self) -> dict[str, str]:
+        if self.reply is None:
+            raise AssertionError("TV sent no reply")
+        return self.reply
+
+    def available(self) -> list[dict[str, str]]:
+        return [{"content_id": i} for i in self.ids] + [{"content_id": "SAM-S1"}]
+
+    def get_artmode(self) -> str:
+        return self.artmode
+
+
+class FakeTv:
+    def __init__(self, art: FakeArt):
+        self._art = art
+
+    def art(self) -> FakeArt:
+        return self._art
+
+
+class TestVerifySlideshow:
+    IDS = ["MY_F1", "MY_F2"]
+
+    def verify(self, art: FakeArt, duration: int = 3) -> list[str]:
+        client = make_client()
+        client.tv = FakeTv(art)  # type: ignore[assignment]
+        return client.verify_slideshow(duration, True, settle_seconds=0)
+
+    def test_matching_tv_is_verified(self) -> None:
+        assert self.verify(FakeArt(self.IDS, raw_slideshow_reply(self.IDS))) == []
+
+    def test_preinstalled_art_is_not_expected_in_playlist(self) -> None:
+        assert self.verify(FakeArt(self.IDS, raw_slideshow_reply(self.IDS))) == []
+
+    def test_stale_playlist_after_purge_is_reported(self) -> None:
+        stale = FakeArt(["MY_F2"], raw_slideshow_reply(self.IDS))
+        problems = self.verify(stale)
+        assert "playlist holds 1 items that are not on the TV" in problems
+        assert any("current item MY_F1" in p for p in problems)
+
+    def test_slideshow_off_is_reported_not_raised(self) -> None:
+        off = FakeArt(self.IDS, raw_slideshow_reply(self.IDS, value="off"))
+        assert self.verify(off) == ["slideshow is off"]
+
+    def test_wrong_interval_is_reported(self) -> None:
+        art = FakeArt(self.IDS, raw_slideshow_reply(self.IDS))
+        assert self.verify(art, duration=7) == ["interval is 3 min, expected 7"]
+
+    def test_art_mode_off_is_reported(self) -> None:
+        art = FakeArt(self.IDS, raw_slideshow_reply(self.IDS), artmode="off")
+        assert self.verify(art) == ["art mode is off"]
+
+    def test_unreadable_tv_is_a_problem_not_an_exception(self) -> None:
+        (problem,) = self.verify(FakeArt(self.IDS, reply=None))
+        assert problem.startswith("could not read the slideshow back from the TV")
+
+    def test_not_connected_raises(self) -> None:
+        with pytest.raises(RuntimeError):
+            make_client().verify_slideshow(3, True, settle_seconds=0)
+
+
+class TestSlideshowProblems:
+    IDS = {"MY_F1", "MY_F2", "MY_F3"}
+
+    def status(self, **overrides: str) -> SlideshowStatus:
+        return parse_slideshow_status(raw_slideshow_reply(sorted(self.IDS), **overrides))
+
+    def problems(self, status: SlideshowStatus, ids: set[str] | None = None) -> list[str]:
+        return slideshow_problems(status, self.IDS if ids is None else ids, 3, True, True)
+
+    def test_matching_state_has_no_problems(self) -> None:
+        assert self.problems(self.status()) == []
+
+    def test_art_mode_off(self) -> None:
+        assert slideshow_problems(self.status(), self.IDS, 3, True, False) == ["art mode is off"]
+
+    def test_photos_missing_from_playlist(self) -> None:
+        (problem,) = self.problems(self.status(), self.IDS | {"MY_F4", "MY_F5"})
+        assert problem == "playlist is missing 2 photos that are on the TV"
+
+    def test_playlist_holds_deleted_photos(self) -> None:
+        problems = self.problems(self.status(), {"MY_F1", "MY_F2"})
+        assert "playlist holds 1 items that are not on the TV" in problems
+
+    def test_current_item_deleted(self) -> None:
+        problems = self.problems(self.status(current_content_id="MY_F9"))
+        assert problems == ["current item MY_F9 is not a photo on the TV"]
+
+    def test_wrong_interval_category_and_shuffle(self) -> None:
+        problems = self.problems(self.status(value="15", category_id="MY-C0001", type="slideshow"))
+        assert len(problems) == 3
+        assert any("interval is 15 min" in p for p in problems)
+        assert any("My Pictures" in p for p in problems)
+        assert any("shuffle is off" in p for p in problems)
+
+    def test_no_photos_on_tv(self) -> None:
+        assert "no user-uploaded photos are on the TV" in self.problems(self.status(), set())

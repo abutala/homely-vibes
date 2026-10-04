@@ -2,7 +2,7 @@
 
 ## Playbook: "upload this photo folder to the Frame"
 
-Amit's standing preference. Do all four steps without asking; each is the default, not a question. `HV` = the primary checkout (`dirname "$(git rev-parse --path-format=absolute --git-common-dir)"`); run from the repo root or a worktree that has `config/local.yaml` and a `config/tokens` symlink.
+Amit's standing preference. Do every step below without asking; each is the default, not a question. `HV` = the primary checkout (`dirname "$(git rev-parse --path-format=absolute --git-common-dir)"`); run from the repo root or a worktree that has `config/local.yaml` and a `config/tokens` symlink.
 
 1. **Resize + dedup** (macOS only): `"$HV/.venv/bin/python" -m SamsungFrame.dedup_photos "<SRC>"`. Downsizes to 4K JPG, keeps ~50% (`--keep`), writes `"<SRC> - dedup"`. The source is never modified. Skip only if Amit says the folder is already curated.
 2. **Upload, in the background, with the long timeout**: `"$HV/.venv/bin/python" -m SamsungFrame.batch_upload "<SRC> - dedup" 2>&1 | tee /tmp/<name>.log` via Bash `run_in_background` with `timeout: 7200000`. Roughly 10s per image, so a 10-minute timeout kills it mid-run. Purge is ON by default and is step 4, so do not pass `--no-purge`.
@@ -12,11 +12,12 @@ Amit's standing preference. Do all four steps without asking; each is the defaul
    tail -f /tmp/<name>.log | tr '\r' '\n' | grep --line-buffered -E "Uploading images|ERROR|WARNING|Skipped|Complete"
    ```
 
-4. **Cleanup = delete older art**: the end-of-upload purge removes user-uploaded art (`MY_F…` ids) older than 24h, never below `min_images`, never Samsung's pre-installed art. If the upload ran without purge (an interrupted run resumed with `--start-index`, or `--no-purge`), run `manage_samsung.py purge --days 1` once it completes: first with `< /dev/null` (logs the count, deletes nothing), then with `--force`.
+4. **Cleanup = delete older art**: the end-of-upload purge removes user-uploaded art (`MY_F…` ids) older than 24h or with no upload date, never below `min_images`, never Samsung's pre-installed art. If the upload ran without purge (an interrupted run resumed with `--start-index`, or `--no-purge`), run `manage_samsung.py purge --days 1` once it completes: first with `< /dev/null` (logs the count, deletes nothing), then with `--force`.
+5. **Restart the slideshow and verify it on the TV — always the last step**: `"$HV/.venv/bin/python" -m SamsungFrame.manage_samsung start-slideshow`. It restarts the slideshow, then reads it back from the TV and exits non-zero unless art mode is on, the category is My Pictures, interval and shuffle match, and the playlist is exactly the photos on the TV. `batch_upload` already does this at the end of an upload that had at least one success; run it again after any separate purge, because deleting art after the slideshow started leaves the TV with a stale playlist and no autoplay. A non-zero exit means the slideshow is NOT verified (the log names the mismatch): fix it or say so, do not report done.
 
-Report at the end: files found, uploaded, skipped (portraits, files under `min_size_mb`), failed, and how many old items were purged.
+Report at the end: files found, uploaded, skipped (portraits, files under `min_size_mb`), failed, how many old items were purged, and the verify line (photos in the playlist, interval, shuffle).
 
-Landmines: purge is relative to the TV's `image_date`, so finish a batch (and its purge) the same day or the next day's purge deletes the batch's own earlier uploads. `batch_upload` silently skips portraits and files under `min_size_mb`; see [Logbook.md](Logbook.md).
+Landmines: purge is relative to the TV's `image_date`, so finish a batch (and its purge) the same day or the next day's purge deletes the batch's own earlier uploads. `batch_upload` silently skips portraits and files under `min_size_mb`; see [Logbook.md](Logbook.md). A passing upload and purge do not prove the slideshow plays; only step 5's read-back does.
 
 ## Bootstrap — Centralized Connection
 **All code MUST use `connect_ready()` or the context manager to connect.** Never call bare `connect()`.
