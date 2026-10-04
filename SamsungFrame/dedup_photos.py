@@ -8,6 +8,7 @@ Upload the result with batch_upload.py.
 
 import argparse
 import json
+import platform
 import shutil
 import subprocess
 import sys
@@ -207,7 +208,7 @@ def main() -> int:
     parser.add_argument("--work-dir", type=Path, help="Keep the 4K JPG cache here (default: temp)")
     args = parser.parse_args()
 
-    if sys.platform != "darwin" or shutil.which("swiftc") is None:
+    if platform.system() != "Darwin" or shutil.which("swiftc") is None:
         logger.error("Needs macOS with swiftc (Xcode command line tools) for Vision")
         return 1
     if not args.source_dir.is_dir():
