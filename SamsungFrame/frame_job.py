@@ -49,6 +49,7 @@ class Manifest(BaseModel):
     skipped: dict[str, str] = Field(default_factory=dict)  # source relpath -> reason
     kept: list[str] | None = None  # JPG names that survived dedup; None until dedup has run
     dropped: dict[str, str] = Field(default_factory=dict)  # JPG name -> why dedup dropped it
+    captions: dict[str, str] = Field(default_factory=dict)  # kept JPG name -> words describing it
     snapshot: list[ArtRecord] | None = None  # the TV's user photos before the first upload
     uploaded: dict[str, str] = Field(default_factory=dict)  # JPG name -> TV content id
     failed: dict[str, str] = Field(default_factory=dict)  # JPG name -> last upload error

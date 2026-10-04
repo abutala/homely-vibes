@@ -319,6 +319,20 @@ samsung_frame:
   min_size_mb: 0.75  # minimum file size to upload (750KB)
   min_images: 100  # minimum user images to maintain on TV during purge
   slideshow_delay_seconds: 3  # delay before starting slideshow after upload
+  albums:  # the monthly album queue (SamsungFrame/frame_album.py)
+    root: ""  # photo library laid out <root>/<year>/<month>/<album>; set in local.yaml
+    data_dir: ""  # where index.tsv and upcoming.md live; set in local.yaml
+    picks_csv: frame_picks.csv  # written into an album folder: the pictures dedup kept
+    min_pictures: 150  # an album needs more than this many pictures in its folder
+    min_on_tv: 100  # fewer usable pictures than this: the album is skipped
+    max_on_tv: 900  # more usable pictures than this: the album plays in monthly parts
+    labelled_album_min: 20  # captioned files that make an album "labelled"; fewer are strays
+    keep_ratio: 0.3  # guess of usable/folder pictures for an album not measured yet
+    top_k: 6  # a new album lands at a random slot among the first top_k eligible rows
+    home_region: ""  # albums from this region are less likely to sort early
+    away_weight: 3.0  # how much likelier an album from elsewhere is to sort early
+    recency_half_life_years: 8.0  # an album this much older is half as likely to sort early
+    table_months: 12  # months shown in upcoming.md
 
 # === Rachio Irrigation ===
 # `type`: "controller"  -> api.rach.io/1/public/device/*  (Smart Sprinkler Controller)

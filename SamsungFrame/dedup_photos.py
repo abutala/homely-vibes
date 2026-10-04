@@ -15,7 +15,7 @@ import platform
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -45,6 +45,7 @@ class VisionFeatures:
     dist: Matrix
     scores: list[float]
     utility: list[bool]
+    labels: list[list[str]] = field(default_factory=list)  # Apple's classification, per photo
 
 
 def vision_features(jpg_dir: Path, build_dir: Path) -> VisionFeatures:
@@ -60,6 +61,7 @@ def vision_features(jpg_dir: Path, build_dir: Path) -> VisionFeatures:
         dist=np.array(data["dist"], dtype=np.float64),
         scores=data["scores"],
         utility=data["utility"],
+        labels=data.get("labels", []),
     )
 
 
@@ -113,6 +115,11 @@ def best_spread(
     return [pick_best([int(i) for i in run], scores, photos) for run in runs]
 
 
+def caption(labels: list[str]) -> str:
+    """`["mountain", "blue_sky"]` -> `Mountain blue sky`: words for a recommended file name."""
+    return " ".join(label.replace("_", " ") for label in labels).capitalize()
+
+
 def link_kept(job: Job, kept: list[str]) -> None:
     """Rebuild `deduped/` from the kept names; hard links, so no extra disk."""
     shutil.rmtree(job.deduped_dir, ignore_errors=True)
@@ -154,6 +161,8 @@ def dedup(
     for i in set(winners) - set(chosen):
         dropped[photos[i].name] = OVER_LIMIT
     manifest.kept = sorted(photos[i].name for i in chosen)
+    if features.labels:
+        manifest.captions = {photos[i].name: caption(features.labels[rows[i]]) for i in chosen}
     manifest.dropped = dropped
     job.save(manifest)
     link_kept(job, manifest.kept)
