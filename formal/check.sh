@@ -9,17 +9,22 @@ cd "$(dirname "$0")"
 SAMPLES="${QUINT_SAMPLES:-200000}"
 failed=0
 
+# Quint exits 1 for a counterexample and for a broken model alike, so the
+# outcome is read from what it prints. Anything else is "error", which matches
+# no expectation: a model that fails to load must not satisfy a "violated" row.
 check() { # instance invariant expected(holds|violated)
-    if npx quint run ring_token_lock.qnt --main="$1" --invariant="$2" \
-        --max-steps=20 --max-samples="$SAMPLES" >/dev/null 2>&1; then
-        got=holds
-    else
-        got=violated
-    fi
+    out=$(npx quint run ring_token_lock.qnt --main="$1" --invariant="$2" \
+        --max-steps=20 --max-samples="$SAMPLES" 2>&1) || true
+    case "$out" in
+        *"Invariant violated"*) got=violated ;;
+        *"No violation found"*) got=holds ;;
+        *) got=error ;;
+    esac
     if [ "$got" = "$3" ]; then
         printf 'ok    %-12s %-24s %s\n' "$1" "$2" "$got"
     else
         printf 'FAIL  %-12s %-24s expected %s, got %s\n' "$1" "$2" "$3" "$got"
+        [ "$got" = error ] && printf '%s\n' "$out" | tail -3 | sed 's/^/      /'
         failed=1
     fi
 }

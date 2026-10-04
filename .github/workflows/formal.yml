@@ -11,6 +11,7 @@ on:
       - "formal/**"
       - "lib/file_lock.py"
       - "RingBeams/**"
+      - "RingSecurity/**"
       - "Makefile"
       - ".github/workflows/formal.yml"
   pull_request:
@@ -19,6 +20,7 @@ on:
       - "formal/**"
       - "lib/file_lock.py"
       - "RingBeams/**"
+      - "RingSecurity/**"
       - "Makefile"
       - ".github/workflows/formal.yml"
   workflow_dispatch:

@@ -45,6 +45,13 @@ Apalache's launcher passes a JVM flag newer than JDK 11. Use JDK 17 or newer, e.
 downloads the Apalache distribution (outside the repo, into Quint's cache) before
 failing, so the failure is not a network problem.
 
+### `quint run` exits 1 for a counterexample and for a broken model alike
+
+A missing instance (`QNT405`), an uninitialized const (`QNT500`) and a real
+`Invariant violated` all exit 1. A harness that reads the exit code alone passes every
+"violated" row against a model that no longer loads. [check.sh](check.sh) reads what Quint
+prints and treats anything unrecognized as `error`, which matches no expectation.
+
 ### "No violation found" is not "verified"
 
 `quint run` samples. It is the committed check because it needs no JDK, and
