@@ -1,14 +1,24 @@
 """Tests for Samsung Frame TV client."""
 
+import json
 import os
 import socket
 import tempfile
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from PIL import Image
 from unittest.mock import Mock, patch, MagicMock
 
-from SamsungFrame.samsung_client import SamsungFrameClient
+from SamsungFrame.samsung_client import (
+    MY_PICTURES_CATEGORY,
+    SamsungFrameClient,
+    SlideshowStatus,
+    delete_all_art,
+    get_stale_art_ids,
+    parse_slideshow_status,
+    slideshow_problems,
+)
 
 TV_HOST = "192.0.2.4"
 TOKEN_FILE = "/tmp/token.txt"
@@ -613,3 +623,325 @@ class TestTimeout:
         mock_tv_cls.assert_called_once_with(
             host=TV_HOST, port=8002, token_file=TOKEN_FILE, timeout=120
         )
+
+
+def raw_slideshow_reply(ids: list[str], **overrides: str) -> dict[str, str]:
+    reply = {
+        "event": "get_slideshow_status",
+        "value": "3",
+        "category_id": MY_PICTURES_CATEGORY,
+        "current_content_id": ids[0],
+        "type": "shuffleslideshow",
+        "content_list": json.dumps(
+            [{"content_id": i, "category_id": MY_PICTURES_CATEGORY} for i in ids]
+        ),
+    }
+    reply.update(overrides)
+    return reply
+
+
+class TestParseSlideshowStatus:
+    def test_reads_every_field(self) -> None:
+        status = parse_slideshow_status(raw_slideshow_reply(["MY_F1", "MY_F2"]))
+        assert status == SlideshowStatus(
+            interval_minutes=3,
+            category_id=MY_PICTURES_CATEGORY,
+            shuffle=True,
+            current_id="MY_F1",
+            playlist_ids=["MY_F1", "MY_F2"],
+        )
+
+    def test_sequential_type_is_not_shuffle(self) -> None:
+        assert not parse_slideshow_status(raw_slideshow_reply(["MY_F1"], type="slideshow")).shuffle
+
+    def test_off_value_parses_as_zero_interval(self) -> None:
+        assert (
+            parse_slideshow_status(raw_slideshow_reply(["MY_F1"], value="off")).interval_minutes
+            == 0
+        )
+
+    def test_missing_playlist_parses_as_empty(self) -> None:
+        assert parse_slideshow_status({"value": "3"}).playlist_ids == []
+
+
+class FakeArt:
+    def __init__(self, ids: list[str], reply: dict[str, str] | None = None, artmode: str = "on"):
+        self.ids, self.reply, self.artmode = ids, reply, artmode
+
+    def get_slideshow_status(self) -> dict[str, str]:
+        if self.reply is None:
+            raise AssertionError("TV sent no reply")
+        return self.reply
+
+    def available(self) -> list[dict[str, str]]:
+        return [{"content_id": i} for i in self.ids] + [{"content_id": "SAM-S1"}]
+
+    def get_artmode(self) -> str:
+        return self.artmode
+
+
+class FakeTv:
+    def __init__(self, art: FakeArt):
+        self._art = art
+
+    def art(self) -> FakeArt:
+        return self._art
+
+
+class TestVerifySlideshow:
+    IDS = ["MY_F1", "MY_F2"]
+
+    def verify(self, art: FakeArt, duration: int = 3) -> list[str]:
+        client = make_client()
+        client.tv = FakeTv(art)  # type: ignore[assignment]
+        return client.verify_slideshow(duration, True, settle_seconds=0)
+
+    def test_matching_tv_is_verified(self) -> None:
+        assert self.verify(FakeArt(self.IDS, raw_slideshow_reply(self.IDS))) == []
+
+    def test_preinstalled_art_is_not_expected_in_playlist(self) -> None:
+        assert self.verify(FakeArt(self.IDS, raw_slideshow_reply(self.IDS))) == []
+
+    def test_stale_playlist_after_purge_is_reported(self) -> None:
+        stale = FakeArt(["MY_F2"], raw_slideshow_reply(self.IDS))
+        problems = self.verify(stale)
+        assert "playlist holds 1 items that are not on the TV" in problems
+        assert any("current item MY_F1" in p for p in problems)
+
+    def test_slideshow_off_is_reported_not_raised(self) -> None:
+        off = FakeArt(self.IDS, raw_slideshow_reply(self.IDS, value="off"))
+        assert self.verify(off) == ["slideshow is off"]
+
+    def test_wrong_interval_is_reported(self) -> None:
+        art = FakeArt(self.IDS, raw_slideshow_reply(self.IDS))
+        assert self.verify(art, duration=7) == ["interval is 3 min, expected 7"]
+
+    def test_art_mode_off_is_reported(self) -> None:
+        art = FakeArt(self.IDS, raw_slideshow_reply(self.IDS), artmode="off")
+        assert self.verify(art) == ["art mode is off"]
+
+    def test_unreadable_tv_is_a_problem_not_an_exception(self) -> None:
+        (problem,) = self.verify(FakeArt(self.IDS, reply=None))
+        assert problem.startswith("could not read the slideshow back from the TV")
+
+    def test_not_connected_raises(self) -> None:
+        with pytest.raises(RuntimeError):
+            make_client().verify_slideshow(3, True, settle_seconds=0)
+
+
+class TestCheckForNewUpload:
+    def client_with(self, ids: list[str]) -> SamsungFrameClient:
+        client = make_client()
+        client.tv = FakeTv(FakeArt(ids))  # type: ignore[assignment]
+        return client
+
+    def test_exactly_one_new_id_is_the_upload(self) -> None:
+        client = self.client_with(["MY_F1", "MY_F2"])
+        assert client._check_for_new_upload({"MY_F1"}) == "MY_F2"
+
+    def test_no_new_id_means_it_did_not_arrive(self) -> None:
+        assert self.client_with(["MY_F1"])._check_for_new_upload({"MY_F1"}) is None
+
+    def test_several_new_ids_are_not_guessed_at(self) -> None:
+        client = self.client_with(["MY_F1", "MY_F2", "MY_F3"])
+        assert client._check_for_new_upload(set()) is None  # an unreliable baseline
+
+
+class TestSlideshowProblems:
+    IDS = {"MY_F1", "MY_F2", "MY_F3"}
+
+    def status(self, **overrides: str) -> SlideshowStatus:
+        return parse_slideshow_status(raw_slideshow_reply(sorted(self.IDS), **overrides))
+
+    def problems(self, status: SlideshowStatus, ids: set[str] | None = None) -> list[str]:
+        return slideshow_problems(status, self.IDS if ids is None else ids, 3, True, True)
+
+    def test_matching_state_has_no_problems(self) -> None:
+        assert self.problems(self.status()) == []
+
+    def test_art_mode_off(self) -> None:
+        assert slideshow_problems(self.status(), self.IDS, 3, True, False) == ["art mode is off"]
+
+    def test_photos_missing_from_playlist(self) -> None:
+        (problem,) = self.problems(self.status(), self.IDS | {"MY_F4", "MY_F5"})
+        assert problem == "playlist is missing 2 photos that are on the TV"
+
+    def test_playlist_holds_deleted_photos(self) -> None:
+        problems = self.problems(self.status(), {"MY_F1", "MY_F2"})
+        assert "playlist holds 1 items that are not on the TV" in problems
+
+    def test_current_item_deleted(self) -> None:
+        problems = self.problems(self.status(current_content_id="MY_F9"))
+        assert problems == ["current item MY_F9 is not a photo on the TV"]
+
+    def test_wrong_interval_category_and_shuffle(self) -> None:
+        problems = self.problems(self.status(value="15", category_id="MY-C0001", type="slideshow"))
+        assert len(problems) == 3
+        assert any("interval is 15 min" in p for p in problems)
+        assert any("My Pictures" in p for p in problems)
+        assert any("shuffle is off" in p for p in problems)
+
+    def test_no_photos_on_tv(self) -> None:
+        assert "no user-uploaded photos are on the TV" in self.problems(self.status(), set())
+
+
+class TestArtDeletion:
+    """Test art deletion functionality."""
+
+    @patch("SamsungFrame.samsung_client.input")
+    def test_delete_with_confirmation(self, mock_input: Mock) -> None:
+        """Test deletion requires confirmation."""
+        mock_input.return_value = "y"
+
+        mock_tv = Mock()
+        mock_tv.art().delete_list = Mock()
+
+        client = Mock(spec=SamsungFrameClient)
+        client.tv = mock_tv
+        client.get_available_art.return_value = [
+            {"content_id": "MY_F0001"},
+            {"content_id": "MY_F0002"},
+        ]
+
+        result = delete_all_art(client, force=False)
+
+        assert result["total"] == 2
+        assert result["deleted"] == 2
+        assert result["failed"] == 0
+        mock_input.assert_called_once()
+        mock_tv.art().delete_list.assert_called_once()
+
+    @patch("SamsungFrame.samsung_client.input")
+    def test_delete_cancelled(self, mock_input: Mock) -> None:
+        """Test deletion can be cancelled."""
+        mock_input.return_value = "n"
+
+        mock_tv = Mock()
+        client = Mock(spec=SamsungFrameClient)
+        client.tv = mock_tv
+        client.get_available_art.return_value = [{"content_id": "MY_F0001"}]
+
+        result = delete_all_art(client, force=False)
+
+        assert result["deleted"] == 0
+        mock_tv.art().delete_list.assert_not_called()
+
+    def test_delete_with_force(self) -> None:
+        """Test force flag skips confirmation."""
+        mock_tv = Mock()
+        mock_tv.art().delete_list = Mock()
+
+        client = Mock(spec=SamsungFrameClient)
+        client.tv = mock_tv
+        client.get_available_art.return_value = [{"content_id": "MY_F0001"}]
+
+        result = delete_all_art(client, force=True)
+
+        assert result["deleted"] == 1
+        mock_tv.art().delete_list.assert_called_once()
+
+    def test_delete_empty_list(self) -> None:
+        """Test deletion with no art on TV."""
+        mock_tv = Mock()
+        client = Mock(spec=SamsungFrameClient)
+        client.tv = mock_tv
+        client.get_available_art.return_value = []
+
+        result = delete_all_art(client, force=True)
+
+        assert result["total"] == 0
+        assert result["deleted"] == 0
+
+    def test_delete_filters_user_art_only(self) -> None:
+        """Test deletion only removes user-uploaded art."""
+        mock_tv = Mock()
+        mock_tv.art().delete_list = Mock()
+
+        client = Mock(spec=SamsungFrameClient)
+        client.tv = mock_tv
+        # Mix of user art (MY_F) and Samsung art (SAM_)
+        client.get_available_art.return_value = [
+            {"content_id": "MY_F0001"},  # User art
+            {"content_id": "SAM_0001"},  # Samsung art
+            {"content_id": "MY_F0002"},  # User art
+        ]
+
+        result = delete_all_art(client, force=True)
+
+        # Should only delete 2 user-uploaded items
+        assert result["total"] == 2
+        assert result["deleted"] == 2
+
+        # Verify only MY_F items were passed to delete
+        call_args = mock_tv.art().delete_list.call_args[0][0]
+        assert "MY_F0001" in call_args
+        assert "MY_F0002" in call_args
+        assert "SAM_0001" not in call_args
+
+    def test_delete_batch_failure_fallback(self) -> None:
+        """Test fallback to individual deletes on batch failure."""
+        mock_tv = Mock()
+        # Batch delete fails
+        mock_tv.art().delete_list.side_effect = Exception("Batch failed")
+        # Individual deletes succeed
+        mock_tv.art().delete = Mock()
+
+        client = Mock(spec=SamsungFrameClient)
+        client.tv = mock_tv
+        client.get_available_art.return_value = [
+            {"content_id": "MY_F0001"},
+            {"content_id": "MY_F0002"},
+        ]
+
+        result = delete_all_art(client, force=True)
+
+        assert result["deleted"] == 2
+        assert mock_tv.art().delete.call_count == 2
+
+    def test_delete_not_connected(self) -> None:
+        """Test deletion fails when not connected."""
+        client = Mock(spec=SamsungFrameClient)
+        client.tv = None
+
+        with pytest.raises(RuntimeError, match="Not connected to TV"):
+            delete_all_art(client, force=True)
+
+
+class TestStaleArtFromApi:
+    def test_recent_art_not_stale(self) -> None:
+        now = datetime.now(timezone.utc)
+        recent = now.strftime("%Y:%m:%d %H:%M:%S")
+        art_list = [{"content_id": "MY_F001", "image_date": recent}]
+        assert get_stale_art_ids(art_list, max_age_hours=24) == []
+
+    def test_old_art_is_stale(self) -> None:
+        old = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime("%Y:%m:%d %H:%M:%S")
+        art_list = [{"content_id": "MY_F001", "image_date": old}]
+        assert get_stale_art_ids(art_list, max_age_hours=24) == ["MY_F001"]
+
+    def test_empty_image_date_is_stale(self) -> None:
+        art_list = [{"content_id": "MY_F001", "image_date": ""}]
+        assert get_stale_art_ids(art_list, max_age_hours=24) == ["MY_F001"]
+
+    def test_samsung_art_excluded(self) -> None:
+        old = (datetime.now(timezone.utc) - timedelta(hours=48)).strftime("%Y:%m:%d %H:%M:%S")
+        art_list = [
+            {"content_id": "SAM-S001", "image_date": ""},
+            {"content_id": "MY_F001", "image_date": old},
+        ]
+        stale = get_stale_art_ids(art_list, max_age_hours=24)
+        assert stale == ["MY_F001"]
+
+    def test_mixed_ages(self) -> None:
+        now = datetime.now(timezone.utc)
+        recent = now.strftime("%Y:%m:%d %H:%M:%S")
+        old = (now - timedelta(hours=48)).strftime("%Y:%m:%d %H:%M:%S")
+        art_list = [
+            {"content_id": "MY_F001", "image_date": recent},
+            {"content_id": "MY_F002", "image_date": old},
+            {"content_id": "MY_F003", "image_date": ""},
+        ]
+        stale = get_stale_art_ids(art_list, max_age_hours=24)
+        assert "MY_F001" not in stale
+        assert "MY_F002" in stale
+        assert "MY_F003" in stale

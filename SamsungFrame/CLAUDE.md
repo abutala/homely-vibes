@@ -4,20 +4,28 @@
 
 Amit's standing preference. Do every step below without asking; each is the default, not a question. `HV` = the primary checkout (`dirname "$(git rev-parse --path-format=absolute --git-common-dir)"`); run from the repo root or a worktree that has `config/local.yaml` and a `config/tokens` symlink. `<SRC>` may be a network mount.
 
-1. **Ingest** (resize + filter, resumable): `"$HV/.venv/bin/python" -m SamsungFrame.ingest "<SRC>"`. Writes <=4K JPGs to a job dir under `/tmp/frame-jobs/<name>-<hash>/` (it prints the path as `<JOB>`) and records every non-hidden file in `<JOB>/manifest.json`. Videos, sidecars, thumbnails and files under `min_size_mb` are dropped by name and size without being read; portraits are dropped after the one read each original gets. The source is never modified or copied. If it dies (network blip, killed), rerun the same command: recorded photos are not read again, and unreadable files are retried. Only if Amit asks for portraits: pass `--include-portraits` to this step **and** to `batch_upload` in step 3, which filters portraits again by default.
-2. **Dedup** (macOS only): `"$HV/.venv/bin/python" -m SamsungFrame.dedup_photos "<JOB>"`. There is no target fraction: frames closer than `--max-distance` (default 0.4, near-identical) within `--window` seconds (default 600) are duplicates, and the best-scoring frame by Apple's aesthetics score is kept. Reference shots Apple flags as "utility" (signs, plates, receipts, screenshots) are dropped. Every drop and its reason is in the manifest. Survivors are hard-linked into `<JOB>/deduped/`. Skip only if Amit says the folder is already curated; then upload `<JOB>/jpg`.
-3. **Upload, in the background, with the long timeout**: `"$HV/.venv/bin/python" -m SamsungFrame.batch_upload "<JOB>/deduped" 2>&1 | tee /tmp/<name>.log` via Bash `run_in_background` with `timeout: 7200000`. Roughly 10s per image, so a 10-minute timeout kills it mid-run. Purge is ON by default and is step 5, so do not pass `--no-purge`. `batch_upload` re-filters the JPGs by `min_size_mb` and by orientation, and a resume needs `--start-index` computed by hand.
-4. **Give Amit the tail command the moment the upload starts**, without waiting to be asked (substitute the real log name; `tr` is needed because the progress bar redraws with carriage returns):
+1. **Run the pipeline in the background with the long timeout**: `"$HV/.venv/bin/python" -m SamsungFrame.frame_run "<SRC>" 2>&1 | tee /tmp/<name>.log` via Bash `run_in_background` with `timeout: 7200000` (a 10-minute timeout once killed an upload mid-run). It runs ingest, dedup, upload, cleanup of the old catalog and slideshow, in that order, and stops at the first stage that fails. Each stage is described in [README.md](README.md).
+2. **Give Amit the tail command the moment it starts**, without waiting to be asked (substitute the real log name; `tr` is needed because the progress bar redraws with carriage returns):
 
    ```bash
-   tail -f /tmp/<name>.log | tr '\r' '\n' | grep --line-buffered -E "Uploading images|ERROR|WARNING|Skipped|Complete"
+   tail -f /tmp/<name>.log | tr '\r' '\n' | grep --line-buffered -E "=== |Ingested|Uploading images|ERROR|WARNING|Slideshow|Notification sent"
    ```
 
-5. **Cleanup = delete older art**: the end-of-upload purge removes user-uploaded art (`MY_F…` ids) older than 24h, never below `min_images`, never Samsung's pre-installed art. If the upload ran without purge (an interrupted run resumed with `--start-index`, or `--no-purge`), run `manage_samsung.py purge --days 1` once it completes: first with `< /dev/null` (logs the count, deletes nothing), then with `--force`.
+3. **If it stops, rerun the same command.** Every stage resumes from the manifest in the job dir (`/tmp/frame-jobs/<name>-<hash>/`, printed as `Job:` by ingest), and the upload stage already retries itself 3 times. Never compute start indexes or delete photos by hand. To resume or inspect one stage on its own: `"$HV/.venv/bin/python" -m SamsungFrame.<stage> "<JOB>"` with `ingest` (takes `<SRC>` too), `dedup_photos`, `frame_upload`, `frame_cleanup`, `frame_slideshow`.
+4. **Report from the run's single Pushover / the manifest**: skipped and dropped by reason, uploaded of kept, old photos removed and retained, and whether the slideshow was verified. A non-zero exit or "Slideshow NOT verified" means it is NOT done: say so, do not report done.
 
-Report at the end: files found, ingested, skipped with reasons (the ingest summary line), kept after dedup, uploaded, failed, and how many old items were purged.
+Knobs, only when Amit asks: `--include-portraits`; `--no-dedup` with a fresh `--job` (a curated folder); `--max-distance` (lower keeps more photos); `--no-cleanup` (keep the photos already on the TV); `--duration` (minutes per photo).
 
-Landmines: purge is relative to the TV's `image_date`, so finish a batch (and its purge) the same day or the next day's purge deletes the batch's own earlier uploads. A network `<SRC>` that sleeps or drops mid-ingest is safe to rerun; see [Logbook.md](Logbook.md) for the rest.
+Landmines, the things a rerun will not tell you:
+
+- **A full run deletes the old catalog.** Preview it with `"$HV/.venv/bin/python" -m SamsungFrame.frame_cleanup "<JOB>" --dry-run` (needs the upload stage to have finished). Never run the pipeline or cleanup against Amit's TV as a test: it removes his existing photos down to the `min_images` floor. Test with a tiny folder and `--no-cleanup`, and remove only what the manifest's `uploaded` ids name.
+- **The TV cannot map a file name to a photo.** After a timeout an upload can arrive that the script cannot name (reported as "unnamed": kept, never deleted), and rerunning that file adds a duplicate. Rare, expected, and not fixable by name.
+- **Order matters.** Cleanup runs before the slideshow and the slideshow is verified last, because deleting art after the slideshow starts leaves a stale playlist and no autoplay. A passing upload and cleanup do not prove the slideshow plays; only the read-back does.
+- **`/tmp` jobs are scratch.** They survive a killed script, a dropped TV and a network blip. macOS clears `/tmp` on reboot and after a few idle days; a fresh run then uploads everything again and its cleanup removes the earlier copies (except any the `min_images` floor keeps, which stay as duplicates), so nothing is lost, it is just slower.
+- **A sleeping or dropped network mount** fails ingest for the unreadable files only; rerun. Portrait originals are read once before they are dropped, so they still cost network time.
+- **A failing Pushover never fails the run.** Read the log and the manifest instead.
+- **`manage_samsung.py purge --days N` is a manual, age-based tool** and is not part of the pipeline; `delete-all` removes every user photo.
+- When something unexpected happens, read [Logbook.md](Logbook.md) first, and add the new landmine there and here.
 
 ## Bootstrap — Centralized Connection
 **All code MUST use `connect_ready()` or the context manager to connect.** Never call bare `connect()`.
@@ -28,7 +36,7 @@ with SamsungFrameClient() as client:
     client.get_available_art()
 # Calls connect_ready() on enter, close() on exit. Raises ConnectionError on failure.
 
-# Manual (for long-running ops like batch_upload that need mid-operation reconnect):
+# Manual (for long-running ops like the upload stage that need mid-operation reconnect):
 client = SamsungFrameClient()
 client.connect_ready()  # WoL + SmartThings + connect + art mode
 # ... mid-operation reconnect:
@@ -40,16 +48,17 @@ client.connect_ready()  # Same full bootstrap path
 
 ## Architecture
 - `samsung_client.py` — WebSocket client wrapping `samsungtvws` (NickWaterton fork v3.0.5)
-- `batch_upload.py` — Two-phase upload workflow (prepare temp dir -> upload)
 - `manage_samsung.py` — CLI entry point with subcommands
 - `frame_job.py` — job dir (`/tmp/frame-jobs/...`) and the manifest every pipeline stage reads and writes
 - `ingest.py` — stage 1: filter by name/size, read each original once, write local <=4K JPGs, manifest saved after every small batch
-- `dedup_photos.py` + `vision_features.swift` — stage 2: drop near-duplicates and utility shots from an ingested job (macOS Vision: feature prints, aesthetics score, utility flag; average-linkage clustering); output feeds `batch_upload.py`
+- `frame_run.py` — the driver: runs the stages as separate processes, retries the upload stage, sends one Pushover built from the manifest
+- `frame_upload.py` / `frame_cleanup.py` / `frame_slideshow.py` — stages 3 to 5: checkpointed upload, snapshot-based cleanup with the minimum-photo floor, slideshow with read-back verification
+- `dedup_photos.py` + `vision_features.swift` — stage 2: drop near-duplicates and utility shots from an ingested job (macOS Vision: feature prints, aesthetics score, utility flag; average-linkage clustering); output feeds `frame_upload.py`
 - Config keys: `cfg.samsung_frame.ip`, `.port`, `.mac`, `.token_file`, `.default_matte`, `.min_images`, `.min_size_mb`, `.slideshow_delay_seconds`, `.wol_password`, `.smartthings_token`, `.smartthings_device_id`
 
 ## TV Art API
 Key for this codebase:
-- `image_date` available from API — usable for age-based purge directly
+- `image_date` available from API — used to order old photos for the minimum-photo floor and by the manual age-based purge
 - No filename or file hash returned — art already on the TV cannot be deduped; dedup the ingested job first with `dedup_photos.py`
 - Art channel only responds when TV is in art mode
 
@@ -62,21 +71,23 @@ Key for this codebase:
 - Post-timeout verification: checks TV art list for new IDs when upload returns None/error
 - Adaptive pause between uploads: starts at 5s, +5s (max 30s) when the TV needs a cooldown, -1s (min 5s) as it recovers
 - `--timeout` CLI param (default 60s) forwarded to `SamsungTVWS`
-- Purge is skipped when the upload aborted (fewer images uploaded than discovered); finish the upload, then run `manage_samsung.py purge`
 
-## Purge Logic
-- Purge is ON by default; use `--no-purge` to skip
-- `get_stale_art_ids()` uses `image_date` from TV API — no local state needed for age
-- `min_images` config value is safety cap against deleting everything
-- Art with empty `image_date` (very old uploads) treated as stale; only `MY_F` ids are ever considered, so Samsung's pre-installed art is never purged
+## Cleanup Logic
+- Stage 3 records the TV's user photos (`MY_F` ids and `image_date`) in the manifest before its first upload; stage 4 deletes exactly those that are still on the TV, never "older than N hours"
+- Floor: if fewer than `min_images` photos would remain, the newest old photos by `image_date` are retained (an empty date counts as oldest)
+- Refuses unless the snapshot exists, every kept photo is recorded as uploaded and is on the TV, at least one new photo is on the TV, and no id is both old and new; only `MY_F` ids are ever candidates, so Samsung's pre-installed art is never deleted
+- Deletes that fail are retried by rerunning: the plan is recomputed from the TV each time
+- `manage_samsung.py purge --days N` is the separate manual tool: `get_stale_art_ids()` by `image_date` age, same floor idea, not used by the pipeline
 
 ## CLI Commands
-- `batch_upload.py <source_dir>` — `--no-purge`, `--include-portraits`, `--start-index`, `--max-files`, `--timeout`, `--matte`
+- `frame_run.py <source_dir>` — `--job`, `--include-portraits`, `--no-dedup`, `--window`, `--max-distance`, `--upload-attempts`, `--no-cleanup`, `--duration`
 - `ingest.py <source_dir>` — `--job`, `--include-portraits`, `--workers`
 - `dedup_photos.py <job_dir>` — `--window`, `--max-distance`
+- `frame_upload.py <job_dir>` — `--matte`, `--timeout`
+- `frame_cleanup.py <job_dir>` — `--dry-run`, `--min-images`, `--timeout`
+- `frame_slideshow.py <job_dir>` — `--duration`, `--no-shuffle`, `--timeout`
 - `manage_samsung.py status|list-art|list-mattes|delete-all|download-thumbnails|update-mattes|cycle-images|start-slideshow|reboot|purge`
 
 ## Testing
-- Tests in `test_samsung_client.py`, `test_batch_upload.py`, `test_frame_job.py`, `test_ingest.py` and `test_dedup_photos.py` (Vision smoke test skips off macOS)
-- Must patch `SamsungFrame.samsung_client.cfg` (not `get_config`) for module-level config
-- `SamsungTVWS` constructor patched via `@patch("SamsungFrame.samsung_client.SamsungTVWS")`
+- Tests in `test_samsung_client.py`, `test_manage_samsung.py`, `test_frame_job.py`, `test_ingest.py`, `test_dedup_photos.py`, `test_frame_upload.py`, `test_frame_cleanup.py`, `test_frame_slideshow.py` and `test_frame_run.py` (real-Vision tests skip off macOS). Stage tests pass hand-written fake TV clients into the stage functions: no `patch()`
+- Legacy client tests in `test_samsung_client.py` patch `SamsungFrame.samsung_client.cfg` (not `get_config`) for module-level config and the `SamsungTVWS` constructor via `@patch("SamsungFrame.samsung_client.SamsungTVWS")`; new tests inject fakes instead

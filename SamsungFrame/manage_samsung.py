@@ -4,7 +4,12 @@
 import argparse
 import sys
 
-from SamsungFrame.samsung_client import SamsungFrameClient
+from SamsungFrame.samsung_client import (
+    SamsungFrameClient,
+    delete_all_art,
+    delete_art_by_ids,
+    get_stale_art_ids,
+)
 from lib.MyPushover import Pushover
 from lib.logger import get_logger
 from lib.config import get_config
@@ -300,12 +305,16 @@ def start_slideshow(args: argparse.Namespace) -> int:
     try:
         with SamsungFrameClient() as client:
             shuffle = not args.no_shuffle
-            if client.start_slideshow(duration=args.duration, shuffle=shuffle):
-                logger.info("Slideshow started successfully")
-                return 0
-            else:
+            if not client.start_slideshow(duration=args.duration, shuffle=shuffle):
                 logger.error("Failed to start slideshow")
                 return 1
+            problems = client.verify_slideshow(args.duration, shuffle)
+            for problem in problems:
+                logger.error(f"Slideshow not verified: {problem}")
+            if problems:
+                return 1
+            logger.info("Slideshow started and verified on the TV")
+            return 0
 
     except Exception as e:
         logger.error(f"Error starting slideshow: {e}")
@@ -317,8 +326,6 @@ def delete_all(args: argparse.Namespace) -> int:
 
     try:
         with SamsungFrameClient() as client:
-            from SamsungFrame.batch_upload import delete_all_art
-
             result = delete_all_art(client, force=args.force)
 
             logger.info(
@@ -338,8 +345,6 @@ def purge_art(args: argparse.Namespace) -> int:
 
     try:
         with SamsungFrameClient() as client:
-            from SamsungFrame.batch_upload import delete_art_by_ids, get_stale_art_ids
-
             art_list = client.get_available_art()
             max_age_hours = args.days * 24
             stale_ids = get_stale_art_ids(art_list, max_age_hours=max_age_hours)

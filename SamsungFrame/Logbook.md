@@ -63,7 +63,7 @@ Choices that took trial to find, so they are not re-litigated:
 - **A fixed target fraction is the wrong control.** Forcing 50% needed an average merge distance of 0.58, which merges the same place with different people; it also kept every reference shot. The distance limit is now the only control (default 0.4), so a folder keeps whatever is genuinely different. On one 332-photo trip folder, limits of 0.3 / 0.4 / 0.5 kept 278 / 242 / 199, against 166 for a forced 50%.
 - **Pick the best frame with Apple's aesthetics score, not sharpness.** Laplacian variance favours harsh contrast and HDR-looking frames, and the two picks differed in 30 of 49 multi-photo clusters; on a sampled sheet the aesthetics pick was the better composed frame (a visual check, not a blind test). Sharpness now only breaks ties.
 - **Apple's "utility" flag finds reference shots.** It flagged 8 photos on that trip (car wheels and bumpers, licence plates, park signs, a napkin on a tray) and all 8 were reference shots that do not belong on a TV, so they are dropped and recorded as such. It is Apple's model, so an odd miss in either direction is possible; the manifest lists every drop.
-- **Landscape beats portrait** within a cluster by a small aesthetics bonus. Ingest already drops portraits by default, so this only matters with `--include-portraits`, which must also be passed to `batch_upload` (it filters portraits again by default).
+- **Landscape beats portrait** within a cluster by a small aesthetics bonus. Ingest already drops portraits by default, so this only matters with `--include-portraits`.
 
 ### Fresh Worktrees Have No Token Dir
 
@@ -78,7 +78,19 @@ ln -s ~/bin/Common-configs/tokens config/tokens
 - **A network folder is read once per candidate original.** Name and size filtering costs no bytes, but a portrait is only recognisable after its file is read (HEIC metadata is not reliably in the first bytes), so portrait originals still cross the network once. Each candidate is read whole into memory and decoded from there, which avoids the many small seeks a decode straight off an SMB mount makes.
 - **State is scratch under `/tmp/frame-jobs`**, keyed by folder name plus a hash of the full path so two `Trip` folders never share a job. It survives a killed script, a dropped TV or a network blip; macOS clears `/tmp` on reboot and after a few idle days, and the stages then redo their work.
 - **Name and size skips are recomputed every run and never cached**, otherwise a file that was too small once (or a video renamed) would stay skipped after it changed. Only content-derived skips (portrait, unreadable) are cached, and unreadable ones always retry.
-- **The size floor now applies to the original**, not the 4K JPG. `batch_upload.py` applies it again to the JPGs it is given, so a low-detail photo can be dropped there.
+- **The size floor applies to the original only**, so a 4K JPG is never filtered by size a second time and a low-detail photo is not silently dropped before upload.
+
+### The Staged Pipeline (what replaced `batch_upload.py`)
+
+`batch_upload.py` did discovery, conversion, upload, an age-based purge, the slideshow and the notification in one run with no memory, so every failure meant hand-computed `--start-index` retries, a notification that described only the last attempt, and a purge keyed to "older than 24h". The decisions behind the replacement, so they are not re-litigated:
+
+- **State is a manifest, stages are separate scripts.** Any stage can be rerun alone and resumes. The driver only orders them and sends the notification.
+- **Cleanup deletes a recorded snapshot, not an age.** Stage 3 records the TV's user photos before its first upload; stage 4 deletes exactly those. An age cut-off breaks on a retry the next day (it deletes yesterday's half-uploaded batch) and on photos with no date.
+- **The minimum-photo floor stays.** If fewer than `min_images` would remain, the newest old photos are retained. Nothing is deleted unless every kept photo is on the TV (the TV is checked, not just the manifest).
+- **Unnamed uploads are expected.** The existing upload loop recovers a timed-out upload by diffing the TV's art list, but when that list read also times out the photo arrives with no recorded id. Such photos are listed as "unnamed", counted in the slideshow check, never deleted, and a rerun of that file duplicates it. Seen once (one of 86 in a top-up), and the TV offers no way to map a name.
+- **The notification reads the manifest.** Its totals cover every attempt; the old one reported only the last run (116 of 174) and was sent before the slideshow step, so a failure there still read "Complete".
+- **Dropped without a replacement:** `--start-index` and `--max-files` (a resume is just a rerun), the 24h purge inside the upload run, tracking by upload order, and the direct copy of JPG/PNG sources (ingest re-encodes every photo to a <=4K JPG, stepping quality down from 90 until the file fits `max_image_size_mb`).
+- **Removed on purpose:** nothing that decides which photos reach the TV lives in the uploader any more; ingest and dedup decide, the manifest records.
 
 ### Dedup Scaling
 
@@ -86,7 +98,7 @@ ln -s ~/bin/Common-configs/tokens config/tokens
 
 ### Slideshow Behavior
 
-The interval is set by `start-slideshow --duration` (minutes, default 3) and `batch_upload` always uses 3 minutes with shuffle on. The TV then cycles on its own after the command exits.
+The interval is set by `start-slideshow --duration` (minutes, default 3) and the pipeline's slideshow stage uses `--duration` (default 3) with shuffle on. The TV then cycles on its own after the command exits.
 
 ---
 
