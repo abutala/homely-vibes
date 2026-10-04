@@ -1,9 +1,11 @@
 """Samsung Frame TV client for art mode management."""
 
+import json
 import os
 import signal
 import socket
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, cast
 
@@ -16,6 +18,8 @@ from tqdm import tqdm
 from lib.config import get_config
 from lib.logger import get_logger
 from lib.secure_io import ensure_secret_perms
+
+logger = get_logger(__name__)
 
 cfg = get_config()
 
@@ -58,6 +62,68 @@ class ImageUploadSummary(BaseModel):
     failed_uploads: int
     uploaded_image_ids: List[str]
     errors: List[Dict[str, str]]
+
+
+MY_PICTURES_CATEGORY = "MY-C0002"
+USER_ART_PREFIX = "MY_F"  # content ids of photos a user uploaded, as opposed to Samsung art
+SHUFFLE_SLIDESHOW_TYPE = "shuffleslideshow"
+SLIDESHOW_SETTLE_SECONDS = 2
+
+
+class SlideshowStatus(BaseModel):
+    """What the TV reports it is playing."""
+
+    interval_minutes: int
+    category_id: str
+    shuffle: bool
+    current_id: str
+    playlist_ids: List[str]
+
+
+def parse_slideshow_status(raw: Dict[str, Any]) -> SlideshowStatus:
+    """Turn the TV's `get_slideshow_status` reply into a SlideshowStatus."""
+    playlist = json.loads(raw.get("content_list") or "[]")
+    interval = str(raw.get("value", ""))
+    return SlideshowStatus(
+        interval_minutes=int(interval) if interval.isdigit() else 0,  # "off" when disabled
+        category_id=raw.get("category_id", ""),
+        shuffle=raw.get("type") == SHUFFLE_SLIDESHOW_TYPE,
+        current_id=raw.get("current_content_id", ""),
+        playlist_ids=[item["content_id"] for item in playlist],
+    )
+
+
+def slideshow_problems(
+    status: SlideshowStatus,
+    user_art_ids: set[str],
+    interval_minutes: int,
+    shuffle: bool,
+    art_mode_on: bool,
+) -> List[str]:
+    """Differences between what the TV is playing and what should be playing; [] = verified."""
+    playlist = set(status.playlist_ids)
+    problems = []
+    if not art_mode_on:
+        problems.append("art mode is off")
+    if not user_art_ids:
+        problems.append("no user-uploaded photos are on the TV")
+    if status.category_id != MY_PICTURES_CATEGORY:
+        problems.append(f"playing category {status.category_id!r}, expected My Pictures")
+    if status.interval_minutes == 0:
+        problems.append("slideshow is off")
+    elif status.interval_minutes != interval_minutes:
+        problems.append(f"interval is {status.interval_minutes} min, expected {interval_minutes}")
+    if status.shuffle != shuffle:
+        problems.append(
+            f"shuffle is {'on' if status.shuffle else 'off'}, expected {'on' if shuffle else 'off'}"
+        )
+    if missing := user_art_ids - playlist:
+        problems.append(f"playlist is missing {len(missing)} photos that are on the TV")
+    if stale := playlist - user_art_ids:
+        problems.append(f"playlist holds {len(stale)} items that are not on the TV")
+    if status.current_id and status.current_id not in user_art_ids:
+        problems.append(f"current item {status.current_id} is not a photo on the TV")
+    return problems
 
 
 class SamsungFrameClient:
@@ -381,6 +447,7 @@ class SamsungFrameClient:
         matte: Optional[str] = None,
         max_consecutive_failures: int = 3,
         prepare_fn: Optional[Callable[[str], Optional[str]]] = None,
+        on_uploaded: Optional[Callable[[str, str], None]] = None,
     ) -> ImageUploadSummary:
         """Upload a list of image file paths to the TV.
 
@@ -390,6 +457,8 @@ class SamsungFrameClient:
             max_consecutive_failures: Failures before recovery attempt
             prepare_fn: Optional callback to prep each image before upload.
                         Takes source path, returns upload-ready path (or None to skip).
+            on_uploaded: Optional callback called as (source path, TV content id) the moment an
+                        image is on the TV, so a caller can checkpoint it.
         """
         if not self.tv:
             raise RuntimeError("Not connected to TV - call connect() first")
@@ -438,6 +507,8 @@ class SamsungFrameClient:
                     if image_id:
                         uploaded_ids.append(image_id)
                         known_ids.add(image_id)
+                        if on_uploaded:
+                            on_uploaded(image_path, image_id)
                         consecutive_failures = 0
                         self.logger.debug(f"Uploaded {os.path.basename(image_path)} -> {image_id}")
                     else:
@@ -445,6 +516,8 @@ class SamsungFrameClient:
                         if new_id:
                             uploaded_ids.append(new_id)
                             known_ids.add(new_id)
+                            if on_uploaded:
+                                on_uploaded(image_path, new_id)
                             consecutive_failures = 0
                             self.logger.debug(
                                 f"Uploaded {os.path.basename(image_path)} (recovered from timeout)"
@@ -464,6 +537,8 @@ class SamsungFrameClient:
                     if new_id:
                         uploaded_ids.append(new_id)
                         known_ids.add(new_id)
+                        if on_uploaded:
+                            on_uploaded(image_path, new_id)
                         consecutive_failures = 0
                         self.logger.debug(
                             f"Uploaded {os.path.basename(image_path)} (recovered from error)"
@@ -536,12 +611,15 @@ class SamsungFrameClient:
             return set()
 
     def _check_for_new_upload(self, known_ids: set[str]) -> Optional[str]:
-        """Check if a new art ID appeared on TV (upload succeeded despite timeout)."""
+        """The new art ID if exactly one appeared on the TV (upload succeeded despite timeout).
+
+        Zero means it did not arrive; several means the baseline listing was unreliable, and
+        guessing would record some old photo's id as this upload's.
+        """
         try:
-            current_ids = self._get_art_ids_on_tv()
-            new_ids = current_ids - known_ids
-            if new_ids:
-                return new_ids.pop()
+            new_ids = self._get_art_ids_on_tv() - known_ids
+            if len(new_ids) == 1:
+                return next(iter(new_ids))
         except Exception:
             pass
         return None
@@ -850,6 +928,39 @@ class SamsungFrameClient:
         self.logger.error("Failed to start slideshow after 3 attempts")
         return False
 
+    def get_slideshow_status(self) -> SlideshowStatus:
+        if not self.tv:
+            raise RuntimeError("Not connected to TV - call connect() first")
+        return parse_slideshow_status(self.tv.art().get_slideshow_status())
+
+    def verify_slideshow(
+        self, duration: int, shuffle: bool, settle_seconds: float = SLIDESHOW_SETTLE_SECONDS
+    ) -> List[str]:
+        """Read the slideshow back from the TV; returns the problems found (empty = verified).
+
+        A TV that cannot be read back is a problem, not an exception: the caller's question is
+        "is it verified", and an unreadable TV is not.
+        """
+        if not self.tv:
+            raise RuntimeError("Not connected to TV - call connect() first")
+        time.sleep(settle_seconds)
+        try:
+            status = self.get_slideshow_status()
+            user_art_ids = {
+                art["content_id"]
+                for art in self.get_available_art_strict()
+                if art.get("content_id", "").startswith("MY_F")
+            }
+            art_mode_on = self.tv.art().get_artmode() == "on"
+        except Exception as e:
+            return [f"could not read the slideshow back from the TV: {e}"]
+        self.logger.info(
+            f"Slideshow reads back as {len(status.playlist_ids)} photos, "
+            f"{status.interval_minutes} min, {'shuffle' if status.shuffle else 'sequential'}, "
+            f"current {status.current_id}"
+        )
+        return slideshow_problems(status, user_art_ids, duration, shuffle, art_mode_on)
+
     def cycle_images(
         self, period: int = 15, user_photos_only: bool = True, shuffle: bool = True
     ) -> None:
@@ -989,3 +1100,163 @@ class SamsungFrameClient:
                 self.logger.info("Closed connection to TV")
             except Exception as e:
                 self.logger.warning(f"Error closing TV connection: {e}")
+
+
+def user_art(art_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [a for a in art_list if a.get("content_id", "").startswith(USER_ART_PREFIX)]
+
+
+def delete_all_art(client: SamsungFrameClient, force: bool = False) -> Dict[str, int]:
+    """Delete all user-uploaded art from TV (not pre-loaded Samsung art).
+
+    Args:
+        client: Connected SamsungFrameClient
+        force: Skip confirmation if True
+
+    Returns:
+        {'total': int, 'deleted': int, 'failed': int}
+    """
+    if not client.tv:
+        raise RuntimeError("Not connected to TV")
+
+    art_list = client.get_available_art()
+
+    # Filter for user-uploaded photos only (content_id starts with MY_F)
+    user_art = [art for art in art_list if art.get("content_id", "").startswith("MY_F")]
+    total = len(user_art)
+
+    if total == 0:
+        logger.info("No user-uploaded art found on TV")
+        return {"total": 0, "deleted": 0, "failed": 0}
+
+    # Confirmation prompt
+    if not force:
+        response = input(f"Delete {total} user-uploaded art items from TV? [y/N]: ").strip().lower()
+        if response != "y":
+            logger.info("Deletion cancelled by user")
+            return {"total": total, "deleted": 0, "failed": 0}
+
+    logger.info(f"Deleting {total} user-uploaded art items from TV...")
+
+    content_ids = [art.get("content_id") for art in user_art if art.get("content_id")]
+
+    # Try batch delete first
+    try:
+        client.tv.art().delete_list(content_ids)
+        logger.info(f"Successfully deleted {len(content_ids)} items")
+        return {"total": total, "deleted": len(content_ids), "failed": 0}
+    except Exception as e:
+        logger.warning(f"Batch delete failed: {e}. Falling back to individual deletes...")
+
+    # Fallback to individual deletes
+    deleted = 0
+    failed = 0
+
+    for content_id in content_ids:
+        try:
+            client.tv.art().delete(content_id)
+            deleted += 1
+            logger.info(f"Deleted {content_id} ({deleted}/{len(content_ids)})")
+        except Exception as e:
+            logger.error(f"Failed to delete {content_id}: {e}")
+            failed += 1
+
+    logger.info(f"Deletion complete: {deleted} deleted, {failed} failed")
+    return {"total": total, "deleted": deleted, "failed": failed}
+
+
+def delete_art_by_ids(client: SamsungFrameClient, content_ids: List[str]) -> Dict[str, int]:
+    """Delete specific art items by content ID.
+
+    Args:
+        client: Connected SamsungFrameClient
+        content_ids: List of content IDs to delete
+
+    Returns:
+        {'total': int, 'deleted': int, 'failed': int}
+    """
+    if not client.tv:
+        raise RuntimeError("Not connected to TV")
+
+    total = len(content_ids)
+    if total == 0:
+        return {"total": 0, "deleted": 0, "failed": 0}
+
+    logger.info(f"Deleting {total} art items...")
+
+    # Try batch delete first with retry
+    @retry(
+        stop=stop_after_attempt(2),
+        wait=wait_exponential(multiplier=1, min=1, max=5),
+        reraise=True,
+    )
+    def batch_delete() -> None:
+        assert client.tv is not None
+        client.tv.art().delete_list(content_ids)
+
+    try:
+        batch_delete()
+        logger.info(f"Successfully deleted {total} items via batch delete")
+        return {"total": total, "deleted": total, "failed": 0}
+    except Exception as e:
+        logger.warning(f"Batch delete failed after retries: {e}. Falling back to individual...")
+
+    # Fallback to individual deletes with retry
+    deleted = 0
+    failed = 0
+
+    for content_id in content_ids:
+
+        @retry(
+            stop=stop_after_attempt(2),
+            wait=wait_exponential(multiplier=1, min=1, max=5),
+            reraise=True,
+        )
+        def delete_single(cid: str) -> None:
+            assert client.tv is not None
+            client.tv.art().delete(cid)
+
+        try:
+            delete_single(content_id)
+            deleted += 1
+            logger.debug(f"Deleted {content_id} ({deleted}/{total})")
+        except Exception as e:
+            logger.error(f"Failed to delete {content_id} after retries: {e}")
+            failed += 1
+
+    logger.info(f"Individual deletion complete: {deleted} deleted, {failed} failed")
+    return {"total": total, "deleted": deleted, "failed": failed}
+
+
+def get_stale_art_ids(art_list: List[Dict[str, Any]], max_age_hours: int = 24) -> List[str]:
+    """Return content IDs of user art older than max_age_hours using TV's image_date.
+
+    Args:
+        art_list: Full art list from art().available()
+        max_age_hours: Max age in hours before art is considered stale
+
+    Returns:
+        List of stale content IDs
+    """
+    now = datetime.now(timezone.utc)
+    stale: List[str] = []
+
+    for art in art_list:
+        content_id = art.get("content_id", "")
+        if not content_id.startswith("MY_F"):
+            continue
+
+        image_date = art.get("image_date", "")
+        if not image_date:
+            stale.append(content_id)
+            continue
+
+        try:
+            ts = datetime.strptime(image_date, "%Y:%m:%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            age_hours = (now - ts).total_seconds() / 3600
+            if age_hours > max_age_hours:
+                stale.append(content_id)
+        except ValueError:
+            stale.append(content_id)
+
+    return stale

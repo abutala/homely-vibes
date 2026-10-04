@@ -24,7 +24,7 @@ from PIL import Image, ImageOps
 
 from lib.config import get_config
 from lib.logger import get_logger
-from SamsungFrame.frame_job import Job, Manifest, PhotoRecord, default_job_dir
+from SamsungFrame.frame_job import Job, Manifest, PhotoRecord, default_job_dir, reason_counts
 
 pillow_heif.register_heif_opener()
 
@@ -35,7 +35,9 @@ VIDEO_EXTENSIONS = {".mov", ".mp4", ".m4v", ".avi"}
 SIDECAR_EXTENSIONS = {".aae"}
 THUMBNAIL_PATTERNS = re.compile(r"_(thumb|thumbnail|small)(@\d+x)?\.[\w]+$", re.IGNORECASE)
 MAX_BOX = (3840, 2160)
-JPEG_QUALITY = 90
+MAX_STEM = 46  # keeps `<stem>.jpg` within 50 characters
+HASH_SUFFIX = 7  # `_` plus 6 hex digits, added on a name collision
+JPEG_QUALITIES = (90, 85, 80, 75, 70)  # tried in order until the file fits the TV's size limit
 EXIF_IFD = 0x8769
 EXIF_DATETIME_ORIGINAL = 0x9003
 EXIF_DATETIME = 0x0132
@@ -47,7 +49,7 @@ BATCH_PER_WORKER = (
     4  # files in flight per worker; bounds lost work on interrupt, one save per batch
 )
 
-IngestJob = tuple[Path, str, Path, bool]
+IngestJob = tuple[Path, str, Path, bool, int]  # source, relpath, target, portraits?, max bytes
 IngestResult = tuple[str, PhotoRecord | None, str | None]
 
 
@@ -85,12 +87,23 @@ def list_source(source: Path, min_bytes: int) -> tuple[list[str], dict[str, str]
 
 def jpg_name(rel: str, taken: set[str]) -> str:
     """`dir/IMG_1.HEIC` -> `IMG_1.jpg`; a name already taken gets a short hash of its path."""
-    stem = Path(rel).stem
+    stem = Path(rel).stem[:MAX_STEM]
     name = f"{stem}.jpg"
     if name.lower() in taken:
-        name = f"{stem}_{hashlib.sha256(rel.encode()).hexdigest()[:6]}.jpg"
+        name = (
+            f"{stem[: MAX_STEM - HASH_SUFFIX]}_{hashlib.sha256(rel.encode()).hexdigest()[:6]}.jpg"
+        )
     taken.add(name.lower())
     return name
+
+
+def save_within_limit(img: Image.Image, target: Path, max_bytes: int) -> None:
+    """Save at the highest quality whose file fits `max_bytes`; the lowest if none does (the
+    TV client then rejects it loudly rather than ingest dropping the photo)."""
+    for quality in JPEG_QUALITIES:
+        img.save(target, "JPEG", quality=quality)
+        if target.stat().st_size <= max_bytes:
+            return
 
 
 def capture_time(img: Image.Image, fallback: float) -> float:
@@ -123,7 +136,7 @@ def sharpness(gray: Image.Image) -> float:
 
 def ingest_one(job: IngestJob) -> IngestResult:
     """(relpath, record, skip reason) for one original; top-level so it pickles."""
-    source, rel, target, include_portraits = job
+    source, rel, target, include_portraits, max_bytes = job
     try:
         data = (source / rel).read_bytes()
         mtime = (source / rel).stat().st_mtime
@@ -133,7 +146,7 @@ def ingest_one(job: IngestJob) -> IngestResult:
             taken = capture_time(raw, mtime)
             img = ImageOps.exif_transpose(raw).convert("RGB")
         img.thumbnail(MAX_BOX, Image.Resampling.LANCZOS)
-        img.save(target, "JPEG", quality=JPEG_QUALITY)
+        save_within_limit(img, target, max_bytes)
         record = PhotoRecord(
             name=target.name,
             source=rel,
@@ -192,7 +205,12 @@ def pending(manifest: Manifest, candidates: list[str], include_portraits: bool) 
 
 
 def run_ingest(
-    source: Path, job: Job, include_portraits: bool, min_size_mb: float, workers: int
+    source: Path,
+    job: Job,
+    include_portraits: bool,
+    min_size_mb: float,
+    workers: int,
+    max_image_mb: float = 10.0,
 ) -> Manifest:
     job.create()
     manifest = job.load()
@@ -217,7 +235,11 @@ def run_ingest(
 
     job.save(manifest)  # the prune and the refreshed skips must survive a run with nothing to read
     taken = {name.lower() for name in manifest.photos}
-    jobs = [(source, rel, job.jpg_dir / jpg_name(rel, taken), include_portraits) for rel in todo]
+    max_bytes = int(max_image_mb * 1024 * 1024)
+    jobs = [
+        (source, rel, job.jpg_dir / jpg_name(rel, taken), include_portraits, max_bytes)
+        for rel in todo
+    ]
     step = max(1, workers * BATCH_PER_WORKER)
     for start in range(0, len(jobs), step):
         for rel, record, reason in ingest_batch(jobs[start : start + step], workers):
@@ -232,10 +254,7 @@ def run_ingest(
 
 
 def summarize(manifest: Manifest) -> str:
-    reasons: dict[str, int] = {}
-    for reason in manifest.skipped.values():
-        key = reason.split(":")[0]
-        reasons[key] = reasons.get(key, 0) + 1
+    reasons = reason_counts(manifest.skipped.values())
     skips = ", ".join(f"{n} {r}" for r, n in sorted(reasons.items())) or "none"
     return f"{len(manifest.photos)} photos ready; skipped: {skips}"
 
@@ -260,6 +279,7 @@ def main() -> int:
             args.include_portraits,
             cfg.samsung_frame.min_size_mb,
             args.workers,
+            cfg.samsung_frame.max_image_size_mb,
         )
     except ValueError as e:
         logger.error(str(e))

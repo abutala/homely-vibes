@@ -6,14 +6,12 @@ A Python client for managing art mode on Samsung Frame TVs. Upload images, confi
 
 ## Features
 
-- **Batch Upload with HEIC Conversion**: Convert iPhone/iOS HEIC images to 4K JPG and upload
-- **Recursive Directory Scanning**: Process images from nested subdirectories
-- **Smart Filtering**: Exclude thumbnails, small files and portraits automatically
-- **Ingest + Photo Dedup**: `ingest.py` turns a local or network folder into checkpointed <=4K JPGs; `dedup_photos.py` drops near-duplicates and reference shots (signs, plates, receipts), keeping the best-scored frame of each cluster
-- **Filename Trimming**: Automatically trims filenames to <50 chars (preserves extension, handles collisions)
-- **Start Index / Pagination**: Skip first N files with `--start-index` for resuming interrupted uploads
-- **Smart Purge**: Delete stale art (uploaded >24h ago or with no upload date) while respecting minimum image count
-- **Connection Health Checks**: After 3 consecutive failures, reboots the TV and reconnects; aborts the upload only if that fails
+- **One-command pipeline**: `frame_run.py` ingests, dedups, uploads, removes the old catalog, starts and verifies the slideshow, and sends one Pushover
+- **Ingest + Photo Dedup**: `ingest.py` turns a local or network folder (HEIC, JPG, PNG; recursive) into checkpointed <=4K JPGs; `dedup_photos.py` drops near-duplicates and reference shots (signs, plates, receipts), keeping the best-scored frame of each cluster
+- **Checkpointed upload**: every image is recorded the moment the TV has it, filenames are capped to 50 characters, and a rerun uploads only what is missing
+- **Safe cleanup**: deletes exactly the photos that were on the TV before the batch, never below a minimum photo count, and only once the whole batch is on the TV
+- **Verified slideshow**: reads the slideshow back from the TV (art mode, category, interval, shuffle, playlist) and fails if it is not really playing
+- **Connection Health Checks**: After 3 consecutive failures the upload tries to restore art mode, reboots the TV only if that fails (at most once per run), and stops only if that fails too
 - **Matte Configuration**: Apply black borders (or other matte styles) to uploaded images
 - **Art Mode Control**: Enable art mode and start automatic slideshow
 - **TV Status**: Check connection and art mode support
@@ -58,12 +56,12 @@ On first run, any command that connects to the TV will display a pairing prompt:
 # Option 1: Use status command to pair without uploading
 uv run python SamsungFrame/manage_samsung.py status
 
-# Option 2: Pair during first upload
-uv run python SamsungFrame/batch_upload.py /path/to/images
+# Option 2: Pair during the first pipeline run
+uv run python -m SamsungFrame.frame_run /path/to/images
 ```
 
 **Pairing Steps:**
-1. Run any command that connects to TV (status, batch upload, list-art, etc.)
+1. Run any command that connects to TV (status, the pipeline, list-art, etc.)
 2. Check your TV screen for the pairing prompt
 3. Accept the connection on your TV
 4. The authentication token will be automatically saved to `config samsung_frame.token_file`
@@ -80,56 +78,44 @@ uv run python SamsungFrame/manage_samsung.py status
 
 All commands should be run from the project root directory.
 
-### Batch Upload with HEIC Conversion
+### Upload a Photo Folder (the pipeline)
 
-For iPhone/iOS users with HEIC photos, use the batch upload script which handles conversion automatically:
+One command takes a folder of photos (a local folder or a network mount) to a verified slideshow on the TV:
 
 ```bash
-# Basic batch upload with HEIC conversion
-uv run python SamsungFrame/batch_upload.py ~/Photos/Favorites 2>&1 | tee /tmp/samsung-batch-upload.log
+# Ingest, dedup, upload, remove the old catalog, start and verify the slideshow, one Pushover
+uv run python -m SamsungFrame.frame_run "/Volumes/share/Trip" 2>&1 | tee /tmp/frame-run.log
 
-# Keep older art on the TV (purge of art >24h old is ON by default)
-uv run python SamsungFrame/batch_upload.py ~/Photos/Vacation --no-purge
+# Keep the photos already on the TV
+uv run python -m SamsungFrame.frame_run "/Volumes/share/Trip" --no-cleanup
 
-# Include portrait photos (skipped by default; the TV is landscape)
-uv run python SamsungFrame/batch_upload.py ~/Photos/Vacation --include-portraits
-
-# Custom matte
-uv run python SamsungFrame/batch_upload.py ~/Photos --matte shadowbox_black
-
-# Skip first 20 files (resume interrupted upload)
-uv run python SamsungFrame/batch_upload.py ~/Photos --start-index 20
-
-# Upload at most 50 files starting from index 10
-uv run python SamsungFrame/batch_upload.py ~/Photos --start-index 10 --max-files 50
+# Include portraits / skip dedup (use a fresh --job) / stricter dedup
+uv run python -m SamsungFrame.frame_run ~/Photos/Trip --include-portraits
+uv run python -m SamsungFrame.frame_run ~/Photos/Curated --no-dedup --job /tmp/frame-jobs/curated
+uv run python -m SamsungFrame.frame_run ~/Photos/Trip --max-distance 0.3
 ```
 
-**What the batch upload script does:**
+Stages run as separate processes, in this order, and the run stops at the first one that fails. The state lives in the job dir (`/tmp/frame-jobs/<name>-<hash>/manifest.json`), so after any failure **rerun the same command** and every stage resumes. The upload stage is also retried automatically (`--upload-attempts`, default 3).
 
-1. **Recursive Discovery**: Scans directory and all subdirectories for images
-2. **Smart Filtering**: Excludes files below `samsung_frame.min_size_mb` (default 0.75MB), thumbnail patterns (*_thumb*, *_thumbnail*, *_small*) and, unless `--include-portraits`, portrait photos. Small-file skips are logged at debug level only
-3. **Start Index / Max Files**: Optionally skip first N files and/or cap total uploads
-4. **Phase 1 — Prepare**: Converts HEIC to high-quality JPG at 4K (max 3840×2160), copies JPG/PNG, trims all filenames to <50 chars
-5. **Quality Compression**: Reduces JPG quality (95→90→85→80→75→70) if needed to meet 10MB TV limit
-6. **Phase 2 — Upload**: Uploads all prepared images with health checking (3 consecutive failures reboot the TV and reconnect; the upload aborts only if that fails)
-7. **Smart Purge**: Deletes art uploaded >24h ago or with no upload date, using the TV's own `image_date` (respects minimum image count); skip with `--no-purge`
-8. **Enable Art Mode**: Automatically enables slideshow after upload
+| Stage | Script | What it does | Checkpoint |
+|---|---|---|---|
+| 1 ingest | `ingest.py` | Filters by name and size, reads each original once, drops portraits, writes local <=4K JPGs | Manifest saved per small batch |
+| 2 dedup | `dedup_photos.py` | Drops near-duplicates and utility shots, keeps the best frame of each cluster | Kept and dropped lists |
+| 3 upload | `frame_upload.py` | Records the TV's current user photos, then uploads the kept set | Each image recorded as it lands |
+| 4 cleanup | `frame_cleanup.py` | Deletes the recorded old catalog, once every kept photo is on the TV | Idempotent: deletes what is still there |
+| 5 slideshow | `frame_slideshow.py` | Starts the slideshow, reads it back from the TV | Exit code and manifest |
 
-**Command Options:**
+Each stage is also a CLI on a job dir, for example `python -m SamsungFrame.frame_upload <job>` to resume just the upload, or `python -m SamsungFrame.frame_cleanup <job> --dry-run` to see what cleanup would delete without deleting anything.
 
-- `source_dir` - Directory to scan (required)
-- `--matte` - Matte style (default: shadowbox_black)
-- `--no-purge` - Skip purging stale art (>24h old) after upload
-- `--include-portraits` - Upload portrait photos too (default: skipped)
-- `--start-index N` - Skip first N discovered files (applied before --max-files)
-- `--max-files N` - Maximum number of files to upload (0 = all)
-- `--timeout N` - WebSocket timeout in seconds (default 60)
+**Cleanup** removes exactly the user photos that were on the TV before the first upload (not "older than 24h", so a retry on another day cannot delete the batch). `samsung_frame.min_images` (default 100) is a floor: if fewer photos than that would remain, the newest old photos are retained. Samsung's own art is never touched, and nothing is deleted unless every kept photo is uploaded and still on the TV.
 
-**Note**: Pushover notifications sent automatically. Files below `min_size_mb` and files named like thumbnails are skipped. Art carries no label or caption: the uploader sends image bytes and a matte only, so filenames are never shown on the TV.
+**Notification:** exactly one Pushover per run, built from the manifest so its totals cover every attempt: uploaded of kept, skipped and dropped by reason, upload failures, photos on the TV the batch added but could not name, old photos removed and retained, and whether the slideshow was verified. A clean, verified run is silent (priority -1); a failed stage, an upload failure or an unverified slideshow is high priority.
 
-**Supported Formats**: HEIC, JPG, JPEG, PNG
+**Art carries no label or caption**: the uploader sends image bytes and a matte only, so filenames are never shown on the TV.
 
-### Ingest and Dedup Photos Before Uploading
+**Supported formats**: HEIC, JPG, JPEG, PNG. Videos, `.AAE` sidecars and other files are ignored.
+
+### Stages 1 and 2 in Detail: Ingest and Dedup
 
 A trip folder is full of near-identical bursts, videos and portraits. Ingest and dedup prepare it, and ingest is resumable; the source (a local folder or a network mount) is never modified, and the originals are never copied. Dedup is macOS only (Apple Vision via `swiftc`).
 
@@ -157,7 +143,7 @@ uv run python -m SamsungFrame.dedup_photos /tmp/frame-jobs/Trip-ab12cd --max-dis
 2. Average-linkage clustering merges the closest pairs until none is within `--max-distance` (default 0.4); photos more than `--window` seconds apart never merge. There is no target fraction: how much is dropped depends on how many near-duplicates the folder has
 3. Per cluster, the frame with the best aesthetics score is kept (a landscape frame gets a small bonus, since the TV is landscape; sharpness only breaks ties), and the manifest records why every other photo was dropped
 
-The job dir lives in `/tmp` because it is scratch: if macOS clears it, the stages redo their work. Upload with `batch_upload.py "<job>/deduped"`; it then purges user art older than 24h (add `--no-purge` to keep it). The step-by-step routine is in [CLAUDE.md](CLAUDE.md).
+The job dir lives in `/tmp` because it is scratch: if macOS clears it, the stages redo their work. The next stages (upload, cleanup, slideshow) are described above; the step-by-step routine is in [CLAUDE.md](CLAUDE.md).
 
 ### Check TV Status
 
@@ -266,7 +252,8 @@ This command:
 - Starts the TV's built-in slideshow for user-uploaded photos
 - Configures the interval between image changes (in minutes)
 - Optionally enables shuffle or sequential mode
-- Returns after starting the slideshow (TV continues cycling independently)
+- Reads the slideshow back from the TV and exits non-zero unless it is really playing: art mode on, My Pictures, interval and shuffle as requested, and a playlist that is exactly the photos on the TV
+- Returns after verifying (TV continues cycling independently)
 
 **Note**: This uses the TV's native slideshow feature, which continues running even after the command exits. The TV will cycle through images automatically based on the configured interval.
 
@@ -305,10 +292,9 @@ This command:
   - Art mode control
   - Slideshow management
 
-- **`batch_upload.py`**: Batch upload with two-phase architecture
-  - Phase 1: Prepare images (HEIC conversion, filename trimming, copy to temp dir)
-  - Phase 2: Upload via `upload_images_from_folder()` with automatic health checks
-  - Smart purge using the TV's `image_date`
+- **`frame_run.py`**: The driver: runs the stages as separate processes, retries the upload stage, sends one Pushover from the manifest
+
+- **`frame_upload.py`**, **`frame_cleanup.py`**, **`frame_slideshow.py`**: Stages 3 to 5: checkpointed upload, snapshot-based cleanup with the minimum-photo floor, slideshow with read-back verification
 
 - **`frame_job.py`**: Job dir (`/tmp/frame-jobs/...`) and the manifest shared by the pipeline stages
 
@@ -319,12 +305,8 @@ This command:
 
 - **`manage_samsung.py`**: CLI entry point
   - Argparse-based command interface for TV management
-  - Pushover notification integration
 
-- **`test_batch_upload.py`**: Comprehensive test suite
-  - Tests for discovery, conversion, deletion, filename trimming, start-index
-
-- **`test_frame_job.py`**, **`test_ingest.py`**, **`test_dedup_photos.py`**: Manifest, ingest filtering and resume, clustering and best-pick tests; one real-Vision smoke test (skipped off macOS)
+- **`test_frame_*.py`**, **`test_ingest.py`**, **`test_dedup_photos.py`**: Manifest, every pipeline stage (against hand-written fake TV clients), the driver and its notification, ingest filtering and resume, clustering and best-pick; real-Vision tests are skipped off macOS
 
 ### Data Models (Pydantic)
 

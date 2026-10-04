@@ -12,6 +12,7 @@ from SamsungFrame.ingest import (
     IngestJob,
     IngestResult,
     capture_time,
+    save_within_limit,
     ingest_batch,
     ingest_one,
     is_portrait,
@@ -24,6 +25,7 @@ from SamsungFrame.ingest import (
 )
 
 MIN = 1000  # bytes
+NO_LIMIT = 10 * 1024 * 1024
 
 
 def pattern(seed: int, size: tuple[int, int] = (800, 600)) -> Image.Image:
@@ -96,6 +98,16 @@ class TestJpgName:
         assert second != first and second.startswith("IMG_1_")
         assert jpg_name("b/IMG_1.HEIC", {"img_1.jpg"}) == second
 
+    def test_long_names_are_capped_to_fifty_characters_with_the_extension(self) -> None:
+        name = jpg_name("d/" + "x" * 120 + ".HEIC", set())
+        assert len(name) == 50 and name.endswith(".jpg")
+
+    def test_long_names_sharing_a_prefix_still_get_distinct_jpgs(self) -> None:
+        taken: set[str] = set()
+        first = jpg_name("a/" + "x" * 120 + "_one.jpg", taken)
+        second = jpg_name("b/" + "x" * 120 + "_two.jpg", taken)
+        assert first != second and len(second) <= 50
+
     def test_collision_is_case_insensitive(self) -> None:
         taken = {"img_1.jpg"}
         assert jpg_name("x/IMG_1.png", taken) != "IMG_1.jpg"
@@ -134,7 +146,7 @@ class TestIngestOne:
     ) -> tuple[tuple[str, PhotoRecord | None, str | None], Path]:
         target = tmp_path / "out" / "x.jpg"
         target.parent.mkdir(exist_ok=True)
-        return ingest_one((tmp_path, rel, target, include_portraits)), target
+        return ingest_one((tmp_path, rel, target, include_portraits, NO_LIMIT)), target
 
     def test_big_png_becomes_4k_jpg_with_record(self, tmp_path: Path) -> None:
         Image.new("RGB", (5000, 3000), "red").save(tmp_path / "big.png")
@@ -177,7 +189,9 @@ class TestIngestBatch:
         (tmp_path / "out").mkdir()
         for i, name in enumerate(names):
             pattern(i).save(tmp_path / name)
-        return [(tmp_path, n, tmp_path / "out" / f"{Path(n).stem}.jpg", False) for n in names]
+        return [
+            (tmp_path, n, tmp_path / "out" / f"{Path(n).stem}.jpg", False, NO_LIMIT) for n in names
+        ]
 
     def test_results_come_back_in_job_order(self, tmp_path: Path) -> None:
         results = ingest_batch(self.jobs(tmp_path, ["a.jpg", "b.jpg", "c.jpg"]), workers=2)
@@ -189,6 +203,34 @@ class TestIngestBatch:
         results = ingest_batch(jobs, workers=2, fn=crash_on_boom)
         assert results[1] == ("boom.jpg", None, "unreadable: worker crashed")
         assert [r[1] is not None for r in results] == [True, False, True, True]
+
+
+class TestSaveWithinLimit:
+    def noisy(self) -> Image.Image:
+        rng = np.random.default_rng(0)
+        return Image.fromarray(rng.integers(0, 255, (900, 1200, 3), dtype=np.uint8))
+
+    def size_at(self, img: Image.Image, tmp_path: Path, quality: int) -> int:
+        path = tmp_path / f"q{quality}.jpg"
+        img.save(path, "JPEG", quality=quality)
+        return path.stat().st_size
+
+    def test_a_file_that_fits_keeps_the_highest_quality(self, tmp_path: Path) -> None:
+        img, target = self.noisy(), tmp_path / "out.jpg"
+        save_within_limit(img, target, NO_LIMIT)
+        assert target.stat().st_size == self.size_at(img, tmp_path, 90)
+
+    def test_quality_drops_until_the_file_fits(self, tmp_path: Path) -> None:
+        img, target = self.noisy(), tmp_path / "out.jpg"
+        limit = (self.size_at(img, tmp_path, 90) + self.size_at(img, tmp_path, 70)) // 2
+        save_within_limit(img, target, limit)
+        assert target.stat().st_size <= limit
+        assert target.stat().st_size < self.size_at(img, tmp_path, 90)
+
+    def test_an_impossible_limit_still_writes_the_lowest_quality(self, tmp_path: Path) -> None:
+        img, target = self.noisy(), tmp_path / "out.jpg"
+        save_within_limit(img, target, 1)
+        assert target.stat().st_size == self.size_at(img, tmp_path, 70)
 
 
 class TestPending:
@@ -310,6 +352,22 @@ class TestRunIngest:
         (src / "clip.MOV").unlink()
         self.ingest(src, job)
         assert "clip.MOV" not in job.load().skipped
+
+    def test_oversized_photos_are_recompressed_to_the_limit(self, tmp_path: Path) -> None:
+        src = tmp_path / "src"
+        src.mkdir()
+        rng = np.random.default_rng(1)
+        img = Image.fromarray(rng.integers(0, 255, (1200, 1600, 3), dtype=np.uint8))
+        img.save(src / "noisy.jpg", quality=95)
+        sizes = {}
+        for quality in (90, 70):
+            img.save(tmp_path / f"q{quality}.jpg", "JPEG", quality=quality)
+            sizes[quality] = (tmp_path / f"q{quality}.jpg").stat().st_size
+        limit = (sizes[90] + sizes[70]) // 2
+        job = Job(tmp_path / "job")
+        run_ingest(src, job, False, 0.0, 1, max_image_mb=limit / (1024 * 1024))
+        written = (job.jpg_dir / "noisy.jpg").stat().st_size
+        assert written <= limit and written < sizes[90]
 
     def test_job_for_another_source_is_refused(self, tmp_path: Path) -> None:
         job = Job(tmp_path / "job")
