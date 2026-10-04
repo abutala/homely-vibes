@@ -48,6 +48,7 @@ class World:
         self.played: list[list[str]] = []  # the originals each pipeline run was given
         self.notes: list[tuple[str, bool]] = []
         self.pipeline_exit = 0
+        self.dedup_error: Exception | None = None
 
     def album(self, name: str, files: list[str], kind: str = "park") -> Path:
         folder = self.root / "2020" / "05-May" / name
@@ -74,6 +75,8 @@ class World:
 
     def dedup(self, job: Job) -> None:
         """Drops every photo whose name ends in `dup`; captions the rest."""
+        if self.dedup_error:
+            raise self.dedup_error
         self.deduped += 1
         manifest = job.load()
         manifest.kept = sorted(n for n in manifest.photos if not Path(n).stem.endswith("dup"))
@@ -208,12 +211,53 @@ class TestFailures:
         world.album("Trip", camera(4))
         world.pipeline_exit = 1
         assert world.run() == EXIT_FAILED
-        assert world.row("Trip").status == "queued"
+        assert world.row("Trip").status == "playing" and world.row("Trip").part == 0
         assert world.notes == [("Trip: upload stopped (exit 1); run again to resume", True)]
         world.pipeline_exit = 0
         assert world.run() == EXIT_OK
         assert world.row("Trip").status == "shown"
         assert len(world.ingested) == 1 and world.deduped == 1
+
+    def test_a_new_album_cannot_take_over_a_month_already_chosen(self, world: World) -> None:
+        world.album("Trip", camera(4))
+        world.pipeline_exit = 1
+        world.run()
+        world.pipeline_exit = 0
+        for seed in range(5):  # wherever the newcomer lands in the queue
+            world.album(f"New{seed}", camera(4), kind="city")
+        assert world.run() == EXIT_OK
+        assert world.row("Trip").status == "shown" and len(world.played) == 2
+        assert world.played[1] == camera(4)
+
+    def test_an_album_with_nothing_ingestable_is_small_not_a_crash(self, world: World) -> None:
+        world.album("Empty", camera(3))
+        world.album("Next", camera(4), kind="city")
+        for file in (world.root / "2020" / "05-May" / "Empty").iterdir():
+            file.unlink()  # the folder emptied after it was indexed
+        assert world.run() == EXIT_OK
+        assert world.row("Empty").status == "small"
+        assert world.row("Next").status == "shown"
+
+    def test_a_failure_while_choosing_pictures_is_reported_and_retried(self, world: World) -> None:
+        world.album("Trip", camera(4))
+        world.dedup_error = RuntimeError("swiftc")
+        assert world.run() == EXIT_FAILED
+        assert world.notes == [("choosing pictures failed: swiftc", True)]
+        world.dedup_error = None
+        assert world.run() == EXIT_OK and world.row("Trip").status == "shown"
+
+    def test_a_header_only_picks_csv_is_ignored(self, world: World) -> None:
+        folder = world.album("Trip", camera(4))
+        (folder / "frame_picks.csv").write_text("file,recommended_name\n")
+        assert world.run() == EXIT_OK
+        assert world.deduped == 1 and world.played == [camera(4)]
+
+    def test_next_names_the_following_month_on_a_catch_up_run(self, world: World) -> None:
+        world.album("Trip", camera(4))
+        world.album("Town", camera(4), kind="city")
+        world.album("Hill", camera(4))
+        world.run(date(2026, 10, 20))
+        assert world.notes[-1][0].endswith("Next: Town")
 
     def test_nothing_eligible_is_an_error(self, world: World) -> None:
         world.album("Party", camera(4), kind="other")

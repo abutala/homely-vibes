@@ -25,7 +25,7 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 ## ClaudeUsageBar Module (`ClaudeUsageBar/`)
 - **Stack**: Swift Package Manager executable wrapped into a `.app` bundle (NOT Python — no uv, no pytest). Menu bar widget (`LSUIElement`, no Dock icon) showing Claude Code plan usage.
 - **Build**: `swift build` for dev; `./Scripts/build_app.sh` for the signed `.app`. `swift test` runs the XCTest target.
-- **Keychain**: owns its own item `com.deviationlabs.ClaudeUsageBar`; bootstraps from the `claude` CLI's item via `/usr/bin/security`. Never read the CLI's item with `SecItem` — see "macOS Keychain" under Best Practices.
+- **Keychain**: owns its own item `com.deviationlabs.ClaudeUsageBar`; bootstraps from the `claude` CLI's item via `/usr/bin/security`. Never read the CLI's item with `SecItem` — see "macOS Keychain" in [practices.md](practices.md).
 - **Signing matters for correctness, not Gatekeeper**: `swift build` is ad-hoc (no team ID) so items it creates are `cdhash`-pinned and re-prompt; only the certificate-signed `.app` gets a stable `teamid:` partition entry.
 - **Diagnostics**: `--probe-keychain` (which source served the token), `--probe-usage` (one-shot fetch). Neither ever prints a secret.
 

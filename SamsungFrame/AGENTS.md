@@ -55,7 +55,7 @@ client.connect_ready()  # Same full bootstrap path
 - `frame_run.py` — the driver: runs the stages as separate processes, retries the upload stage, sends one Pushover built from the manifest
 - `frame_upload.py` / `frame_cleanup.py` / `frame_slideshow.py` — stages 3 to 5: checkpointed upload, snapshot-based cleanup with the minimum-photo floor, slideshow with read-back verification
 - `dedup_photos.py` + `vision_features.swift` — stage 2: drop near-duplicates and utility shots from an ingested job (macOS Vision: feature prints, aesthetics score, utility flag; average-linkage clustering); output feeds `frame_upload.py`
-- Config keys (read once into `client.cfg`; there is no module-level config): `cfg.samsung_frame.ip`, `.port`, `.mac`, `.token_file`, `.default_matte`, `.min_images`, `.min_size_mb`, `.slideshow_delay_seconds`, `.wol_password`, `.smartthings_token`, `.smartthings_device_id`
+- Config keys (read once into `client.cfg`; there is no module-level config): `cfg.samsung_frame.ip`, `.port`, `.mac`, `.token_file`, `.default_matte`, `.min_images`, `.min_size_mb`, `.max_image_size_mb`, `.slideshow_delay_seconds`, `.albums.*` (the album queue), `.wol_password`, `.smartthings_token`, `.smartthings_device_id`
 
 ## TV Art API
 Key for this codebase:

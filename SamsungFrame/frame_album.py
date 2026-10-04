@@ -10,12 +10,14 @@ and hands them to the pipeline (frame_run.py). Which pictures:
   name for each) into the album folder. Nothing is renamed.
 
 An album with too few usable pictures is marked and the next one is tried; one with too many
-plays in consecutive months. Rerunning after any failure resumes the same album and part.
+plays in consecutive months. Once an album is chosen for the month, a rerun after a failure
+resumes that album and part.
 """
 
 import argparse
 import csv
 import json
+import os
 import random
 import shutil
 import subprocess
@@ -52,7 +54,9 @@ class Steps:
 
 
 def read_picks(picks: Path, album_dir: Path) -> list[str]:
-    """Files a picks CSV lists that still exist, relative to the album."""
+    """Files a picks CSV lists that still exist, relative to the album; [] without a CSV."""
+    if not picks.is_file():
+        return []
     with picks.open(newline="") as f:
         return [row["file"] for row in csv.DictReader(f) if (album_dir / row["file"]).is_file()]
 
@@ -66,12 +70,14 @@ def recommended_name(source: str, words: str) -> str:
 def write_picks(picks: Path, manifest: Manifest) -> None:
     """One row per kept photo, in capture order: its file and a recommended file name."""
     kept = sorted(manifest.upload_targets(), key=lambda n: (manifest.photos[n].time, n))
-    with picks.open("w", newline="") as f:
+    tmp = picks.with_name(f".{picks.name}.tmp")  # renamed into place: never a half-written CSV
+    with tmp.open("w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(PICKS_HEADER)
         for name in kept:
             source = manifest.photos[name].source
             writer.writerow([source, recommended_name(source, manifest.captions.get(name, ""))])
+    os.replace(tmp, picks)
 
 
 def link_farm(album_dir: Path, rels: list[str], dest: Path) -> Path:
@@ -102,13 +108,13 @@ def measure(
     job.create()
     if len(labelled) >= cfg.labelled_album_min:
         source = link_farm(album_dir, labelled, job.root / "src")
-    elif picks.exists():
-        source = link_farm(album_dir, read_picks(picks, album_dir), job.root / "src")
+    elif picked := read_picks(picks, album_dir):
+        source = link_farm(album_dir, picked, job.root / "src")
     else:
         source = album_dir
 
     manifest = steps.ingest(source, job)
-    if source == album_dir:
+    if source == album_dir and manifest.photos:
         steps.dedup(job)
         manifest = job.load()
         try:
@@ -137,6 +143,8 @@ def choose_album(
         job = job_for(album, month, jobs_root)
         source, usable = measure(Path(cfg.root) / album.path, job, cfg, steps)
         enough = queue.record_measure(album, len(usable), cfg)
+        if enough:
+            album.status = "playing"  # the month's choice: a rerun returns to it, whatever is new
         save()
         if enough:
             return album, job, source, usable
@@ -180,12 +188,18 @@ def run_month(
         return EXIT_NEEDS_KIND
     queue.place(albums, cfg, rng)
 
-    chosen = choose_album(albums, cfg, steps, month, jobs_root, save)
+    try:
+        chosen = choose_album(albums, cfg, steps, month, jobs_root, save)
+    except Exception as e:
+        logger.exception("Could not work out which pictures to show")
+        save()
+        steps.notify(f"choosing pictures failed: {e}"[:200], True)
+        return EXIT_FAILED
     if chosen is None:
         steps.notify("no eligible album left in the queue", True)
         return EXIT_FAILED
     album, job, source, usable = chosen
-    part = queue.part_for(album, month)
+    part = min(queue.part_for(album, month), album.parts)
     manifest = job.load()
     manifest.kept = sorted(queue.split(usable, album.parts)[part - 1])
     job.save(manifest)
@@ -198,8 +212,8 @@ def run_month(
         return EXIT_FAILED
     queue.mark_shown(album, month)
     save()
-    rows = queue.upcoming(albums, cfg, today)
-    steps.notify(success_line(album, job.load(), rows[1][1] if len(rows) > 1 else "nothing"), False)
+    later = [row[1] for row in queue.upcoming(albums, cfg, today) if row[0][:7] > month]
+    steps.notify(success_line(album, job.load(), later[0] if later else "nothing"), False)
     return EXIT_OK
 
 
@@ -252,6 +266,9 @@ def main() -> int:
 
     cfg = get_config().samsung_frame.albums
     today = date.today()
+    if not cfg.root or not cfg.data_dir:
+        logger.error("Set samsung_frame.albums.root and .data_dir in config/local.yaml")
+        return EXIT_FAILED
     if args.command == "run":
         if args.scheduled and today != queue.first_monday(today.year, today.month):
             logger.info("Not the first Monday of the month; nothing to do")

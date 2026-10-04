@@ -14,6 +14,8 @@ Part of the agent guide: [AGENTS.md](../AGENTS.md).
 
 ## Hooks and code quality
 
+Run `make setup` once in the primary checkout so the environment and hooks are consistent, and `make test` before pushing.
+
 **Linting Pipeline**: Pre-commit hooks automatically run on every commit:
 - `make ruff` - Code formatting and linting
 - `make test` - Full test suite execution

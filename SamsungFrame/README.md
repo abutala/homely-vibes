@@ -162,7 +162,7 @@ uv run python -m SamsungFrame.frame_album shuffle         # re-deal the queue
 uv run python -m SamsungFrame.frame_album table           # rewrite and print upcoming.md
 ```
 
-**The queue** is `index.tsv` in `samsung_frame.albums.data_dir`: one row per album, and line order is play order. Edit it by hand to move an album up or set its `status` to `skip`. An album is eligible when it has more than `min_pictures` pictures and its kind is `park` or `city`; the two kinds alternate. New albums found by a run are dropped at a random slot near the top. `upcoming.md` beside the index shows the next months and the pool, and is rewritten by every command.
+**The queue** is `index.tsv` in `samsung_frame.albums.data_dir`: one row per album, and line order is play order. Edit it by hand to move an album up or set its `status` to `skip`. An album is eligible when it has more than `min_pictures` pictures and its kind is `park` or `city`; the two kinds alternate. A new album found by a run joins the queue; if it is eligible it is dropped at a random slot near the top. `upcoming.md` beside the index shows the next months and the pool, and is rewritten whenever a command changes or reads the queue (not by a `--scheduled` run on another Monday, nor when the library is not mounted).
 
 **Which pictures of an album are shown**, first match wins:
 
@@ -175,7 +175,7 @@ Portraits are dropped in every case. Then:
 - fewer than `min_on_tv` usable pictures: the album is marked `small`, never retried, and the next album in the queue is tried in the same run;
 - more than `max_on_tv`: the album is cut into equal parts in capture order and plays one part a month; alternation resumes after its last part.
 
-**Exit codes**: 0 done; 1 failed (one Pushover says why; run again to resume the same album and part); 2 the library is not mounted; 3 new albums need a kind (they are printed; classify them and run again). A success is one terse Pushover line; the pipeline's own notification is switched off for these runs.
+**Exit codes**: 0 done; 1 failed (one Pushover says why; run again: once an album is chosen for the month the rerun returns to it and to the same part); 2 the library is not mounted (one Pushover); 3 new albums need a kind (they are printed, nothing is sent; classify them and run again). A success is one terse Pushover line; the pipeline's own notification is switched off for these runs.
 
 **Config** (`samsung_frame.albums` in `config/default.yaml`; set `root`, `data_dir` and `home_region` in `config/local.yaml`): the limits above, plus `away_weight` and `recency_half_life_years`, which bias `shuffle` towards albums from outside the home region and newer ones.
 

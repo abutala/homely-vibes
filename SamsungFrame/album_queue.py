@@ -25,7 +25,8 @@ UNKNOWN = "?"
 CAMERA_WORDS = {
     "img", "dsc", "dscn", "dscf", "cimg", "pxl", "mvimg", "dji", "gopr", "vid", "mov", "pano",
     "hdr", "burst", "edited", "copy", "orig", "jpg", "jpeg", "png", "heic", "photo", "image",
-    "picture", "whatsapp", "screenshot", "fullsizerender",
+    "picture", "whatsapp", "screenshot", "fullsizerender", "sam", "pict", "imgp", "kimg",
+    "original", "received",
 }  # fmt: skip
 CAMERA_WORD_PATTERNS = re.compile(r"st[a-z]|[a-f]+")  # Canon stitch (STA_, STB_), hex fragments
 
