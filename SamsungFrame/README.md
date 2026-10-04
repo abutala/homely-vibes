@@ -8,12 +8,12 @@ A Python client for managing art mode on Samsung Frame TVs. Upload images, confi
 
 - **Batch Upload with HEIC Conversion**: Convert iPhone/iOS HEIC images to 4K JPG and upload
 - **Recursive Directory Scanning**: Process images from nested subdirectories
-- **Smart Filtering**: Exclude thumbnails and small files automatically
+- **Smart Filtering**: Exclude thumbnails, small files and portraits automatically
+- **Photo Dedup**: `dedup_photos.py` thins a folder to a fraction of its size by dropping near-duplicates
 - **Filename Trimming**: Automatically trims filenames to <50 chars (preserves extension, handles collisions)
 - **Start Index / Pagination**: Skip first N files with `--start-index` for resuming interrupted uploads
-- **Smart Purge**: Delete stale art (uploaded >24h ago or untracked) while respecting minimum image count
-- **Connection Health Checks**: Automatically stops uploads after consecutive failures to avoid wasting time on unstable connections
-- **Upload History Tracking**: Local JSON tracker records upload timestamps for time-based purge decisions
+- **Smart Purge**: Delete stale art (uploaded >24h ago or with no upload date) while respecting minimum image count
+- **Connection Health Checks**: After 3 consecutive failures, reboots the TV and reconnects; aborts the upload only if that fails
 - **Matte Configuration**: Apply black borders (or other matte styles) to uploaded images
 - **Art Mode Control**: Enable art mode and start automatic slideshow
 - **TV Status**: Check connection and art mode support
@@ -31,8 +31,8 @@ Add your Samsung Frame TV settings to `config/local.yaml`:
 samsung_frame:
   ip: "192.168.XX.YY"  # Your TV's IP address
   port: 8002  # WebSocket port (default: 8002)
-  token_file: lib/tokens/samsung_frame_token.txt
-  default_matte: shadowbox  # Black border style
+  token_file: config/tokens/samsung_frame_token.txt
+  default_matte: shadowbox_black  # Black border style
   supported_formats: [jpg, jpeg, png]
   max_image_size_mb: 10
 
@@ -72,7 +72,7 @@ uv run python SamsungFrame/batch_upload.py /path/to/images
 **To re-pair:** Delete the token file and run any connection command:
 
 ```bash
-rm lib/tokens/samsung_frame_token.txt
+rm config/tokens/samsung_frame_token.txt
 uv run python SamsungFrame/manage_samsung.py status
 ```
 
@@ -88,8 +88,11 @@ For iPhone/iOS users with HEIC photos, use the batch upload script which handles
 # Basic batch upload with HEIC conversion
 uv run python SamsungFrame/batch_upload.py ~/Photos/Favorites 2>&1 | tee /tmp/samsung-batch-upload.log
 
-# Purge stale art (>24h old or untracked) after upload
-uv run python SamsungFrame/batch_upload.py ~/Photos/Vacation --purge
+# Keep older art on the TV (purge of art >24h old is ON by default)
+uv run python SamsungFrame/batch_upload.py ~/Photos/Vacation --no-purge
+
+# Include portrait photos (skipped by default; the TV is landscape)
+uv run python SamsungFrame/batch_upload.py ~/Photos/Vacation --include-portraits
 
 # Custom matte
 uv run python SamsungFrame/batch_upload.py ~/Photos --matte shadowbox_black
@@ -104,26 +107,47 @@ uv run python SamsungFrame/batch_upload.py ~/Photos --start-index 10 --max-files
 **What the batch upload script does:**
 
 1. **Recursive Discovery**: Scans directory and all subdirectories for images
-2. **Smart Filtering**: Excludes files <1MB (configurable) and thumbnail patterns (*_thumb*, *_thumbnail*, *_small*)
+2. **Smart Filtering**: Excludes files below `samsung_frame.min_size_mb` (default 0.75MB), thumbnail patterns (*_thumb*, *_thumbnail*, *_small*) and, unless `--include-portraits`, portrait photos. Small-file skips are logged at debug level only
 3. **Start Index / Max Files**: Optionally skip first N files and/or cap total uploads
 4. **Phase 1 — Prepare**: Converts HEIC to high-quality JPG at 4K (max 3840×2160), copies JPG/PNG, trims all filenames to <50 chars
 5. **Quality Compression**: Reduces JPG quality (95→90→85→80→75→70) if needed to meet 10MB TV limit
-6. **Phase 2 — Upload**: Uploads all prepared images with health checking (stops after 3 consecutive failures)
-7. **Upload Tracking**: Records upload timestamps locally for time-based purge
-8. **Smart Purge**: Optionally deletes art uploaded >24h ago or untracked (respects minimum image count)
-9. **Enable Art Mode**: Automatically enables slideshow after upload
+6. **Phase 2 — Upload**: Uploads all prepared images with health checking (3 consecutive failures reboot the TV and reconnect; the upload aborts only if that fails)
+7. **Smart Purge**: Deletes art uploaded >24h ago or with no upload date, using the TV's own `image_date` (respects minimum image count); skip with `--no-purge`
+8. **Enable Art Mode**: Automatically enables slideshow after upload
 
 **Command Options:**
 
 - `source_dir` - Directory to scan (required)
 - `--matte` - Matte style (default: shadowbox_black)
-- `--purge` - Delete stale art (>24h old or untracked) after upload
+- `--no-purge` - Skip purging stale art (>24h old) after upload
+- `--include-portraits` - Upload portrait photos too (default: skipped)
 - `--start-index N` - Skip first N discovered files (applied before --max-files)
 - `--max-files N` - Maximum number of files to upload (0 = all)
 
-**Note**: Pushover notifications sent automatically. Files <1MB filtered as thumbnails.
+**Note**: Pushover notifications sent automatically. Files below `min_size_mb` are filtered as thumbnails. Art carries no label or caption: the uploader sends image bytes and a matte only, so filenames are never shown on the TV.
 
 **Supported Formats**: HEIC, JPG, JPEG, PNG
+
+### Dedup Photos Before Uploading
+
+A trip folder is full of near-identical bursts. `dedup_photos.py` thins it to a fraction of its size and writes the survivors, as 4K JPGs, to a new folder. The source is never modified. macOS only (uses Apple Vision via `swiftc`).
+
+```bash
+# Keep ~50%; writes "~/Photos/Trip - dedup"
+uv run python SamsungFrame/dedup_photos.py ~/Photos/Trip 2>&1 | tee /tmp/dedup.log
+
+# Keep ~30%, only treat photos within 2 minutes of each other as duplicates
+uv run python SamsungFrame/dedup_photos.py ~/Photos/Trip --keep 0.3 --window 120 --out ~/Photos/Trip-small
+```
+
+How it chooses:
+
+1. Every HEIC/JPG/PNG in the folder's top level (no subfolders, unlike `batch_upload.py`) is downsized to <=3840x2160 JPG (EXIF-rotated), so the rest runs on small files
+2. Apple Vision feature prints give a distance per pair (~0 identical, ~0.5 same scene, >0.8 unrelated)
+3. Average-linkage clustering merges the closest pairs until `--keep` is reached; photos more than `--window` seconds apart never merge, and nothing merges past `--max-distance` even if `--keep` is not reached
+4. Per cluster, the sharpest frame is kept; a landscape frame beats a portrait one unless the portrait is 2x sharper
+
+Videos (`.MOV`) and sidecars (`.AAE`) are ignored. Upload the result with `batch_upload.py "<out>"`; it then purges user art older than 24h (add `--no-purge` to keep it). The step-by-step routine is in [CLAUDE.md](CLAUDE.md).
 
 ### Check TV Status
 
@@ -216,7 +240,7 @@ This command:
 Enable the TV's automatic slideshow feature (recommended for normal use):
 
 ```bash
-# Start slideshow with default settings (15 min interval, shuffle on)
+# Start slideshow with default settings (3 min interval)
 uv run python SamsungFrame/manage_samsung.py start-slideshow
 
 # Custom interval (30 minutes between images)
@@ -274,19 +298,19 @@ This command:
 - **`batch_upload.py`**: Batch upload with two-phase architecture
   - Phase 1: Prepare images (HEIC conversion, filename trimming, copy to temp dir)
   - Phase 2: Upload via `upload_images_from_folder()` with automatic health checks
-  - Smart purge using local upload history tracking
+  - Smart purge using the TV's `image_date`
 
-- **`upload_tracker.py`**: Local upload history (JSON-based)
-  - Records content_id → timestamp for each upload
-  - Identifies stale art (>24h or untracked) for purge
-  - Stored at `config/samsung_upload_history.json` (gitignored)
+- **`dedup_photos.py`** + **`feature_prints.swift`**: Photo dedup (macOS only)
+  - Downsizes to 4K JPG, embeds with Apple Vision, clusters, keeps the sharpest of each cluster
 
 - **`manage_samsung.py`**: CLI entry point
   - Argparse-based command interface for TV management
   - Pushover notification integration
 
 - **`test_batch_upload.py`**: Comprehensive test suite
-  - Tests for discovery, conversion, deletion, filename trimming, upload tracking, start-index
+  - Tests for discovery, conversion, deletion, filename trimming, start-index
+
+- **`test_dedup_photos.py`**: Clustering, best-pick and image-prep tests; one real-Vision smoke test (skipped off macOS)
 
 ### Data Models (Pydantic)
 
@@ -305,7 +329,7 @@ This command:
 
 Use the `list-mattes` command to see what your TV supports. Common options:
 
-- `shadowbox` - Black border (default)
+- `shadowbox_black` - Black border (default); `shadowbox` accepts other colors via a suffix
 - `none` - No border
 - `modern`, `modernthin`, `modernwide` - Modern border styles
 - `flexible` - Flexible border
