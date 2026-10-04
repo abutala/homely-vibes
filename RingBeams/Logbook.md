@@ -17,9 +17,31 @@ step that brings it back. Node then died at module load and its
 `beams_manager` now pre-flights for the package and raises a one-line remedy instead.
 Fix is always `make node-deps`.
 
+### 2026-10-04 — A killed parent orphaned the sidecar outside the token lock
+
+Found by modelling the callers ([formal/Logbook.md](../formal/Logbook.md)), then
+reproduced with a real `SIGKILL`. `beams_manager` held the token flock across the Node
+sidecar, but the sidecar never held it: flock is released when its holder dies, so a
+parent killed mid-run (OOM, cron kill) left a live sidecar rotating the refresh token
+while RingSecurity took the free lock. Ring rotates on every use, so the loser gets
+`invalid_grant`. Not observed in production; the cost would have been a spurious
+"Ring: Auth Required" and a re-auth.
+
+Fix: `acquire_lock` yields its fd and `run_sidecar` passes it via `pass_fds`, so the
+sidecar shares the open file description and the lock lives until the last holder exits.
+Because that makes a hung orphan hold the lock indefinitely, with no parent left to
+enforce `sidecar_timeout_seconds`, the sidecar now arms `watchdog.js` and exits 4 on
+the same budget. A hung orphan therefore ends in at most that long, not a permanent
+"Ring: Token Lock Timeout" P1 on every run.
+
 ---
 
 ## Landmines
+
+### The lock must be released with `close()`, never `LOCK_UN`
+
+With the sidecar sharing the lock's open file description, an explicit `LOCK_UN` in the
+parent releases it for the sidecar too. `acquire_lock` only closes its fd.
 
 ### `NODE_PATH` will not rescue a missing `node_modules`
 
