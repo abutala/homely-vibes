@@ -96,6 +96,11 @@ def reason_counts(reasons: Iterable[str]) -> dict[str, int]:
     return counts
 
 
+def drop_kind(reason: str) -> str:
+    """A dedup drop reason without the photo it names ("duplicate of a.jpg" -> "duplicate")."""
+    return "duplicate" if reason.startswith("duplicate of ") else reason
+
+
 def default_job_dir(source: Path) -> Path:
     """`/tmp/frame-jobs/<folder name>-<hash of full path>`: stable across runs, unique per source."""
     slug = re.sub(r"[^A-Za-z0-9._-]+", "-", source.name).strip("-") or "photos"

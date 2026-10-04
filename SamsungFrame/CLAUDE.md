@@ -14,7 +14,7 @@ Amit's standing preference. Do every step below without asking; each is the defa
 3. **If it stops, rerun the same command.** Every stage resumes from the manifest in the job dir (`/tmp/frame-jobs/<name>-<hash>/`, printed as `Job:` by ingest), and the upload stage already retries itself 3 times. Never compute start indexes or delete photos by hand. To resume or inspect one stage on its own: `"$HV/.venv/bin/python" -m SamsungFrame.<stage> "<JOB>"` with `ingest` (takes `<SRC>` too), `dedup_photos`, `frame_upload`, `frame_cleanup`, `frame_slideshow`.
 4. **Report from the run's single Pushover / the manifest**: skipped and dropped by reason, uploaded of kept, old photos removed and retained, and whether the slideshow was verified. A non-zero exit or "Slideshow NOT verified" means it is NOT done: say so, do not report done.
 
-Knobs, only when Amit asks: `--include-portraits`; `--no-dedup` with a fresh `--job` (a curated folder); `--max-distance` (lower keeps more photos); `--no-cleanup` (keep the photos already on the TV); `--duration` (minutes per photo).
+Knobs, only when Amit asks: `--include-portraits`; `--no-dedup` with a fresh `--job` (a curated folder); `--max-distance` (lower keeps more photos); `--max-photos N` (after dedup, keep the best of each stretch of the album, N in all); `--no-cleanup` (keep the photos already on the TV); `--duration` (minutes per photo).
 
 Landmines, the things a rerun will not tell you:
 
@@ -54,11 +54,11 @@ client.connect_ready()  # Same full bootstrap path
 - `frame_run.py` — the driver: runs the stages as separate processes, retries the upload stage, sends one Pushover built from the manifest
 - `frame_upload.py` / `frame_cleanup.py` / `frame_slideshow.py` — stages 3 to 5: checkpointed upload, snapshot-based cleanup with the minimum-photo floor, slideshow with read-back verification
 - `dedup_photos.py` + `vision_features.swift` — stage 2: drop near-duplicates and utility shots from an ingested job (macOS Vision: feature prints, aesthetics score, utility flag; average-linkage clustering); output feeds `frame_upload.py`
-- Config keys: `cfg.samsung_frame.ip`, `.port`, `.mac`, `.token_file`, `.default_matte`, `.min_images`, `.min_size_mb`, `.slideshow_delay_seconds`, `.wol_password`, `.smartthings_token`, `.smartthings_device_id`
+- Config keys (read once into `client.cfg`; there is no module-level config): `cfg.samsung_frame.ip`, `.port`, `.mac`, `.token_file`, `.default_matte`, `.min_images`, `.min_size_mb`, `.slideshow_delay_seconds`, `.wol_password`, `.smartthings_token`, `.smartthings_device_id`
 
 ## TV Art API
 Key for this codebase:
-- `image_date` available from API — used to order old photos for the minimum-photo floor and by the manual age-based purge
+- `image_date` available from API — used to order old photos for the minimum-photo floor and by the manual age-based purge. It is the TV's local wall-clock time with no zone (measured against a fresh upload), so it is compared with naive local time, never UTC
 - No filename or file hash returned — art already on the TV cannot be deduped; dedup the ingested job first with `dedup_photos.py`
 - Art channel only responds when TV is in art mode
 
@@ -66,9 +66,10 @@ Key for this codebase:
 - `ping()` — `art().supported()` as health check
 - `get_available_art_strict()` — raises on error (vs `get_available_art()` returns `[]`)
 - `_reconnect()` — close + sleep(2) + reconnect
-- `_reboot_and_reconnect()` — reboot TV, wait up to 120s for it to power on, then up to 3 connect attempts 5s apart
-- Upload loop: 3 consecutive failures → `ensure_art_mode()`; only if that fails, reboot the TV (at most once per run) and reconnect → resume; abort if that fails
-- Post-timeout verification: checks TV art list for new IDs when upload returns None/error
+- `reboot_and_reconnect()` — reboot TV, wait up to 120s for it to power on, then up to 3 connect attempts 5s apart
+- Upload loop: a successful upload is followed only by the pause, with no health check (the TV has just answered). A failed one → `ensure_art_mode()`; only if that fails, reboot the TV (at most once per run) and reconnect → resume; stop if that fails. A TV that stays in art mode never stops the run: each failed image is recorded and the next is tried
+- An error raised by the per-image checkpoint callback propagates and stops the run
+- Post-timeout verification: when an upload returns nothing, the TV art list is read and the image counts as uploaded only if exactly one new id appeared
 - Adaptive pause between uploads: starts at 5s, +5s (max 30s) when the TV needs a cooldown, -1s (min 5s) as it recovers
 - `--timeout` CLI param (default 60s) forwarded to `SamsungTVWS`
 
@@ -77,12 +78,12 @@ Key for this codebase:
 - Floor: if fewer than `min_images` photos would remain, the newest old photos by `image_date` are retained (an empty date counts as oldest)
 - Refuses unless the snapshot exists, every kept photo is recorded as uploaded and is on the TV, at least one new photo is on the TV, and no id is both old and new; only `MY_F` ids are ever candidates, so Samsung's pre-installed art is never deleted
 - Deletes that fail are retried by rerunning: the plan is recomputed from the TV each time
-- `manage_samsung.py purge --days N` is the separate manual tool: `get_stale_art_ids()` by `image_date` age, same floor idea, not used by the pipeline
+- `manage_samsung.py purge --days N` is the separate manual tool: `plan_purge()` takes user art older than N days by `image_date`, oldest first, and never goes below `min_images`; not used by the pipeline
 
 ## CLI Commands
-- `frame_run.py <source_dir>` — `--job`, `--include-portraits`, `--no-dedup`, `--window`, `--max-distance`, `--upload-attempts`, `--no-cleanup`, `--duration`
+- `frame_run.py <source_dir>` — `--job`, `--include-portraits`, `--no-dedup`, `--window`, `--max-distance`, `--max-photos`, `--upload-attempts`, `--no-cleanup`, `--duration`
 - `ingest.py <source_dir>` — `--job`, `--include-portraits`, `--workers`
-- `dedup_photos.py <job_dir>` — `--window`, `--max-distance`
+- `dedup_photos.py <job_dir>` — `--window`, `--max-distance`, `--max-photos`
 - `frame_upload.py <job_dir>` — `--matte`, `--timeout`
 - `frame_cleanup.py <job_dir>` — `--dry-run`, `--min-images`, `--timeout`
 - `frame_slideshow.py <job_dir>` — `--duration`, `--no-shuffle`, `--timeout`
@@ -90,4 +91,4 @@ Key for this codebase:
 
 ## Testing
 - Tests in `test_samsung_client.py`, `test_manage_samsung.py`, `test_frame_job.py`, `test_ingest.py`, `test_dedup_photos.py`, `test_frame_upload.py`, `test_frame_cleanup.py`, `test_frame_slideshow.py` and `test_frame_run.py` (real-Vision tests skip off macOS). Stage tests pass hand-written fake TV clients into the stage functions: no `patch()`
-- Legacy client tests in `test_samsung_client.py` patch `SamsungFrame.samsung_client.cfg` (not `get_config`) for module-level config and the `SamsungTVWS` constructor via `@patch("SamsungFrame.samsung_client.SamsungTVWS")`; new tests inject fakes instead
+- No test uses `patch()`. The client takes its config and a `TvIo` (TV constructor, REST client, HTTP post, UDP socket, sleep) as parameters; `test_samsung_client.py` passes fakes for those and uses the `Scripted` subclass to answer the client's own methods (`connect`, `ensure_art_mode`, ...) from a script. `manage_samsung.run_command` takes a client factory, and the confirm prompts take an `ask` callable
