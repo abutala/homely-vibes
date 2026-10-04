@@ -23,14 +23,13 @@ client.connect_ready()  # Same full bootstrap path
 - `samsung_client.py` — WebSocket client wrapping `samsungtvws` (NickWaterton fork v3.0.5)
 - `batch_upload.py` — Two-phase upload workflow (prepare temp dir -> upload)
 - `manage_samsung.py` — CLI entry point with subcommands
+- `dedup_photos.py` + `feature_prints.swift` — thin a photo folder to ~N% (macOS Vision embeddings, average-linkage clustering); output feeds `batch_upload.py`
 - Config keys: `cfg.samsung_frame.ip`, `.port`, `.mac`, `.token_file`, `.default_matte`, `.min_images`, `.min_size_mb`, `.slideshow_delay_seconds`, `.wol_password`, `.smartthings_token`, `.smartthings_device_id`
 
 ## TV Art API
-See `~/.claude/learnings/skills/samsung.md` for full API schema and protocol details.
-
 Key for this codebase:
 - `image_date` available from API — usable for age-based purge directly
-- No filename or file hash returned — no dedup possible
+- No filename or file hash returned — art already on the TV cannot be deduped; dedup the source folder first with `dedup_photos.py`
 - Art channel only responds when TV is in art mode
 
 ## Stability Features
@@ -51,10 +50,11 @@ Key for this codebase:
 - Art with empty `image_date` (Samsung pre-installed or very old uploads) treated as stale
 
 ## CLI Commands
-- `batch_upload.py <source_dir>` — `--no-purge`, `--start-index`, `--max-files`, `--timeout`, `--matte`
-- `manage_samsung.py status|list-art|list-mattes|delete-all|download-thumbnails|update-mattes|cycle-images|start-slideshow|reboot`
+- `batch_upload.py <source_dir>` — `--no-purge`, `--include-portraits`, `--start-index`, `--max-files`, `--timeout`, `--matte`
+- `dedup_photos.py <source_dir>` — `--keep`, `--window`, `--max-distance`, `--out`, `--work-dir`
+- `manage_samsung.py status|list-art|list-mattes|delete-all|download-thumbnails|update-mattes|cycle-images|start-slideshow|reboot|purge`
 
 ## Testing
-- Tests in `test_samsung_client.py` and `test_batch_upload.py`
+- Tests in `test_samsung_client.py`, `test_batch_upload.py` and `test_dedup_photos.py` (Vision smoke test skips off macOS)
 - Must patch `SamsungFrame.samsung_client.cfg` (not `get_config`) for module-level config
 - `SamsungTVWS` constructor patched via `@patch("SamsungFrame.samsung_client.SamsungTVWS")`
