@@ -19,7 +19,13 @@ from typing import Callable, Optional
 from lib.config import get_config
 from lib.logger import get_logger
 from lib.MyPushover import Pushover
-from SamsungFrame.frame_job import Job, Manifest, default_job_dir, reason_counts
+from SamsungFrame.frame_job import (
+    Job,
+    Manifest,
+    default_job_dir,
+    drop_kind,
+    reason_counts,
+)
 
 logger = get_logger(__name__)
 
@@ -63,7 +69,14 @@ def build_stages(
     stages = [Stage("ingest", ingest)]
     if not args.no_dedup:
         dedup = cmd(
-            "dedup", job, "--window", str(args.window), "--max-distance", str(args.max_distance)
+            "dedup",
+            job,
+            "--window",
+            str(args.window),
+            "--max-distance",
+            str(args.max_distance),
+            "--max-photos",
+            str(args.max_photos),
         )
         stages.append(Stage("dedup", dedup))
     stages.append(Stage("upload", cmd("upload", job), attempts=args.upload_attempts))
@@ -92,9 +105,7 @@ def _counts(reasons: dict[str, int]) -> str:
 
 def build_report(manifest: Manifest, failed_stage: Optional[str]) -> Report:
     targets = manifest.upload_targets()
-    dropped = reason_counts(
-        "utility" if why == "utility" else "duplicate" for why in manifest.dropped.values()
-    )
+    dropped = reason_counts(drop_kind(why) for why in manifest.dropped.values())
     lines = [
         f"✅ Uploaded: {sum(1 for name in targets if name in manifest.uploaded)}/{len(targets)}",
         f"⏭ Skipped: {_counts(reason_counts(manifest.skipped.values()))}",
@@ -180,6 +191,9 @@ def main() -> int:
     parser.add_argument("--no-dedup", action="store_true", help="Upload every ingested photo")
     parser.add_argument("--window", type=float, default=600, help="Dedup time window, seconds")
     parser.add_argument("--max-distance", type=float, default=0.4, help="Dedup similarity limit")
+    parser.add_argument(
+        "--max-photos", type=int, default=0, help="Keep at most this many after dedup (0 = all)"
+    )
     parser.add_argument("--upload-attempts", type=int, default=3, help="Upload stage tries")
     parser.add_argument("--no-cleanup", action="store_true", help="Keep the old catalog")
     parser.add_argument("--duration", type=int, default=3, help="Slideshow minutes per photo")

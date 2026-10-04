@@ -3,33 +3,165 @@
 
 import argparse
 import sys
+from typing import Callable
 
+from lib.config import get_config
+from lib.logger import get_logger
 from SamsungFrame.samsung_client import (
     SamsungFrameClient,
     delete_all_art,
     delete_art_by_ids,
-    get_stale_art_ids,
-)
-from lib.MyPushover import Pushover
-from lib.logger import get_logger
-from lib.config import get_config
-
-cfg = get_config()
-pushover = Pushover(
-    cfg.pushover.user,
-    cfg.pushover.tokens.get("SamsungFrame", cfg.pushover.default_token),
+    plan_purge,
 )
 
+logger = get_logger(__name__)
 
-def main() -> int:
-    """Main entry point with command line interface."""
-    cfg = get_config()
-    logger = get_logger(__name__)
-    logger.info("=" * 50)
-    logger.info("Starting Samsung Frame TV Art Manager")
+Handler = Callable[[SamsungFrameClient, argparse.Namespace], int]
 
+DEVICE_FIELDS = [
+    ("Model", "modelName"),
+    ("Name", "name"),
+    ("Firmware", "firmwareVersion"),
+    ("Resolution", "resolution"),
+    ("Power State", "PowerState"),
+    ("OS", "OS"),
+    ("Network Type", "networkType"),
+    ("Frame TV Support", "FrameTVSupport"),
+]
+
+
+def show_status(client: SamsungFrameClient, _args: argparse.Namespace) -> int:
+    device = (client.get_device_info() or {}).get("device")
+    if device is None:
+        logger.warning("Could not retrieve device info")
+    else:
+        for label, key in DEVICE_FIELDS:
+            logger.info(f"{label}: {device.get(key, 'Unknown')}")
+        if device.get("FrameTVSupport") == "true":
+            logger.info(f"Available Art: {len(client.get_available_art())} items")
+
+    if client.check_art_support():
+        logger.info("Art Mode: Supported and working")
+    else:
+        logger.warning("Art Mode: Not supported or unavailable")
+    return 0
+
+
+def list_art(client: SamsungFrameClient, _args: argparse.Namespace) -> int:
+    art_list = client.get_available_art()
+    logger.info(f"Available art ({len(art_list)} items):")
+    for i, art in enumerate(art_list, 1):
+        logger.info(f"  {i}. ID: {art.get('content_id', 'Unknown ID')}")
+    return 0
+
+
+def list_mattes(client: SamsungFrameClient, _args: argparse.Namespace) -> int:
+    mattes = client.get_available_mattes()
+    logger.info(f"Available matte styles ({len(mattes)} options):")
+    for i, matte in enumerate(mattes, 1):
+        logger.info(f"  {i}. {matte}")
+    return 0
+
+
+def _report(result: dict[str, int]) -> int:
+    """Log an operation's counts; non-zero when any item failed."""
+    logger.info("Results: " + ", ".join(f"{count} {name}" for name, count in result.items()))
+    return 0 if result["failed"] == 0 else 1
+
+
+def download_thumbnails(client: SamsungFrameClient, args: argparse.Namespace) -> int:
+    return _report(client.download_thumbnails(args.output_dir, user_photos_only=not args.all))
+
+
+def update_mattes(client: SamsungFrameClient, args: argparse.Namespace) -> int:
+    return _report(
+        client.update_all_mattes(args.matte, user_photos_only=not args.include_preinstalled)
+    )
+
+
+def cycle_images(client: SamsungFrameClient, args: argparse.Namespace) -> int:
+    client.cycle_images(
+        period=args.period, user_photos_only=not args.all, shuffle=not args.no_shuffle
+    )
+    return 0
+
+
+def start_slideshow(client: SamsungFrameClient, args: argparse.Namespace) -> int:
+    shuffle = not args.no_shuffle
+    if not client.start_slideshow(duration=args.duration, shuffle=shuffle):
+        logger.error("Failed to start slideshow")
+        return 1
+    problems = client.verify_slideshow(args.duration, shuffle)
+    for problem in problems:
+        logger.error(f"Slideshow not verified: {problem}")
+    if problems:
+        return 1
+    logger.info("Slideshow started and verified on the TV")
+    return 0
+
+
+def delete_all(client: SamsungFrameClient, args: argparse.Namespace) -> int:
+    return _report(delete_all_art(client, force=args.force))
+
+
+def purge_art(
+    client: SamsungFrameClient,
+    args: argparse.Namespace,
+    ask: Callable[[str], str] = input,
+    min_images: int | None = None,
+) -> int:
+    if min_images is None:
+        min_images = get_config().samsung_frame.min_images
+    ids = plan_purge(client.get_available_art(), args.days * 24, min_images)
+    if not ids:
+        logger.info(f"Nothing to purge older than {args.days} day(s) (minimum kept: {min_images})")
+        return 0
+
+    logger.info(f"{len(ids)} art items older than {args.days} day(s) (minimum kept: {min_images})")
+    if not args.force and ask(f"Delete {len(ids)} items? [y/N] ").lower() != "y":
+        logger.info("Purge cancelled")
+        return 0
+    return _report(delete_art_by_ids(client, ids))
+
+
+def reboot_tv(client: SamsungFrameClient, _args: argparse.Namespace) -> int:
+    if client.reboot_and_reconnect():
+        logger.info("TV rebooted and in art mode")
+        return 0
+    logger.error("Failed to reboot TV into art mode")
+    return 1
+
+
+COMMANDS: dict[str, Handler] = {
+    "status": show_status,
+    "list-art": list_art,
+    "list-mattes": list_mattes,
+    "download-thumbnails": download_thumbnails,
+    "update-mattes": update_mattes,
+    "cycle-images": cycle_images,
+    "start-slideshow": start_slideshow,
+    "reboot": reboot_tv,
+    "delete-all": delete_all,
+    "purge": purge_art,
+}
+
+
+def run_command(
+    name: str,
+    args: argparse.Namespace,
+    client_factory: Callable[[], SamsungFrameClient] = SamsungFrameClient,
+) -> int:
+    """Connect, run one command, close; any failure is logged and becomes exit code 1."""
+    try:
+        with client_factory() as client:
+            return COMMANDS[name](client, args)
+    except Exception as e:
+        logger.error(f"Error running {name}: {e}")
+        return 1
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Samsung Frame TV Art Mode Manager")
-
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     subparsers.add_parser("status", help="Check TV connection and art mode support")
@@ -63,13 +195,11 @@ def main() -> int:
     matte_parser.add_argument(
         "--matte",
         type=str,
-        default=cfg.samsung_frame.default_matte,
+        default=get_config().samsung_frame.default_matte,
         help="Matte style (default: %(default)s)",
     )
     matte_parser.add_argument(
-        "--include-preinstalled",
-        action="store_true",
-        help="Include Samsung pre-installed art",
+        "--include-preinstalled", action="store_true", help="Include Samsung pre-installed art"
     )
 
     cycle_parser = subparsers.add_parser(
@@ -100,305 +230,18 @@ def main() -> int:
         help="Time in minutes between image changes (default: 3)",
     )
     slideshow_parser.add_argument(
-        "--no-shuffle",
-        action="store_true",
-        help="Disable shuffle mode (sequential order)",
+        "--no-shuffle", action="store_true", help="Disable shuffle mode (sequential order)"
     )
+    return parser
 
-    parser.add_argument("--debug", action="store_true", help="Enable debug logging")
 
+def main() -> int:
+    parser = build_parser()
     args = parser.parse_args()
-
     if not args.command:
         parser.print_help()
         return 1
-
-    # Route to appropriate handler
-    if args.command == "status":
-        return show_status(args)
-    elif args.command == "list-art":
-        return list_art(args)
-    elif args.command == "list-mattes":
-        return list_mattes(args)
-    elif args.command == "download-thumbnails":
-        return download_thumbnails(args)
-    elif args.command == "update-mattes":
-        return update_mattes(args)
-    elif args.command == "cycle-images":
-        return cycle_images(args)
-    elif args.command == "start-slideshow":
-        return start_slideshow(args)
-    elif args.command == "reboot":
-        return reboot_tv(args)
-    elif args.command == "delete-all":
-        return delete_all(args)
-    elif args.command == "purge":
-        return purge_art(args)
-
-    return 0
-
-
-def show_status(_args: argparse.Namespace) -> int:
-    logger = get_logger(__name__)
-
-    try:
-        with SamsungFrameClient() as client:
-            logger.info("=" * 50)
-            logger.info("TV STATUS")
-            logger.info("=" * 50)
-
-            device_info = client.get_device_info()
-            if device_info:
-                device = device_info.get("device", {})
-                logger.info(f"Model: {device.get('modelName', 'Unknown')}")
-                logger.info(f"Name: {device.get('name', 'Unknown')}")
-                logger.info(f"Firmware: {device.get('firmwareVersion', 'Unknown')}")
-                logger.info(f"Resolution: {device.get('resolution', 'Unknown')}")
-                logger.info(f"Power State: {device.get('PowerState', 'Unknown')}")
-                logger.info(f"OS: {device.get('OS', 'Unknown')}")
-                logger.info(f"Network Type: {device.get('networkType', 'Unknown')}")
-
-                frame_tv = device.get("FrameTVSupport", "false")
-                logger.info(f"Frame TV Support: {frame_tv}")
-
-                if frame_tv == "true":
-                    art_list = client.get_available_art()
-                    logger.info(f"Available Art: {len(art_list)} items")
-            else:
-                logger.warning("Could not retrieve device info")
-
-            if client.check_art_support():
-                logger.info("Art Mode: Supported and working")
-            else:
-                logger.warning("Art Mode: Not supported or unavailable")
-
-            return 0
-
-    except Exception as e:
-        logger.error(f"Error checking status: {e}")
-        return 1
-
-
-def list_art(_args: argparse.Namespace) -> int:
-    logger = get_logger(__name__)
-
-    try:
-        with SamsungFrameClient() as client:
-            logger.info("Retrieving available art...")
-            art_list = client.get_available_art()
-
-            if not art_list:
-                logger.info("No art available on TV")
-                return 0
-
-            logger.info(f"Available art ({len(art_list)} items):")
-            for i, art in enumerate(art_list, 1):
-                art_id = art.get("content_id", "Unknown ID")
-                logger.info(f"  {i}. ID: {art_id}")
-
-            return 0
-
-    except Exception as e:
-        logger.error(f"Error listing art: {e}")
-        return 1
-
-
-def list_mattes(_args: argparse.Namespace) -> int:
-    logger = get_logger(__name__)
-
-    try:
-        with SamsungFrameClient() as client:
-            logger.info("Retrieving available matte styles...")
-            mattes = client.get_available_mattes()
-
-            if not mattes:
-                logger.warning("No matte styles available")
-                return 0
-
-            logger.info(f"Available matte styles ({len(mattes)} options):")
-            for i, matte in enumerate(mattes, 1):
-                logger.info(f"  {i}. {matte}")
-
-            return 0
-
-    except Exception as e:
-        logger.error(f"Error listing mattes: {e}")
-        return 1
-
-
-def download_thumbnails(args: argparse.Namespace) -> int:
-    logger = get_logger(__name__)
-
-    try:
-        with SamsungFrameClient() as client:
-            user_photos_only = not args.all
-            if user_photos_only:
-                logger.info("Downloading thumbnails for user-uploaded photos only...")
-            else:
-                logger.info("Downloading thumbnails for all art on TV...")
-
-            result = client.download_thumbnails(args.output_dir, user_photos_only=user_photos_only)
-
-            logger.info(
-                f"Results: {result['downloaded']} downloaded, "
-                f"{result['failed']} failed (Total: {result['total']})"
-            )
-
-            return 0 if result["failed"] == 0 else 1
-
-    except Exception as e:
-        logger.error(f"Error downloading thumbnails: {e}")
-        return 1
-
-
-def update_mattes(args: argparse.Namespace) -> int:
-    logger = get_logger(__name__)
-
-    try:
-        with SamsungFrameClient() as client:
-            matte = args.matte
-            user_photos_only = not args.include_preinstalled
-
-            if user_photos_only:
-                logger.info(f"Updating user-uploaded art mattes to '{matte}'...")
-            else:
-                logger.info(f"Updating all art mattes to '{matte}'...")
-
-            result = client.update_all_mattes(matte, user_photos_only=user_photos_only)
-
-            logger.info(
-                f"Results: {result['updated']} updated, "
-                f"{result['skipped']} skipped, "
-                f"{result['failed']} failed (Total: {result['total']})"
-            )
-
-            return 0 if result["failed"] == 0 else 1
-
-    except Exception as e:
-        logger.error(f"Error updating mattes: {e}")
-        return 1
-
-
-def cycle_images(args: argparse.Namespace) -> int:
-    logger = get_logger(__name__)
-
-    try:
-        with SamsungFrameClient() as client:
-            user_photos_only = not args.all
-            shuffle = not args.no_shuffle
-            client.cycle_images(
-                period=args.period, user_photos_only=user_photos_only, shuffle=shuffle
-            )
-            return 0
-
-    except KeyboardInterrupt:
-        logger.info("Image cycling stopped by user")
-        return 0
-    except Exception as e:
-        logger.error(f"Error cycling images: {e}")
-        return 1
-
-
-def start_slideshow(args: argparse.Namespace) -> int:
-    logger = get_logger(__name__)
-
-    try:
-        with SamsungFrameClient() as client:
-            shuffle = not args.no_shuffle
-            if not client.start_slideshow(duration=args.duration, shuffle=shuffle):
-                logger.error("Failed to start slideshow")
-                return 1
-            problems = client.verify_slideshow(args.duration, shuffle)
-            for problem in problems:
-                logger.error(f"Slideshow not verified: {problem}")
-            if problems:
-                return 1
-            logger.info("Slideshow started and verified on the TV")
-            return 0
-
-    except Exception as e:
-        logger.error(f"Error starting slideshow: {e}")
-        return 1
-
-
-def delete_all(args: argparse.Namespace) -> int:
-    logger = get_logger(__name__)
-
-    try:
-        with SamsungFrameClient() as client:
-            result = delete_all_art(client, force=args.force)
-
-            logger.info(
-                f"Results: {result['deleted']} deleted, "
-                f"{result['failed']} failed (Total: {result['total']})"
-            )
-
-            return 0 if result["failed"] == 0 else 1
-
-    except Exception as e:
-        logger.error(f"Error deleting art: {e}")
-        return 1
-
-
-def purge_art(args: argparse.Namespace) -> int:
-    logger = get_logger(__name__)
-
-    try:
-        with SamsungFrameClient() as client:
-            art_list = client.get_available_art()
-            max_age_hours = args.days * 24
-            stale_ids = get_stale_art_ids(art_list, max_age_hours=max_age_hours)
-
-            if not stale_ids:
-                logger.info(f"No user art older than {args.days} day(s)")
-                return 0
-
-            min_images = cfg.samsung_frame.min_images
-            user_art = [a for a in art_list if a.get("content_id", "").startswith("MY_F")]
-            remaining = len(user_art) - len(stale_ids)
-            if remaining < min_images:
-                keep_count = min_images - remaining
-                stale_ids = stale_ids[keep_count:]
-                logger.info(f"Keeping {keep_count} stale images to maintain min {min_images}")
-
-            if not stale_ids:
-                logger.info("No art to purge after applying min_images safety")
-                return 0
-
-            logger.info(f"Found {len(stale_ids)} art items older than {args.days} day(s)")
-            if not args.force:
-                confirm = input(f"Delete {len(stale_ids)} items? [y/N] ")
-                if confirm.lower() != "y":
-                    logger.info("Purge cancelled")
-                    return 0
-
-            result = delete_art_by_ids(client, stale_ids)
-            logger.info(
-                f"Results: {result['deleted']} deleted, "
-                f"{result['failed']} failed (Total: {result['total']})"
-            )
-            return 0 if result["failed"] == 0 else 1
-
-    except Exception as e:
-        logger.error(f"Error purging art: {e}")
-        return 1
-
-
-def reboot_tv(_args: argparse.Namespace) -> int:
-    logger = get_logger(__name__)
-
-    try:
-        with SamsungFrameClient() as client:
-            if client._reboot_and_reconnect():
-                logger.info("TV rebooted and in art mode")
-                return 0
-            else:
-                logger.error("Failed to reboot TV into art mode")
-                return 1
-
-    except Exception as e:
-        logger.error(f"Error rebooting TV: {e}")
-        return 1
+    return run_command(args.command, args)
 
 
 if __name__ == "__main__":

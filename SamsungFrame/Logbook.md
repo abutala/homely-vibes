@@ -92,6 +92,14 @@ ln -s ~/bin/Common-configs/tokens config/tokens
 - **Dropped without a replacement:** `--start-index` and `--max-files` (a resume is just a rerun), the 24h purge inside the upload run, tracking by upload order, and the direct copy of JPG/PNG sources (ingest re-encodes every photo to a <=4K JPG, stepping quality down from 90 until the file fits `max_image_size_mb`).
 - **Removed on purpose:** nothing that decides which photos reach the TV lives in the uploader any more; ingest and dedup decide, the manifest records.
 
+### The TV's `image_date` Is Local Time (2026-10-04)
+
+Three photos uploaded at 14:58 local (21:58 UTC) came back with `image_date` `2026:10:04 14:58:23` and so on: the TV reports its own wall clock with no zone. The manual purge had been reading it as UTC, which on a UTC-7 host made every photo look seven hours older, so `purge --days 1` fired at about 17 hours. It is now compared with naive local time. The pipeline's cleanup was never affected: it only orders photos by this value.
+
+### Upload Pace and the Per-Image Health Check (2026-10-04)
+
+The upload loop used to follow every image, successful or not, with a Wake-on-LAN burst and a full art-list read. That check now runs only after a failed image; a TV that has just accepted an upload needs no proof it is in art mode. Measured on the real Frame after the change: three images in 25.6s, about 8.5s each, of which 5s is the fixed pause. The old loop also ended in a `break` inside `finally`, which discarded any exception in flight, Ctrl-C included.
+
 ### Dedup Scaling
 
 `dedup_photos.py` holds a dense n×n distance matrix and scans it once per merge, so cost grows roughly with n³. A few hundred photos take seconds; a folder of several thousand needs splitting first.

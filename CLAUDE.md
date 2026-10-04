@@ -166,7 +166,7 @@ Config merges default.yaml + local.yaml hierarchically.
 **Test Organization**:
 - Tests are co-located with source files (e.g., `Tesla/test_manage_power.py`)
 - Use pytest with asyncio support for async components
-- Test paths configured in pyproject.toml: `["Tesla", "RachioFlume", "NodeCheck", "August", "SamsungFrame"]`
+- Test paths are configured in `pyproject.toml` (`testpaths`); NodeCheck is not among them
 - **Note**: NodeCheck tests run in isolation (separate pytest invocation) due to subprocess management patterns
 
 **Running Tests**:
@@ -263,10 +263,10 @@ uv run pytest NodeCheck
 ### SamsungFrame Module (`SamsungFrame/`)
 - **Authentication**: WebSocket token-based auth, saved to `config samsung_frame.token_file`
 - **Main Features**: Image upload to Frame TV, matte/border management, slideshow control, art inventory management
-- **Initial Setup**: First upload command triggers TV pairing prompt, token auto-saved for future use
-- **Key Classes**: SamsungFrameClient, UploadResult (Pydantic), ImageUploadSummary
-- **CLI Commands**: upload, status, list-art, list-mattes, download-thumbnails, update-mattes, cycle-images
-- **Image Requirements**: JPG/PNG format, <10MB, validated before upload
+- **Initial Setup**: The first command that connects triggers the TV pairing prompt, token auto-saved for future use
+- **Key Classes**: SamsungFrameClient, TvIo (injected I/O), ImageUploadSummary
+- **CLI Commands**: `frame_run.py <folder>` runs the upload pipeline (ingest, dedup, upload, cleanup, slideshow); `manage_samsung.py` has status, list-art, list-mattes, download-thumbnails, update-mattes, cycle-images, start-slideshow, reboot, delete-all, purge
+- **Image Requirements**: the pipeline converts HEIC/JPG/PNG originals to <=4K JPGs under `max_image_size_mb`; the client validates each file before upload
 
 ### Tesla Module (`Tesla/`)
 - **Authentication**: Fleet API OAuth (previously TeslaPy — migrated in PR #178)

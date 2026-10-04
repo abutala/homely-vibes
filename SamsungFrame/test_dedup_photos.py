@@ -10,6 +10,7 @@ import pytest
 
 from SamsungFrame.dedup_photos import (
     DEFAULT_MAX_DISTANCE,
+    OVER_LIMIT,
     VisionFeatures,
     cluster,
     dedup,
@@ -139,8 +140,8 @@ class TestDedupFlow:
             utility=(utility or [False] * 4) + [False] * len(extra or []),
         )
 
-    def run(self, job: Job, features: VisionFeatures, **kwargs: float) -> list[str]:
-        return dedup(job, features_of=lambda _jpgs, _build: features, **kwargs)
+    def run(self, job: Job, features: VisionFeatures, cap: float = 0.4) -> list[str]:
+        return dedup(job, cap=cap, features_of=lambda _jpgs, _build: features)
 
     def test_keeps_best_of_each_cluster_and_records_why_the_rest_went(self, tmp_path: Path) -> None:
         job = self.job(tmp_path)
@@ -166,6 +167,16 @@ class TestDedupFlow:
         job = self.job(tmp_path)
         assert len(self.run(job, self.features(), cap=0.05)) == 4
         assert len(self.run(job, self.features(), cap=0.4)) == 3
+
+    def test_max_photos_keeps_the_best_of_each_stretch_of_the_album(self, tmp_path: Path) -> None:
+        job = self.job(tmp_path, times={"a.jpg": 0, "b.jpg": 9000, "c.jpg": 18000, "d.jpg": 27000})
+        kept = dedup(job, features_of=lambda _jpgs, _build: self.features(), max_photos=2)
+        assert kept == ["b.jpg", "c.jpg"]  # scores: a .5, b .7 | c .6, d .55
+        assert job.load().dropped == {"a.jpg": OVER_LIMIT, "d.jpg": OVER_LIMIT}
+
+    def test_max_photos_above_the_count_changes_nothing(self, tmp_path: Path) -> None:
+        job = self.job(tmp_path)
+        assert len(dedup(job, features_of=lambda _j, _b: self.features(), max_photos=10)) == 3
 
     def test_everything_utility_keeps_nothing(self, tmp_path: Path) -> None:
         job = self.job(tmp_path)

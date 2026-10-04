@@ -11,7 +11,7 @@ A Python client for managing art mode on Samsung Frame TVs. Upload images, confi
 - **Checkpointed upload**: every image is recorded the moment the TV has it, filenames are capped to 50 characters, and a rerun uploads only what is missing
 - **Safe cleanup**: deletes exactly the photos that were on the TV before the batch, never below a minimum photo count, and only once the whole batch is on the TV
 - **Verified slideshow**: reads the slideshow back from the TV (art mode, category, interval, shuffle, playlist) and fails if it is not really playing
-- **Connection Health Checks**: After 3 consecutive failures the upload tries to restore art mode, reboots the TV only if that fails (at most once per run), and stops only if that fails too
+- **Connection Health Checks**: After a failed upload the client restores art mode, reboots the TV only if that fails (at most once per run), and stops only if that fails too
 - **Matte Configuration**: Apply black borders (or other matte styles) to uploaded images
 - **Art Mode Control**: Enable art mode and start automatic slideshow
 - **TV Status**: Check connection and art mode support
@@ -93,6 +93,9 @@ uv run python -m SamsungFrame.frame_run "/Volumes/share/Trip" --no-cleanup
 uv run python -m SamsungFrame.frame_run ~/Photos/Trip --include-portraits
 uv run python -m SamsungFrame.frame_run ~/Photos/Curated --no-dedup --job /tmp/frame-jobs/curated
 uv run python -m SamsungFrame.frame_run ~/Photos/Trip --max-distance 0.3
+
+# A big album: keep the best 300, spread across the whole trip
+uv run python -m SamsungFrame.frame_run ~/Photos/Trip --max-photos 300
 ```
 
 Stages run as separate processes, in this order, and the run stops at the first one that fails. The state lives in the job dir (`/tmp/frame-jobs/<name>-<hash>/manifest.json`), so after any failure **rerun the same command** and every stage resumes. The upload stage is also retried automatically (`--upload-attempts`, default 3).
@@ -142,6 +145,7 @@ uv run python -m SamsungFrame.dedup_photos /tmp/frame-jobs/Trip-ab12cd --max-dis
 1. Apple Vision gives each photo a feature print (similarity: ~0 identical, ~0.4 near-identical, ~0.5 same scene, >0.8 unrelated), an aesthetics score and a "utility" flag; utility photos (signs, plates, receipts, screenshots) are dropped first
 2. Average-linkage clustering merges the closest pairs until none is within `--max-distance` (default 0.4); photos more than `--window` seconds apart never merge. There is no target fraction: how much is dropped depends on how many near-duplicates the folder has
 3. Per cluster, the frame with the best aesthetics score is kept (a landscape frame gets a small bonus, since the TV is landscape; sharpness only breaks ties), and the manifest records why every other photo was dropped
+4. With `--max-photos N`, the survivors are cut into N runs in capture order and the best-scored photo of each run is kept, so the selection still spans the whole album; the rest are recorded as "over the limit"
 
 The job dir lives in `/tmp` because it is scratch: if macOS clears it, the stages redo their work. The next stages (upload, cleanup, slideshow) are described above; the step-by-step routine is in [CLAUDE.md](CLAUDE.md).
 
@@ -155,10 +159,6 @@ uv run python SamsungFrame/manage_samsung.py status
 
 Example output:
 ```
-Connecting to Samsung Frame TV at 192.168.x.x...
-==================================================
-TV STATUS
-==================================================
 Model: QN55LS03FADXZA
 Name: 55" The Frame
 Firmware: Unknown
@@ -288,7 +288,7 @@ This command:
 
 - **`samsung_client.py`**: Core client class (`SamsungFrameClient`)
   - Connection management with retry logic
-  - Image validation and upload with health checking (consecutive failure detection)
+  - Image validation and upload, with art-mode recovery after a failed image
   - Art mode control
   - Slideshow management
 
@@ -310,7 +310,6 @@ This command:
 
 ### Data Models (Pydantic)
 
-- **`UploadResult`**: Single image upload result with success/error details
 - **`ImageUploadSummary`**: Batch upload summary with counts and error list
 
 ### Dependencies
