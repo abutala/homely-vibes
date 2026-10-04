@@ -1,141 +1,79 @@
 #!/usr/bin/env python3
-"""Thin a photo folder to a fraction of its size by dropping near-duplicates (macOS only).
+"""Stage 2: drop near-duplicates and reference shots from an ingested job (macOS).
 
-Pipeline: downsize everything to <=4K JPG -> Apple Vision feature prints -> time-windowed
-average-linkage clustering -> keep the sharpest frame per cluster -> copy into a new folder.
-Upload the result with batch_upload.py.
+Reads only the local JPGs and the manifest written by ingest.py. Apple Vision supplies a feature
+print per photo (similarity), an aesthetics score (which frame is best) and a utility flag
+(signs, plates, receipts). Time-windowed average-linkage clustering groups near-duplicates; the
+best-scored frame of each cluster is kept. Survivors are recorded in the manifest, with a reason
+for every photo dropped, and hard-linked into the job's `deduped/` dir.
 """
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
 import sys
-import tempfile
-from concurrent.futures import ProcessPoolExecutor
-from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import numpy.typing as npt
-import pillow_heif
-from PIL import Image, ImageOps
-from pydantic import BaseModel
 
 from lib.logger import get_logger
-
-pillow_heif.register_heif_opener()
+from SamsungFrame.frame_job import Job, PhotoRecord
 
 logger = get_logger(__name__)
 
-SWIFT_HELPER = Path(__file__).with_name("feature_prints.swift")
-IMAGE_EXTENSIONS = {".heic", ".jpg", ".jpeg", ".png"}
-MAX_BOX = (3840, 2160)
-JPEG_QUALITY = 90
-# The TV is landscape and batch_upload skips portraits by default, so a landscape frame
-# beats a portrait one of the same scene unless the portrait is twice as sharp.
-LANDSCAPE_BONUS = 2.0
-EXIF_DATETIME_ORIGINAL = 0x9003
-EXIF_DATETIME = 0x0132
-EXIF_IFD = 0x8769
+SWIFT_HELPER = Path(__file__).with_name("vision_features.swift")
+# Added to the aesthetics score (about -1..1, typically 0.4-0.75) of a landscape frame: the TV is
+# landscape, so a landscape frame beats a portrait one of the same scene unless the portrait
+# scores clearly higher.
+LANDSCAPE_BONUS = 0.15
+DEFAULT_WINDOW = 600.0
+DEFAULT_MAX_DISTANCE = 0.4  # ~0 identical, ~0.4 near-identical frames, ~0.5 same scene
 
 Matrix = npt.NDArray[np.float64]
 
 
-class Photo(BaseModel):
-    name: str  # JPG file name inside the work dir
-    time: float  # capture time, epoch seconds
-    width: int
-    height: int
-    sharpness: float
-
-    @property
-    def landscape(self) -> bool:
-        return self.width >= self.height
+@dataclass(frozen=True)
+class VisionFeatures:
+    names: list[str]
+    dist: Matrix
+    scores: list[float]
+    utility: list[bool]
 
 
-def capture_time(img: Image.Image, fallback: float) -> float:
-    exif = img.getexif()
-    raw = exif.get_ifd(EXIF_IFD).get(EXIF_DATETIME_ORIGINAL) or exif.get(EXIF_DATETIME)
-    if raw:
-        try:
-            return datetime.strptime(str(raw)[:19], "%Y:%m:%d %H:%M:%S").timestamp()
-        except ValueError:
-            pass
-    return fallback
-
-
-def sharpness(gray: Image.Image) -> float:
-    """Variance of the Laplacian on a 1024px copy; only comparable between similar frames."""
-    small = gray.copy()
-    small.thumbnail((1024, 1024))
-    a = np.asarray(small, dtype=np.float32)
-    lap = a[1:-1, 1:-1] * 4 - a[:-2, 1:-1] - a[2:, 1:-1] - a[1:-1, :-2] - a[1:-1, 2:]
-    return float(lap.var())
-
-
-def prepare_one(job: tuple[Path, Path]) -> Photo:
-    """Write an EXIF-rotated <=4K JPG of `source` to `target`; top-level so it pickles."""
-    source, target = job
-    with Image.open(source) as raw:
-        taken = capture_time(raw, source.stat().st_mtime)
-        img = ImageOps.exif_transpose(raw).convert("RGB")
-    img.thumbnail(MAX_BOX, Image.Resampling.LANCZOS)
-    img.save(target, "JPEG", quality=JPEG_QUALITY)
-    return Photo(
-        name=target.name,
-        time=taken,
-        width=img.width,
-        height=img.height,
-        sharpness=sharpness(img.convert("L")),
+def vision_features(jpg_dir: Path, build_dir: Path) -> VisionFeatures:
+    """Compile and run the Swift helper over every JPG in `jpg_dir`."""
+    helper = build_dir / "vision_features"
+    subprocess.run(["swiftc", "-O", str(SWIFT_HELPER), "-o", str(helper)], check=True)
+    out = build_dir / "vision_features.json"
+    subprocess.run([str(helper), str(jpg_dir), str(out)], check=True)
+    data = json.loads(out.read_text())
+    return VisionFeatures(
+        names=data["names"],
+        dist=np.array(data["dist"], dtype=np.float64),
+        scores=data["scores"],
+        utility=data["utility"],
     )
 
 
-def jpg_names(sources: list[Path]) -> list[str]:
-    """`IMG_1.HEIC` -> `IMG_1.jpg`; a stem shared by several files gets its extension appended."""
-    stems = [p.stem for p in sources]
-    return [
-        f"{p.stem}.jpg" if stems.count(p.stem) == 1 else f"{p.stem}_{p.suffix[1:].lower()}.jpg"
-        for p in sources
-    ]
-
-
-def find_images(src: Path) -> list[Path]:
-    return sorted(p for p in src.iterdir() if p.suffix.lower() in IMAGE_EXTENSIONS)
-
-
-def prepare(src: Path, jpg_dir: Path) -> list[Photo]:
-    sources = find_images(src)
-    jobs = [(s, jpg_dir / n) for s, n in zip(sources, jpg_names(sources))]
-    with ProcessPoolExecutor() as pool:
-        return list(pool.map(prepare_one, jobs, chunksize=4))
-
-
-def feature_distances(jpg_dir: Path, build_dir: Path) -> tuple[list[str], Matrix]:
-    """Pairwise Vision feature-print distances, rows ordered like the returned names."""
-    helper = build_dir / "feature_prints"
-    subprocess.run(["swiftc", "-O", str(SWIFT_HELPER), "-o", str(helper)], check=True)
-    out = build_dir / "distances.json"
-    subprocess.run([str(helper), str(jpg_dir), str(out)], check=True)
-    data = json.loads(out.read_text())
-    return data["names"], np.array(data["dist"], dtype=np.float64)
-
-
 def cluster(
-    dist: Matrix, times: npt.NDArray[np.float64], goal: int, window: float, cap: float
+    dist: Matrix, times: npt.NDArray[np.float64], window: float, cap: float
 ) -> list[list[int]]:
-    """Average-linkage clustering that merges closest pairs until `goal` clusters remain.
+    """Average-linkage clustering: merge the closest pair until none is within `cap`.
 
-    Photos more than `window` seconds apart never share a cluster; stops early rather than
-    merge clusters whose average distance exceeds `cap`.
+    Photos more than `window` seconds apart never share a cluster.
     """
     cost = np.where(np.abs(times[:, None] - times[None, :]) <= window, dist, np.inf)
     np.fill_diagonal(cost, np.inf)
     sizes = np.ones(len(times))
     members = [[i] for i in range(len(times))]
     live = len(members)
-    while live > goal:
+    while live > 1:
         a, b = (int(i) for i in np.unravel_index(np.argmin(cost), cost.shape))
         if cost[a, b] > cap:  # also catches inf: nothing left within the window
             break
@@ -152,87 +90,92 @@ def cluster(
     return [m for m in members if m]
 
 
-def pick_best(members: list[int], photos: list[Photo]) -> int:
-    def score(i: int) -> float:
-        return photos[i].sharpness * (LANDSCAPE_BONUS if photos[i].landscape else 1.0)
+def pick_best(members: list[int], scores: list[float], photos: list[PhotoRecord]) -> int:
+    """Highest aesthetics score (plus the landscape bonus); sharpness only breaks ties."""
 
-    return max(members, key=score)
+    def key(i: int) -> tuple[float, float]:
+        return scores[i] + (LANDSCAPE_BONUS if photos[i].landscape else 0.0), photos[i].sharpness
+
+    return max(members, key=key)
+
+
+def link_kept(job: Job, kept: list[str]) -> None:
+    """Rebuild `deduped/` from the kept names; hard links, so no extra disk."""
+    shutil.rmtree(job.deduped_dir, ignore_errors=True)
+    job.deduped_dir.mkdir(parents=True)
+    for name in kept:
+        try:
+            os.link(job.jpg_dir / name, job.deduped_dir / name)
+        except OSError:
+            shutil.copy2(job.jpg_dir / name, job.deduped_dir / name)
 
 
 def dedup(
-    src: Path, out: Path, keep_fraction: float, window: float, cap: float, work: Path
+    job: Job,
+    window: float = DEFAULT_WINDOW,
+    cap: float = DEFAULT_MAX_DISTANCE,
+    features_of: Callable[[Path, Path], VisionFeatures] = vision_features,
 ) -> list[str]:
-    """Copy the best photo of each cluster from `src` (as <=4K JPG) into `out`."""
-    jpgs = work / "jpgs"
-    shutil.rmtree(jpgs, ignore_errors=True)
-    jpgs.mkdir(parents=True)
-    prepared = prepare(src, jpgs)
-    logger.info(f"Prepared {len(prepared)} images; computing Vision feature prints...")
-    names, dist = feature_distances(jpgs, work)
-    by_name = {p.name: p for p in prepared}
-    photos = [by_name[n] for n in names]
-    times = np.array([p.time for p in photos])
-    goal = max(1, round(len(photos) * keep_fraction))
-    groups = cluster(dist, times, goal, window, cap)
-    kept = sorted(photos[pick_best(g, photos)].name for g in groups)
-    out.mkdir(parents=True, exist_ok=True)
-    for name in kept:
-        shutil.copy2(jpgs / name, out / name)
-    return kept
-
-
-def default_out_dir(src: Path) -> Path:
-    return src.with_name(f"{src.name} - dedup")
+    manifest = job.load()
+    if not manifest.photos:
+        raise ValueError(f"Nothing ingested in {job.root}; run ingest.py first")
+    features = features_of(job.jpg_dir, job.root)
+    rows = [i for i, name in enumerate(features.names) if name in manifest.photos]
+    dropped = {features.names[i]: "utility" for i in rows if features.utility[i]}
+    rows = [i for i in rows if not features.utility[i]]
+    photos = [manifest.photos[features.names[i]] for i in rows]
+    scores = [features.scores[i] for i in rows]
+    groups = cluster(
+        features.dist[np.ix_(rows, rows)], np.array([p.time for p in photos]), window, cap
+    )
+    kept = []
+    for group in groups:
+        best = pick_best(group, scores, photos)
+        kept.append(photos[best].name)
+        for i in group:
+            if i != best:
+                dropped[photos[i].name] = f"duplicate of {photos[best].name}"
+    manifest.kept = sorted(kept)
+    manifest.dropped = dropped
+    job.save(manifest)
+    link_kept(job, manifest.kept)
+    return manifest.kept
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("source_dir", type=Path, help="Folder of photos (HEIC/JPG/PNG, top level)")
-    parser.add_argument("--out", type=Path, help="Output folder (default: '<source> - dedup')")
-    parser.add_argument(
-        "--keep", type=float, default=0.5, help="Fraction to keep, 0-1 (default: %(default)s)"
-    )
+    parser.add_argument("job_dir", type=Path, help="Job dir produced by ingest.py")
     parser.add_argument(
         "--window",
         type=float,
-        default=600,
+        default=DEFAULT_WINDOW,
         help="Only photos taken within this many seconds can be duplicates (default: %(default)s)",
     )
     parser.add_argument(
         "--max-distance",
         type=float,
-        default=0.85,
-        help="Never merge clusters farther apart than this, even if --keep is not reached "
-        "(default: %(default)s; ~0.5 same scene, >0.8 unrelated)",
+        default=DEFAULT_MAX_DISTANCE,
+        help="Frames closer than this are duplicates; raise to drop more, lower to keep more "
+        "(default: %(default)s; ~0.5 is the same scene, >0.8 unrelated)",
     )
-    parser.add_argument("--work-dir", type=Path, help="Keep the 4K JPG cache here (default: temp)")
     args = parser.parse_args()
 
     if platform.system() != "Darwin" or shutil.which("swiftc") is None:
         logger.error("Needs macOS with swiftc (Xcode command line tools) for Vision")
         return 1
-    if not args.source_dir.is_dir():
-        logger.error(f"Source directory not found: {args.source_dir}")
+    job = Job(args.job_dir)
+    try:
+        kept = dedup(job, args.window, args.max_distance)
+    except ValueError as e:
+        logger.error(str(e))
         return 1
-    if not find_images(args.source_dir):
-        logger.error(f"No HEIC/JPG/PNG images in {args.source_dir} (top level only)")
-        return 1
-    if not 0 < args.keep <= 1:
-        logger.error("--keep must be in (0, 1]")
-        return 1
-    out = args.out or default_out_dir(args.source_dir)
-    if out.exists() and any(out.iterdir()):
-        logger.error(f"Output folder is not empty: {out}")
-        return 1
-
-    with tempfile.TemporaryDirectory() as tmp:
-        work = args.work_dir or Path(tmp)
-        work.mkdir(parents=True, exist_ok=True)
-        kept = dedup(args.source_dir, out, args.keep, args.window, args.max_distance, work)
-
-    logger.info(f"Kept {len(kept)} photos in {out}")
-    logger.info(f'Upload: python -m SamsungFrame.batch_upload "{out}"')
-    return 0
+    dropped = job.load().dropped
+    utility = sum(1 for reason in dropped.values() if reason == "utility")
+    logger.info(
+        f"Kept {len(kept)} photos in {job.deduped_dir}; dropped "
+        f"{len(dropped) - utility} duplicates and {utility} utility shots"
+    )
+    return 0 if kept else 1
 
 
 if __name__ == "__main__":
