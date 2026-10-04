@@ -15,7 +15,7 @@ import platform
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -23,7 +23,7 @@ import numpy as np
 import numpy.typing as npt
 
 from lib.logger import get_logger
-from SamsungFrame.frame_job import Job, PhotoRecord
+from SamsungFrame.frame_job import Job, PhotoRecord, drop_kind, reason_counts
 
 logger = get_logger(__name__)
 
@@ -34,6 +34,7 @@ SWIFT_HELPER = Path(__file__).with_name("vision_features.swift")
 LANDSCAPE_BONUS = 0.15
 DEFAULT_WINDOW = 600.0
 DEFAULT_MAX_DISTANCE = 0.4  # ~0 identical, ~0.4 near-identical frames, ~0.5 same scene
+OVER_LIMIT = "over the limit"  # drop reason for a unique photo cut by --max-photos
 
 Matrix = npt.NDArray[np.float64]
 
@@ -44,12 +45,14 @@ class VisionFeatures:
     dist: Matrix
     scores: list[float]
     utility: list[bool]
+    labels: list[list[str]] = field(default_factory=list)  # Apple's classification, per photo
 
 
 def vision_features(jpg_dir: Path, build_dir: Path) -> VisionFeatures:
     """Compile and run the Swift helper over every JPG in `jpg_dir`."""
     helper = build_dir / "vision_features"
-    subprocess.run(["swiftc", "-O", str(SWIFT_HELPER), "-o", str(helper)], check=True)
+    if not helper.exists() or helper.stat().st_mtime < SWIFT_HELPER.stat().st_mtime:
+        subprocess.run(["swiftc", "-O", str(SWIFT_HELPER), "-o", str(helper)], check=True)
     out = build_dir / "vision_features.json"
     subprocess.run([str(helper), str(jpg_dir), str(out)], check=True)
     data = json.loads(out.read_text())
@@ -58,6 +61,7 @@ def vision_features(jpg_dir: Path, build_dir: Path) -> VisionFeatures:
         dist=np.array(data["dist"], dtype=np.float64),
         scores=data["scores"],
         utility=data["utility"],
+        labels=data.get("labels", []),
     )
 
 
@@ -90,13 +94,30 @@ def cluster(
     return [m for m in members if m]
 
 
+def rank(score: float, photo: PhotoRecord) -> tuple[float, float]:
+    """Aesthetics score (plus the landscape bonus); sharpness only breaks ties."""
+    return score + (LANDSCAPE_BONUS if photo.landscape else 0.0), photo.sharpness
+
+
 def pick_best(members: list[int], scores: list[float], photos: list[PhotoRecord]) -> int:
-    """Highest aesthetics score (plus the landscape bonus); sharpness only breaks ties."""
+    return max(members, key=lambda i: rank(scores[i], photos[i]))
 
-    def key(i: int) -> tuple[float, float]:
-        return scores[i] + (LANDSCAPE_BONUS if photos[i].landscape else 0.0), photos[i].sharpness
 
-    return max(members, key=key)
+def best_spread(
+    members: list[int], scores: list[float], photos: list[PhotoRecord], limit: int
+) -> list[int]:
+    """At most `limit` of `members`: in capture order they are cut into `limit` runs and the
+    best-ranked photo of each run is kept, so the selection still spans the whole album."""
+    if limit <= 0 or len(members) <= limit:
+        return members
+    in_order = sorted(members, key=lambda i: photos[i].time)
+    runs = np.array_split(np.array(in_order), limit)
+    return [pick_best([int(i) for i in run], scores, photos) for run in runs]
+
+
+def caption(labels: list[str]) -> str:
+    """`["mountain", "blue_sky"]` -> `Mountain blue sky`: words for a recommended file name."""
+    return " ".join(label.replace("_", " ") for label in labels).capitalize()
 
 
 def link_kept(job: Job, kept: list[str]) -> None:
@@ -115,6 +136,7 @@ def dedup(
     window: float = DEFAULT_WINDOW,
     cap: float = DEFAULT_MAX_DISTANCE,
     features_of: Callable[[Path, Path], VisionFeatures] = vision_features,
+    max_photos: int = 0,
 ) -> list[str]:
     manifest = job.load()
     if not manifest.photos:
@@ -128,14 +150,19 @@ def dedup(
     groups = cluster(
         features.dist[np.ix_(rows, rows)], np.array([p.time for p in photos]), window, cap
     )
-    kept = []
+    winners = []
     for group in groups:
         best = pick_best(group, scores, photos)
-        kept.append(photos[best].name)
+        winners.append(best)
         for i in group:
             if i != best:
                 dropped[photos[i].name] = f"duplicate of {photos[best].name}"
-    manifest.kept = sorted(kept)
+    chosen = best_spread(winners, scores, photos, max_photos)
+    for i in set(winners) - set(chosen):
+        dropped[photos[i].name] = OVER_LIMIT
+    manifest.kept = sorted(photos[i].name for i in chosen)
+    if features.labels:
+        manifest.captions = {photos[i].name: caption(features.labels[rows[i]]) for i in chosen}
     manifest.dropped = dropped
     job.save(manifest)
     link_kept(job, manifest.kept)
@@ -158,6 +185,12 @@ def main() -> int:
         help="Frames closer than this are duplicates; raise to drop more, lower to keep more "
         "(default: %(default)s; ~0.5 is the same scene, >0.8 unrelated)",
     )
+    parser.add_argument(
+        "--max-photos",
+        type=int,
+        default=0,
+        help="Keep at most this many, the best of each stretch of the album (default: no limit)",
+    )
     args = parser.parse_args()
 
     if platform.system() != "Darwin" or shutil.which("swiftc") is None:
@@ -165,16 +198,14 @@ def main() -> int:
         return 1
     job = Job(args.job_dir)
     try:
-        kept = dedup(job, args.window, args.max_distance)
+        kept = dedup(job, args.window, args.max_distance, max_photos=args.max_photos)
     except ValueError as e:
         logger.error(str(e))
         return 1
     dropped = job.load().dropped
-    utility = sum(1 for reason in dropped.values() if reason == "utility")
-    logger.info(
-        f"Kept {len(kept)} photos in {job.deduped_dir}; dropped "
-        f"{len(dropped) - utility} duplicates and {utility} utility shots"
-    )
+    counts = reason_counts(drop_kind(reason) for reason in dropped.values())
+    summary = ", ".join(f"{n} {kind}" for kind, n in sorted(counts.items())) or "nothing"
+    logger.info(f"Kept {len(kept)} photos in {job.deduped_dir}; dropped: {summary}")
     return 0 if kept else 1
 
 

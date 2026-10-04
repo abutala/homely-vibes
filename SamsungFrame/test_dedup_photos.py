@@ -10,6 +10,7 @@ import pytest
 
 from SamsungFrame.dedup_photos import (
     DEFAULT_MAX_DISTANCE,
+    OVER_LIMIT,
     VisionFeatures,
     cluster,
     dedup,
@@ -139,8 +140,8 @@ class TestDedupFlow:
             utility=(utility or [False] * 4) + [False] * len(extra or []),
         )
 
-    def run(self, job: Job, features: VisionFeatures, **kwargs: float) -> list[str]:
-        return dedup(job, features_of=lambda _jpgs, _build: features, **kwargs)
+    def run(self, job: Job, features: VisionFeatures, cap: float = 0.4) -> list[str]:
+        return dedup(job, cap=cap, features_of=lambda _jpgs, _build: features)
 
     def test_keeps_best_of_each_cluster_and_records_why_the_rest_went(self, tmp_path: Path) -> None:
         job = self.job(tmp_path)
@@ -166,6 +167,30 @@ class TestDedupFlow:
         job = self.job(tmp_path)
         assert len(self.run(job, self.features(), cap=0.05)) == 4
         assert len(self.run(job, self.features(), cap=0.4)) == 3
+
+    def test_max_photos_keeps_the_best_of_each_stretch_of_the_album(self, tmp_path: Path) -> None:
+        job = self.job(tmp_path, times={"a.jpg": 0, "b.jpg": 9000, "c.jpg": 18000, "d.jpg": 27000})
+        kept = dedup(job, features_of=lambda _jpgs, _build: self.features(), max_photos=2)
+        assert kept == ["b.jpg", "c.jpg"]  # scores: a .5, b .7 | c .6, d .55
+        assert job.load().dropped == {"a.jpg": OVER_LIMIT, "d.jpg": OVER_LIMIT}
+
+    def test_max_photos_above_the_count_changes_nothing(self, tmp_path: Path) -> None:
+        job = self.job(tmp_path)
+        assert len(dedup(job, features_of=lambda _j, _b: self.features(), max_photos=10)) == 3
+
+    def test_kept_photos_get_a_caption_from_their_labels(self, tmp_path: Path) -> None:
+        job = self.job(tmp_path)
+        features = self.features()
+        labelled = VisionFeatures(
+            names=features.names,
+            dist=features.dist,
+            scores=features.scores,
+            utility=features.utility,
+            labels=[["sky"], ["mountain", "blue_sky"], [], ["lake"]],
+        )
+        kept = self.run(job, labelled)
+        assert job.load().captions == {"b.jpg": "Mountain blue sky", "c.jpg": "", "d.jpg": "Lake"}
+        assert kept == ["b.jpg", "c.jpg", "d.jpg"]
 
     def test_everything_utility_keeps_nothing(self, tmp_path: Path) -> None:
         job = self.job(tmp_path)
@@ -198,6 +223,7 @@ class TestRealVision:
         assert features.dist[0, 1] < features.dist[0, 2]
         assert len(features.scores) == 3 and all(isinstance(s, float) for s in features.scores)
         assert len(features.utility) == 3
+        assert len(features.labels) == 3 and all(len(found) <= 3 for found in features.labels)
 
     def test_an_unreadable_jpg_is_unique_and_does_not_abort_the_run(self, tmp_path: Path) -> None:
         pattern(1).save(tmp_path / "a.jpg")

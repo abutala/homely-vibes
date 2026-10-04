@@ -2,28 +2,38 @@
 
 import json
 import os
+import random
 import signal
 import socket
 import time
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, cast
 
+import requests
 from PIL import Image
 from pydantic import BaseModel
 from samsungtvws import SamsungTVWS
+from samsungtvws.rest import SamsungTVRest
 from tenacity import retry, stop_after_attempt, wait_exponential
 from tqdm import tqdm
 
-from lib.config import get_config
+from lib.config import SamsungFrameConfig, get_config
 from lib.logger import get_logger
 from lib.secure_io import ensure_secret_perms
 
 logger = get_logger(__name__)
 
-cfg = get_config()
-
 ART_UPLOAD_TIMEOUT = 30
+CONNECT_ATTEMPTS = 3
+MIN_UPLOAD_PAUSE = 5  # seconds between uploads; grows while the TV needs a cooldown
+MAX_UPLOAD_PAUSE = 30
+MY_PICTURES_CATEGORY = "MY-C0002"
+USER_ART_PREFIX = "MY_F"  # content ids of photos a user uploaded, as opposed to Samsung art
+SHUFFLE_SLIDESHOW_TYPE = "shuffleslideshow"
+SLIDESHOW_SETTLE_SECONDS = 2
+IMAGE_DATE_FORMAT = "%Y:%m:%d %H:%M:%S"
 
 VALID_MATTE_COLORS = [
     "seafoam",
@@ -44,14 +54,22 @@ VALID_MATTE_COLORS = [
     "turqoise",
 ]
 
+ArtList = List[Dict[str, Any]]
 
-class UploadResult(BaseModel):
-    """Result of a single image upload."""
 
-    image_path: str
-    image_id: Optional[str]
-    success: bool
-    error_message: Optional[str] = None
+def _udp_socket() -> socket.socket:
+    return socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+
+@dataclass(frozen=True)
+class TvIo:
+    """Everything the client reaches outside the process; tests pass fakes instead."""
+
+    tv: Callable[..., SamsungTVWS] = SamsungTVWS
+    rest: Callable[..., SamsungTVRest] = SamsungTVRest
+    post: Callable[..., requests.Response] = requests.post
+    udp_socket: Callable[[], socket.socket] = _udp_socket
+    sleep: Callable[[float], None] = time.sleep
 
 
 class ImageUploadSummary(BaseModel):
@@ -64,12 +82,6 @@ class ImageUploadSummary(BaseModel):
     errors: List[Dict[str, str]]
 
 
-MY_PICTURES_CATEGORY = "MY-C0002"
-USER_ART_PREFIX = "MY_F"  # content ids of photos a user uploaded, as opposed to Samsung art
-SHUFFLE_SLIDESHOW_TYPE = "shuffleslideshow"
-SLIDESHOW_SETTLE_SECONDS = 2
-
-
 class SlideshowStatus(BaseModel):
     """What the TV reports it is playing."""
 
@@ -78,6 +90,14 @@ class SlideshowStatus(BaseModel):
     shuffle: bool
     current_id: str
     playlist_ids: List[str]
+
+
+def user_art(art_list: ArtList) -> ArtList:
+    return [a for a in art_list if a.get("content_id", "").startswith(USER_ART_PREFIX)]
+
+
+def user_art_ids(art_list: ArtList) -> set[str]:
+    return {a["content_id"] for a in user_art(art_list)}
 
 
 def parse_slideshow_status(raw: Dict[str, Any]) -> SlideshowStatus:
@@ -95,7 +115,7 @@ def parse_slideshow_status(raw: Dict[str, Any]) -> SlideshowStatus:
 
 def slideshow_problems(
     status: SlideshowStatus,
-    user_art_ids: set[str],
+    art_ids: set[str],
     interval_minutes: int,
     shuffle: bool,
     art_mode_on: bool,
@@ -105,7 +125,7 @@ def slideshow_problems(
     problems = []
     if not art_mode_on:
         problems.append("art mode is off")
-    if not user_art_ids:
+    if not art_ids:
         problems.append("no user-uploaded photos are on the TV")
     if status.category_id != MY_PICTURES_CATEGORY:
         problems.append(f"playing category {status.category_id!r}, expected My Pictures")
@@ -117,13 +137,22 @@ def slideshow_problems(
         problems.append(
             f"shuffle is {'on' if status.shuffle else 'off'}, expected {'on' if shuffle else 'off'}"
         )
-    if missing := user_art_ids - playlist:
+    if missing := art_ids - playlist:
         problems.append(f"playlist is missing {len(missing)} photos that are on the TV")
-    if stale := playlist - user_art_ids:
+    if stale := playlist - art_ids:
         problems.append(f"playlist holds {len(stale)} items that are not on the TV")
-    if status.current_id and status.current_id not in user_art_ids:
+    if status.current_id and status.current_id not in art_ids:
         problems.append(f"current item {status.current_id} is not a photo on the TV")
     return problems
+
+
+def validate_matte(matte: str, available_mattes: List[str]) -> None:
+    """Raise ValueError unless `matte` is `<type>` or `<type>_<color>` the TV supports."""
+    base, _, color = matte.rpartition("_") if "_" in matte else (matte, "", "")
+    if base not in available_mattes:
+        raise ValueError(f"Invalid matte type: {base}. Supported: {', '.join(available_mattes)}")
+    if color and color not in VALID_MATTE_COLORS:
+        raise ValueError(f"Invalid color: {color}. Supported: {', '.join(VALID_MATTE_COLORS)}")
 
 
 class SamsungFrameClient:
@@ -135,10 +164,14 @@ class SamsungFrameClient:
         port: Optional[int] = None,
         token_file: Optional[str] = None,
         timeout: int = 60,
+        config: Optional[SamsungFrameConfig] = None,
+        io: TvIo = TvIo(),
     ):
-        self.host = host or cfg.samsung_frame.ip
-        self.port = port or cfg.samsung_frame.port
-        self.token_file = token_file or cfg.samsung_frame.token_file
+        self.cfg = config or get_config().samsung_frame
+        self.io = io
+        self.host = host or self.cfg.ip
+        self.port = port or self.cfg.port
+        self.token_file = token_file or self.cfg.token_file
         self.timeout = timeout
 
         if not self.host:
@@ -157,22 +190,26 @@ class SamsungFrameClient:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def connect(self) -> bool:
-        max_retries = 3
-        retry_delay = 2
+    def _connected_tv(self) -> SamsungTVWS:
+        if not self.tv:
+            raise RuntimeError("Not connected to TV - call connect() first")
+        return self.tv
 
-        for attempt in range(max_retries):
+    def connect(self) -> bool:
+        retry_delay = 2
+        for attempt in range(1, CONNECT_ATTEMPTS + 1):
             try:
-                if not os.path.exists(os.path.dirname(self.token_file)):
-                    os.makedirs(os.path.dirname(self.token_file), exist_ok=True)
-                    self.logger.info(f"Created token directory: {os.path.dirname(self.token_file)}")
+                token_dir = os.path.dirname(self.token_file)
+                if not os.path.exists(token_dir):
+                    os.makedirs(token_dir, exist_ok=True)
+                    self.logger.info(f"Created token directory: {token_dir}")
 
                 if not os.path.exists(self.token_file):
                     self.logger.warning("No token file found - first-time authentication required")
                     self.logger.info("TV will display pairing prompt - accept on TV screen")
                     self.logger.info(f"Token will be saved to: {self.token_file}")
 
-                self.tv = SamsungTVWS(
+                self.tv = self.io.tv(
                     host=self.host, port=self.port, token_file=self.token_file, timeout=self.timeout
                 )
                 self.tv.open()
@@ -181,20 +218,12 @@ class SamsungFrameClient:
 
                 # SamsungTVWS owns the token write; tighten perms after.
                 ensure_secret_perms(self.token_file)
-
                 return True
-
-            except ConnectionError as e:
-                self.logger.error(f"Connection attempt {attempt + 1}/{max_retries} failed: {e}")
-                if attempt < max_retries - 1:
-                    self.logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
-                    retry_delay *= 2
             except Exception as e:
-                self.logger.error(f"Unexpected error connecting to TV: {e}")
-                if attempt < max_retries - 1:
+                self.logger.error(f"Connection attempt {attempt}/{CONNECT_ATTEMPTS} failed: {e}")
+                if attempt < CONNECT_ATTEMPTS:
                     self.logger.info(f"Retrying in {retry_delay} seconds...")
-                    time.sleep(retry_delay)
+                    self.io.sleep(retry_delay)
                     retry_delay *= 2
 
         self.logger.error(f"Failed to connect to TV at {self.host}:{self.port}")
@@ -207,31 +236,25 @@ class SamsungFrameClient:
         Hardened strategy: sends 3 rounds to both broadcast and directed IP,
         on ports 9 and 7, with optional SecureON password support.
         """
-        mac = cfg.samsung_frame.mac
+        mac = self.cfg.mac
         if not mac:
             self.logger.warning("No MAC address configured — cannot send Wake-on-LAN")
             return False
 
         try:
-            mac_bytes = bytes.fromhex(mac.replace(":", "").replace("-", ""))
-            magic = b"\xff" * 6 + mac_bytes * 16
-
-            wol_password = getattr(cfg.samsung_frame, "wol_password", None)
+            magic = b"\xff" * 6 + bytes.fromhex(mac.replace(":", "").replace("-", "")) * 16
+            wol_password = self.cfg.wol_password
             if wol_password:
-                pwd_bytes = bytes.fromhex(wol_password.replace(":", "").replace("-", ""))
-                magic += pwd_bytes
+                magic += bytes.fromhex(wol_password.replace(":", "").replace("-", ""))
 
-            targets = [("<broadcast>", 9), ("<broadcast>", 7)]
-            if self.host:
-                targets.extend([(self.host, 9), (self.host, 7)])
-
+            targets = [("<broadcast>", 9), ("<broadcast>", 7), (self.host, 9), (self.host, 7)]
             for attempt in range(3):
-                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                with self.io.udp_socket() as s:
                     s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
                     for addr, port in targets:
                         s.sendto(magic, (addr, port))
                 if attempt < 2:
-                    time.sleep(0.5)
+                    self.io.sleep(0.5)
 
             self.logger.info(
                 f"Wake-on-LAN sent to {mac} (3 rounds, {len(targets)} targets"
@@ -244,26 +267,16 @@ class SamsungFrameClient:
 
     def _smartthings_power_on(self) -> bool:
         """Power on TV via SmartThings cloud API (fallback when WoL fails)."""
-        token = getattr(cfg.samsung_frame, "smartthings_token", None)
-        device_id = getattr(cfg.samsung_frame, "smartthings_device_id", None)
+        token = self.cfg.smartthings_token
+        device_id = self.cfg.smartthings_device_id
         if not token or not device_id:
             return False
 
-        import requests
-
         try:
-            resp = requests.post(
+            resp = self.io.post(
                 f"https://api.smartthings.com/v1/devices/{device_id}/commands",
                 headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "commands": [
-                        {
-                            "component": "main",
-                            "capability": "switch",
-                            "command": "on",
-                        }
-                    ]
-                },
+                json={"commands": [{"component": "main", "capability": "switch", "command": "on"}]},
                 timeout=10,
             )
             if resp.ok:
@@ -278,10 +291,7 @@ class SamsungFrameClient:
     def _is_tv_reachable(self) -> bool:
         """Check if TV REST API is reachable (works in standby)."""
         try:
-            from samsungtvws.rest import SamsungTVRest
-
-            rest = SamsungTVRest(self.host, port=8001, timeout=3)
-            rest.rest_device_info()
+            self.io.rest(self.host, port=8001, timeout=3).rest_device_info()
             return True
         except Exception:
             return False
@@ -303,13 +313,13 @@ class SamsungFrameClient:
         # Connect failed — check if TV is reachable via REST (standby)
         if self._is_tv_reachable():
             self.logger.info("TV in standby, waiting for WebSocket...")
-            time.sleep(5)
+            self.io.sleep(5)
             if self.connect():
                 return True
 
         # TV still unreachable — only wait if a wake signal was actually sent
         if woke and self._wait_for_power(target_on=True, timeout=60, poll_interval=3):
-            time.sleep(5)
+            self.io.sleep(5)
             return self.connect()
 
         return False
@@ -326,17 +336,14 @@ class SamsungFrameClient:
             if self.ensure_art_mode():
                 return True
             self.logger.warning("Connected but art mode failed — rebooting...")
-            return self._reboot_and_reconnect()
+            return self.reboot_and_reconnect()
 
         self.logger.error("Cannot reach TV — verify power and network")
         return False
 
     def ping(self) -> bool:
         """Lightweight health check via art().supported(). Raises on failure."""
-        if not self.tv:
-            raise RuntimeError("Not connected to TV - call connect() first")
-
-        self.tv.art().supported()
+        self._connected_tv().art().supported()
         return True
 
     def check_art_support(self) -> bool:
@@ -358,31 +365,28 @@ class SamsungFrameClient:
             return None
 
         try:
-            device_info = self.tv.rest_device_info()
-            return device_info
+            return self.tv.rest_device_info()
         except Exception as e:
             self.logger.error(f"Error getting device info: {e}")
             return None
 
     def validate_image_file(self, file_path: str) -> bool:
         try:
-            cfg = get_config()
             if not os.path.exists(file_path):
                 self.logger.error(f"File not found: {file_path}")
                 return False
 
             ext = Path(file_path).suffix.lower().lstrip(".")
-            if ext not in cfg.samsung_frame.supported_formats:
+            if ext not in self.cfg.supported_formats:
                 self.logger.error(
-                    f"Unsupported format: {ext}. Supported: {cfg.samsung_frame.supported_formats}"
+                    f"Unsupported format: {ext}. Supported: {self.cfg.supported_formats}"
                 )
                 return False
 
             file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
-            if file_size_mb > cfg.samsung_frame.max_image_size_mb:
+            if file_size_mb > self.cfg.max_image_size_mb:
                 self.logger.error(
-                    f"File too large: {file_size_mb:.2f}MB > "
-                    f"{cfg.samsung_frame.max_image_size_mb}MB"
+                    f"File too large: {file_size_mb:.2f}MB > {self.cfg.max_image_size_mb}MB"
                 )
                 return False
 
@@ -400,22 +404,16 @@ class SamsungFrameClient:
             self.logger.error("Not connected to TV - call connect() first")
             return None
 
-        cfg = get_config()
-
-        matte = matte or cfg.samsung_frame.default_matte
-
+        matte = matte or self.cfg.default_matte
         if not self.validate_image_file(image_path):
             return None
 
         try:
-            with open(image_path, "rb") as f:
-                image_data = f.read()
-
+            image_data = Path(image_path).read_bytes()
             file_ext = Path(image_path).suffix.lower().lstrip(".")
             if file_ext == "jpeg":
                 file_ext = "jpg"
 
-            assert self.tv is not None
             self.logger.debug(f"Uploading {image_path} ({file_ext}) with matte '{matte}'...")
 
             def _timeout_handler(_signum: int, _frame: Any) -> None:
@@ -441,142 +439,70 @@ class SamsungFrameClient:
             self.logger.error(f"Failed to upload {image_path}: {e}")
             return None
 
+    def _recover_art_mode(self, may_reboot: bool) -> tuple[bool, bool]:
+        """After a failed upload: (TV is usable again, a reboot was spent getting there)."""
+        if self.ensure_art_mode():
+            return True, False
+        if not may_reboot:
+            return False, False
+        self.logger.warning("Lost art mode, attempting reboot recovery...")
+        return self.reboot_and_reconnect(), True
+
     def upload_images(
         self,
         image_files: List[str],
+        *,
         matte: Optional[str] = None,
-        max_consecutive_failures: int = 3,
-        prepare_fn: Optional[Callable[[str], Optional[str]]] = None,
         on_uploaded: Optional[Callable[[str, str], None]] = None,
     ) -> ImageUploadSummary:
-        """Upload a list of image file paths to the TV.
+        """Upload image files to the TV, pausing between images and recovering a TV that stalls.
 
         Args:
-            image_files: List of absolute paths to source images
+            image_files: List of absolute paths to upload-ready images
             matte: Matte style override (default from config)
-            max_consecutive_failures: Failures before recovery attempt
-            prepare_fn: Optional callback to prep each image before upload.
-                        Takes source path, returns upload-ready path (or None to skip).
             on_uploaded: Optional callback called as (source path, TV content id) the moment an
                         image is on the TV, so a caller can checkpoint it.
+
+        A failed image is checked against the TV's art list (an upload can land despite a
+        timeout), then the TV is brought back to art mode, by one reboot per run if it must be.
+        The run stops when the TV cannot be recovered. An error raised by `on_uploaded`
+        propagates: a checkpoint that cannot be written must stop the run.
         """
-        if not self.tv:
-            raise RuntimeError("Not connected to TV - call connect() first")
-
-        cfg = get_config()
-        matte = matte or cfg.samsung_frame.default_matte
-
+        self._connected_tv()
+        matte = matte or self.cfg.default_matte
         self.logger.info(f"Uploading {len(image_files)} images")
-
-        if not image_files:
-            self.logger.warning("No images to upload")
-            return ImageUploadSummary(
-                total_images=0,
-                successful_uploads=0,
-                failed_uploads=0,
-                uploaded_image_ids=[],
-                errors=[],
-            )
 
         uploaded_ids: List[str] = []
         errors: List[Dict[str, str]] = []
-        consecutive_failures = 0
+        known_ids = self._get_art_ids_on_tv() if image_files else set()
         rebooted = False
-        known_ids = self._get_art_ids_on_tv()
-        pause = 5
-        min_pause = 5
-        max_pause = 30
+        pause = MIN_UPLOAD_PAUSE
 
-        pbar = tqdm(image_files, desc="Uploading images", unit="img")
         try:
+            pbar = tqdm(image_files, desc="Uploading images", unit="img")
             for image_path in pbar:
-                pbar.set_postfix_str(os.path.basename(image_path))
-                recovered = False
-                try:
-                    upload_path = image_path
-                    if prepare_fn:
-                        prepared = prepare_fn(image_path)
-                        if prepared is None:
-                            errors.append(
-                                {"file": os.path.basename(image_path), "error": "Prep failed"}
-                            )
-                            consecutive_failures += 1
-                            continue
-                        upload_path = prepared
-                    image_id = self.upload_image(upload_path, matte=matte)
-                    if image_id:
-                        uploaded_ids.append(image_id)
-                        known_ids.add(image_id)
-                        if on_uploaded:
-                            on_uploaded(image_path, image_id)
-                        consecutive_failures = 0
-                        self.logger.debug(f"Uploaded {os.path.basename(image_path)} -> {image_id}")
-                    else:
-                        new_id = self._check_for_new_upload(known_ids)
-                        if new_id:
-                            uploaded_ids.append(new_id)
-                            known_ids.add(new_id)
-                            if on_uploaded:
-                                on_uploaded(image_path, new_id)
-                            consecutive_failures = 0
-                            self.logger.debug(
-                                f"Uploaded {os.path.basename(image_path)} (recovered from timeout)"
-                            )
-                        else:
-                            recovered = True
-                            errors.append(
-                                {
-                                    "file": os.path.basename(image_path),
-                                    "error": "Upload returned None",
-                                }
-                            )
-                            consecutive_failures += 1
-                except Exception as e:
-                    self.logger.error(f"Error uploading {image_path}: {e}")
-                    new_id = self._check_for_new_upload(known_ids)
-                    if new_id:
-                        uploaded_ids.append(new_id)
-                        known_ids.add(new_id)
-                        if on_uploaded:
-                            on_uploaded(image_path, new_id)
-                        consecutive_failures = 0
-                        self.logger.debug(
-                            f"Uploaded {os.path.basename(image_path)} (recovered from error)"
-                        )
-                    else:
-                        recovered = True
-                        errors.append({"file": os.path.basename(image_path), "error": str(e)})
-                        consecutive_failures += 1
-                finally:
-                    if recovered:
-                        pause = min(pause + 5, max_pause)
-                        self.logger.info(f"TV needs cooldown, pausing {pause}s")
-                    else:
-                        pause = max(pause - 1, min_pause)
-                    time.sleep(pause)
-                    if not self.ensure_art_mode():
-                        self.logger.warning("Lost art mode, attempting reboot recovery...")
-                        if not self._reboot_and_reconnect():
-                            self.logger.error("Cannot recover art mode — stopping uploads")
-                            break
+                name = os.path.basename(image_path)
+                pbar.set_postfix_str(name)
+                image_id = self.upload_image(image_path, matte=matte)
+                if not image_id:
+                    image_id = self._check_for_new_upload(known_ids)
+                if image_id:
+                    uploaded_ids.append(image_id)
+                    known_ids.add(image_id)
+                    if on_uploaded:
+                        on_uploaded(image_path, image_id)
+                    pause = max(pause - 1, MIN_UPLOAD_PAUSE)
+                    self.io.sleep(pause)
+                    continue
 
-                if consecutive_failures >= max_consecutive_failures:
-                    self.logger.warning(
-                        f"{consecutive_failures} consecutive failures — recovering..."
-                    )
-                    if self.ensure_art_mode():
-                        consecutive_failures = 0
-                        continue
-                    if not rebooted:
-                        self.logger.warning("Art mode recovery failed — rebooting TV...")
-                        if self._reboot_and_reconnect():
-                            rebooted = True
-                            consecutive_failures = 0
-                            continue
-                    self.logger.error(
-                        f"{consecutive_failures} consecutive failures — "
-                        f"recovery failed, stopping uploads"
-                    )
+                errors.append({"file": name, "error": "Upload did not arrive on the TV"})
+                pause = min(pause + 5, MAX_UPLOAD_PAUSE)
+                self.logger.info(f"TV needs cooldown, pausing {pause}s")
+                self.io.sleep(pause)
+                usable, spent_reboot = self._recover_art_mode(may_reboot=not rebooted)
+                rebooted = rebooted or spent_reboot
+                if not usable:
+                    self.logger.error("Cannot recover art mode — stopping uploads")
                     break
         except (KeyboardInterrupt, SystemExit):
             self.logger.warning(
@@ -590,23 +516,17 @@ class SamsungFrameClient:
             uploaded_image_ids=uploaded_ids,
             errors=errors,
         )
-
+        complete = len(uploaded_ids) + len(errors) == len(image_files)
         self.logger.info(
-            f"Upload {'interrupted' if len(uploaded_ids) + len(errors) < len(image_files) else 'complete'}"
+            f"Upload {'complete' if complete else 'stopped early'}"
             f": {summary.successful_uploads}/{summary.total_images} successful"
         )
-
         return summary
 
     def _get_art_ids_on_tv(self) -> set[str]:
-        """Get current set of user-uploaded art IDs on TV."""
+        """Current user-uploaded art ids on the TV; empty when the TV cannot be read."""
         try:
-            art_list = self.get_available_art()
-            return {
-                a.get("content_id", "")
-                for a in art_list
-                if a.get("content_id", "").startswith("MY_F")
-            }
+            return user_art_ids(self.get_available_art())
         except Exception:
             return set()
 
@@ -616,13 +536,8 @@ class SamsungFrameClient:
         Zero means it did not arrive; several means the baseline listing was unreliable, and
         guessing would record some old photo's id as this upload's.
         """
-        try:
-            new_ids = self._get_art_ids_on_tv() - known_ids
-            if len(new_ids) == 1:
-                return next(iter(new_ids))
-        except Exception:
-            pass
-        return None
+        new_ids = self._get_art_ids_on_tv() - known_ids
+        return next(iter(new_ids)) if len(new_ids) == 1 else None
 
     def ensure_art_mode(self) -> bool:
         """Ensure TV is in art mode. Try art API first, power-cycle if needed.
@@ -659,7 +574,7 @@ class SamsungFrameClient:
         for attempt in range(1, 4):
             wait = 10 * attempt
             self.logger.info(f"Waiting {wait}s for art mode (attempt {attempt}/3)...")
-            time.sleep(wait)
+            self.io.sleep(wait)
             try:
                 if self._wake_and_connect():
                     self.get_available_art_strict()
@@ -675,7 +590,7 @@ class SamsungFrameClient:
         """Close and re-establish TV connection."""
         self.logger.info("Closing stale connection...")
         self.close()
-        time.sleep(2)
+        self.io.sleep(2)
         return self._wake_and_connect()
 
     def _wait_for_power(self, target_on: bool, timeout: int = 120, poll_interval: int = 3) -> bool:
@@ -683,16 +598,13 @@ class SamsungFrameClient:
 
         REST API (HTTP GET on port 8001) works without WebSocket — lightweight check.
         """
-        from samsungtvws.rest import SamsungTVRest
-
-        rest = SamsungTVRest(self.host, port=8001, timeout=5)
+        rest = self.io.rest(self.host, port=8001, timeout=5)
         state_name = "on" if target_on else "off"
         elapsed = 0
 
         while elapsed < timeout:
             try:
-                is_on = rest.rest_power_state()
-                if is_on == target_on:
+                if rest.rest_power_state() == target_on:
                     self.logger.info(f"TV power state is {state_name}")
                     return True
             except Exception:
@@ -700,13 +612,13 @@ class SamsungFrameClient:
                     # Connection refused = TV is off
                     self.logger.info("TV is off (REST unreachable)")
                     return True
-            time.sleep(poll_interval)
+            self.io.sleep(poll_interval)
             elapsed += poll_interval
 
         self.logger.warning(f"Timed out waiting for TV to be {state_name}")
         return False
 
-    def _reboot_and_reconnect(self, max_attempts: int = 3) -> bool:
+    def reboot_and_reconnect(self, max_attempts: int = 3) -> bool:
         """Reboot TV, poll for power cycle, reconnect into art mode."""
         if not self.reboot():
             # No WebSocket connection — try WoL to wake TV instead
@@ -732,7 +644,7 @@ class SamsungFrameClient:
                     return True
             except Exception:
                 self.close()
-            time.sleep(5)
+            self.io.sleep(5)
 
         self.logger.error("TV is up but art mode failed")
         return False
@@ -742,44 +654,37 @@ class SamsungFrameClient:
         wait=wait_exponential(multiplier=1, min=2, max=10),
         reraise=True,
     )
-    def _fetch_art_list(self) -> List[Dict[str, Any]]:
+    def _fetch_art_list(self) -> ArtList:
         """Fetch art list with retry. Raises on error."""
-        assert self.tv is not None
-        art_list = self.tv.art().available()
+        art_list = self._connected_tv().art().available()
         if isinstance(art_list, dict) and art_list.get("event") == "ms.channel.timeOut":
             raise TimeoutError("TV art list request timed out")
-        return cast(List[Dict[str, Any]], art_list)
+        return cast(ArtList, art_list)
 
-    def get_available_art_strict(self) -> List[Dict[str, Any]]:
+    def get_available_art_strict(self) -> ArtList:
         """Get available art, raising on error instead of returning []."""
-        if not self.tv:
-            raise RuntimeError("Not connected to TV - call connect() first")
-
+        self._connected_tv()
         art_list = self._fetch_art_list()
-        user_count = sum(1 for a in art_list if a.get("content_id", "").startswith("MY_F"))
-        self.logger.debug(f"Retrieved {user_count} user uploaded images from TV")
+        self.logger.debug(f"Retrieved {len(user_art(art_list))} user uploaded images from TV")
         return art_list
 
-    def get_available_art(self) -> List[Dict[str, Any]]:
-        if not self.tv:
-            raise RuntimeError("Not connected to TV - call connect() first")
-
+    def get_available_art(self) -> ArtList:
+        """Get available art; [] when the TV cannot be read (not connected still raises)."""
+        self._connected_tv()
         try:
-            art_list = self._fetch_art_list()
-            user_count = sum(1 for a in art_list if a.get("content_id", "").startswith("MY_F"))
-            self.logger.debug(f"Retrieved {user_count} user uploaded images from TV")
-            return art_list
+            return self.get_available_art_strict()
         except Exception as e:
             self.logger.error(f"Error getting available art after retries: {e}")
             return []
 
-    def get_available_mattes(self) -> List[str]:
-        if not self.tv:
-            raise RuntimeError("Not connected to TV - call connect() first")
+    def _matte_types(self) -> List[str]:
+        matte_list = self._connected_tv().art().get_matte_list()
+        return [matte_type for elem in matte_list for matte_type in elem.values()]
 
+    def get_available_mattes(self) -> List[str]:
+        self._connected_tv()
         try:
-            matte_list = self.tv.art().get_matte_list()
-            available_mattes = [matte_type for elem in matte_list for matte_type in elem.values()]
+            available_mattes = self._matte_types()
             self.logger.info(f"Retrieved {len(available_mattes)} available matte types")
             return available_mattes
         except Exception as e:
@@ -789,38 +694,13 @@ class SamsungFrameClient:
     def update_all_mattes(
         self, matte: Optional[str] = None, user_photos_only: bool = True
     ) -> Dict[str, int]:
-        if not self.tv:
-            raise RuntimeError("Not connected to TV - call connect() first")
-
-        cfg = get_config()
-        matte = matte or cfg.samsung_frame.default_matte
-
-        matte_list = self.tv.art().get_matte_list()
-        available_mattes = [matte_type for elem in matte_list for matte_type in elem.values()]
-
-        # Validate matte with optional color suffix
-        if "_" in matte:
-            base_matte, color = matte.rsplit("_", 1)
-            if base_matte not in available_mattes:
-                raise ValueError(
-                    f"Invalid base matte type: {base_matte}. "
-                    f"Supported: {', '.join(available_mattes)}"
-                )
-            if color not in VALID_MATTE_COLORS:
-                raise ValueError(
-                    f"Invalid color: {color}. Supported: {', '.join(VALID_MATTE_COLORS)}"
-                )
-        else:
-            if matte not in available_mattes:
-                raise ValueError(
-                    f"Invalid matte type: {matte}. Supported: {', '.join(available_mattes)}"
-                )
+        tv = self._connected_tv()
+        matte = matte or self.cfg.default_matte
+        validate_matte(matte, self._matte_types())
 
         art_list = self.get_available_art()
-
-        # Filter for user-uploaded art only if requested
         if user_photos_only:
-            art_list = [art for art in art_list if art.get("content_id", "").startswith("MY_F")]
+            art_list = user_art(art_list)
 
         if not art_list:
             self.logger.warning("No art found on TV to update")
@@ -848,13 +728,13 @@ class SamsungFrameClient:
                 self.logger.info(
                     f"Changing matte for {content_id} from '{current_matte}' to '{matte}'"
                 )
-                self.tv.art().change_matte(content_id, matte)
+                tv.art().change_matte(content_id, matte)
                 updated += 1
             except Exception as e:
                 self.logger.error(f"Failed to update matte for art ID {content_id}: {e}")
                 failed += 1
 
-            time.sleep(1)
+            self.io.sleep(1)
             try:
                 self.ping()
             except Exception:
@@ -862,6 +742,7 @@ class SamsungFrameClient:
                 if not self._reconnect():
                     self.logger.error("Reconnect failed — stopping matte updates")
                     break
+                tv = self._connected_tv()
 
         self.logger.info(
             f"Matte update complete: {updated} updated, {skipped} skipped, {failed} failed"
@@ -874,8 +755,7 @@ class SamsungFrameClient:
             return False
 
         try:
-            status = self.tv.art().get_artmode()
-            if status == "on":
+            if self.tv.art().get_artmode() == "on":
                 self.logger.info("Already in art mode")
                 return True
         except Exception:
@@ -918,20 +798,17 @@ class SamsungFrameClient:
                 return True
             except Exception as e:
                 # slideshow_image_changed response means it's actually working
-                err_str = str(e)
-                if "slideshow_image_changed" in err_str:
+                if "slideshow_image_changed" in str(e):
                     self.logger.info("Slideshow confirmed running (image changed event)")
                     return True
                 self.logger.warning(f"Slideshow attempt {attempt}/3 failed: {e}")
-                time.sleep(2)
+                self.io.sleep(2)
 
         self.logger.error("Failed to start slideshow after 3 attempts")
         return False
 
     def get_slideshow_status(self) -> SlideshowStatus:
-        if not self.tv:
-            raise RuntimeError("Not connected to TV - call connect() first")
-        return parse_slideshow_status(self.tv.art().get_slideshow_status())
+        return parse_slideshow_status(self._connected_tv().art().get_slideshow_status())
 
     def verify_slideshow(
         self, duration: int, shuffle: bool, settle_seconds: float = SLIDESHOW_SETTLE_SECONDS
@@ -941,17 +818,12 @@ class SamsungFrameClient:
         A TV that cannot be read back is a problem, not an exception: the caller's question is
         "is it verified", and an unreadable TV is not.
         """
-        if not self.tv:
-            raise RuntimeError("Not connected to TV - call connect() first")
-        time.sleep(settle_seconds)
+        tv = self._connected_tv()
+        self.io.sleep(settle_seconds)
         try:
             status = self.get_slideshow_status()
-            user_art_ids = {
-                art["content_id"]
-                for art in self.get_available_art_strict()
-                if art.get("content_id", "").startswith("MY_F")
-            }
-            art_mode_on = self.tv.art().get_artmode() == "on"
+            art_ids = user_art_ids(self.get_available_art_strict())
+            art_mode_on = tv.art().get_artmode() == "on"
         except Exception as e:
             return [f"could not read the slideshow back from the TV: {e}"]
         self.logger.info(
@@ -959,53 +831,35 @@ class SamsungFrameClient:
             f"{status.interval_minutes} min, {'shuffle' if status.shuffle else 'sequential'}, "
             f"current {status.current_id}"
         )
-        return slideshow_problems(status, user_art_ids, duration, shuffle, art_mode_on)
+        return slideshow_problems(status, art_ids, duration, shuffle, art_mode_on)
 
     def cycle_images(
         self, period: int = 15, user_photos_only: bool = True, shuffle: bool = True
     ) -> None:
-        """Cycle through images on TV with specified period.
+        """Show each image for `period` seconds, forever, until Ctrl+C.
 
         Args:
             period: Time in seconds between image changes (default: 15)
             user_photos_only: Only cycle through user-uploaded photos (default: True)
             shuffle: Randomize image order each cycle (default: True)
-
-        Raises:
-            RuntimeError: If not connected to TV
-            KeyboardInterrupt: When user stops the cycle
         """
-        import random
-
-        if not self.tv:
-            raise RuntimeError("Not connected to TV - call connect() first")
-
+        tv = self._connected_tv()
         art_list = self.get_available_art()
-        if not art_list:
-            self.logger.warning("No art found on TV")
-            return
-
         if user_photos_only:
-            art_list = [art for art in art_list if art.get("content_id", "").startswith("MY_F")]
-            self.logger.info(f"Cycling through {len(art_list)} user-uploaded photos")
-        else:
-            self.logger.info(f"Cycling through {len(art_list)} art items")
-
+            art_list = user_art(art_list)
         if not art_list:
             self.logger.warning("No art items to cycle through")
             return
 
         self.enable_art_mode()
         self.logger.info(
-            f"Starting image cycle with {period} second period "
-            f"({'shuffle' if shuffle else 'sequential'} mode)"
+            f"Cycling {len(art_list)} items every {period}s "
+            f"({'shuffle' if shuffle else 'sequential'} mode); press Ctrl+C to stop"
         )
-        self.logger.info("Press Ctrl+C to stop")
 
+        cycle_count = 0
         try:
-            cycle_count = 0
             while True:
-                # Shuffle list at start of each cycle if enabled
                 if shuffle:
                     random.shuffle(art_list)
 
@@ -1013,14 +867,13 @@ class SamsungFrameClient:
                     content_id = art_item.get("content_id")
                     if not content_id:
                         continue
-
                     try:
-                        self.tv.art().select_image(content_id)
+                        tv.art().select_image(content_id)
                         self.logger.info(f"Displaying: {content_id}")
-                        time.sleep(period)
                     except Exception as e:
                         self.logger.error(f"Failed to display {content_id}: {e}")
                         continue
+                    self.io.sleep(period)
 
                 cycle_count += 1
                 self.logger.info(f"Completed cycle {cycle_count}")
@@ -1029,21 +882,15 @@ class SamsungFrameClient:
             self.logger.info(f"Image cycling stopped after {cycle_count} complete cycles")
 
     def download_thumbnails(self, output_dir: str, user_photos_only: bool = True) -> Dict[str, int]:
-        if not self.tv:
-            raise RuntimeError("Not connected to TV - call connect() first")
-
-        if not os.path.isdir(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
-            self.logger.info(f"Created output directory: {output_dir}")
+        tv = self._connected_tv()
+        os.makedirs(output_dir, exist_ok=True)
 
         art_list = self.get_available_art()
+        if user_photos_only:
+            art_list = user_art(art_list)
         if not art_list:
             self.logger.warning("No art found on TV")
             return {"total": 0, "downloaded": 0, "failed": 0}
-
-        if user_photos_only:
-            art_list = [art for art in art_list if art.get("content_id", "").startswith("MY_F")]
-            self.logger.info(f"Filtering to {len(art_list)} user-uploaded photos")
 
         downloaded = 0
         failed = 0
@@ -1056,13 +903,8 @@ class SamsungFrameClient:
                 continue
 
             try:
-                self.logger.info(f"Downloading thumbnail for {content_id}...")
-                thumbnail_data = self.tv.art().get_thumbnail(content_id)
-
-                output_path = os.path.join(output_dir, f"{content_id}.jpg")
-                with open(output_path, "wb") as f:
-                    f.write(thumbnail_data)
-
+                output_path = Path(output_dir) / f"{content_id}.jpg"
+                output_path.write_bytes(tv.art().get_thumbnail(content_id))
                 self.logger.info(f"Saved thumbnail to {output_path}")
                 downloaded += 1
             except Exception as e:
@@ -1102,80 +944,19 @@ class SamsungFrameClient:
                 self.logger.warning(f"Error closing TV connection: {e}")
 
 
-def user_art(art_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [a for a in art_list if a.get("content_id", "").startswith(USER_ART_PREFIX)]
-
-
-def delete_all_art(client: SamsungFrameClient, force: bool = False) -> Dict[str, int]:
-    """Delete all user-uploaded art from TV (not pre-loaded Samsung art).
-
-    Args:
-        client: Connected SamsungFrameClient
-        force: Skip confirmation if True
-
-    Returns:
-        {'total': int, 'deleted': int, 'failed': int}
-    """
-    if not client.tv:
-        raise RuntimeError("Not connected to TV")
-
-    art_list = client.get_available_art()
-
-    # Filter for user-uploaded photos only (content_id starts with MY_F)
-    user_art = [art for art in art_list if art.get("content_id", "").startswith("MY_F")]
-    total = len(user_art)
-
-    if total == 0:
-        logger.info("No user-uploaded art found on TV")
-        return {"total": 0, "deleted": 0, "failed": 0}
-
-    # Confirmation prompt
-    if not force:
-        response = input(f"Delete {total} user-uploaded art items from TV? [y/N]: ").strip().lower()
-        if response != "y":
-            logger.info("Deletion cancelled by user")
-            return {"total": total, "deleted": 0, "failed": 0}
-
-    logger.info(f"Deleting {total} user-uploaded art items from TV...")
-
-    content_ids = [art.get("content_id") for art in user_art if art.get("content_id")]
-
-    # Try batch delete first
-    try:
-        client.tv.art().delete_list(content_ids)
-        logger.info(f"Successfully deleted {len(content_ids)} items")
-        return {"total": total, "deleted": len(content_ids), "failed": 0}
-    except Exception as e:
-        logger.warning(f"Batch delete failed: {e}. Falling back to individual deletes...")
-
-    # Fallback to individual deletes
-    deleted = 0
-    failed = 0
-
-    for content_id in content_ids:
-        try:
-            client.tv.art().delete(content_id)
-            deleted += 1
-            logger.info(f"Deleted {content_id} ({deleted}/{len(content_ids)})")
-        except Exception as e:
-            logger.error(f"Failed to delete {content_id}: {e}")
-            failed += 1
-
-    logger.info(f"Deletion complete: {deleted} deleted, {failed} failed")
-    return {"total": total, "deleted": deleted, "failed": failed}
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=1, max=5), reraise=True)
+def _delete_with_retry(delete: Callable[[Any], None], target: Any) -> None:
+    delete(target)
 
 
 def delete_art_by_ids(client: SamsungFrameClient, content_ids: List[str]) -> Dict[str, int]:
-    """Delete specific art items by content ID.
-
-    Args:
-        client: Connected SamsungFrameClient
-        content_ids: List of content IDs to delete
+    """Delete art by content id: one batch call, falling back to one call per id.
 
     Returns:
         {'total': int, 'deleted': int, 'failed': int}
     """
-    if not client.tv:
+    tv = client.tv
+    if not tv:
         raise RuntimeError("Not connected to TV")
 
     total = len(content_ids)
@@ -1183,80 +964,77 @@ def delete_art_by_ids(client: SamsungFrameClient, content_ids: List[str]) -> Dic
         return {"total": 0, "deleted": 0, "failed": 0}
 
     logger.info(f"Deleting {total} art items...")
-
-    # Try batch delete first with retry
-    @retry(
-        stop=stop_after_attempt(2),
-        wait=wait_exponential(multiplier=1, min=1, max=5),
-        reraise=True,
-    )
-    def batch_delete() -> None:
-        assert client.tv is not None
-        client.tv.art().delete_list(content_ids)
-
     try:
-        batch_delete()
+        _delete_with_retry(
+            lambda ids: tv.art().delete_list(ids), content_ids
+        )  # fresh channel per try
         logger.info(f"Successfully deleted {total} items via batch delete")
         return {"total": total, "deleted": total, "failed": 0}
     except Exception as e:
         logger.warning(f"Batch delete failed after retries: {e}. Falling back to individual...")
 
-    # Fallback to individual deletes with retry
-    deleted = 0
     failed = 0
-
     for content_id in content_ids:
-
-        @retry(
-            stop=stop_after_attempt(2),
-            wait=wait_exponential(multiplier=1, min=1, max=5),
-            reraise=True,
-        )
-        def delete_single(cid: str) -> None:
-            assert client.tv is not None
-            client.tv.art().delete(cid)
-
         try:
-            delete_single(content_id)
-            deleted += 1
-            logger.debug(f"Deleted {content_id} ({deleted}/{total})")
+            _delete_with_retry(lambda cid: tv.art().delete(cid), content_id)
         except Exception as e:
             logger.error(f"Failed to delete {content_id} after retries: {e}")
             failed += 1
 
-    logger.info(f"Individual deletion complete: {deleted} deleted, {failed} failed")
-    return {"total": total, "deleted": deleted, "failed": failed}
+    logger.info(f"Individual deletion complete: {total - failed} deleted, {failed} failed")
+    return {"total": total, "deleted": total - failed, "failed": failed}
 
 
-def get_stale_art_ids(art_list: List[Dict[str, Any]], max_age_hours: int = 24) -> List[str]:
-    """Return content IDs of user art older than max_age_hours using TV's image_date.
+def delete_all_art(
+    client: SamsungFrameClient, force: bool = False, ask: Callable[[str], str] = input
+) -> Dict[str, int]:
+    """Delete all user-uploaded art from TV (not pre-loaded Samsung art); confirms unless forced."""
+    if not client.tv:
+        raise RuntimeError("Not connected to TV")
 
-    Args:
-        art_list: Full art list from art().available()
-        max_age_hours: Max age in hours before art is considered stale
+    content_ids = sorted(user_art_ids(client.get_available_art()))
+    total = len(content_ids)
+    if total == 0:
+        logger.info("No user-uploaded art found on TV")
+        return {"total": 0, "deleted": 0, "failed": 0}
 
-    Returns:
-        List of stale content IDs
+    prompt = f"Delete {total} user-uploaded art items from TV? [y/N]: "
+    if not force and ask(prompt).strip().lower() != "y":
+        logger.info("Deletion cancelled by user")
+        return {"total": total, "deleted": 0, "failed": 0}
+
+    return delete_art_by_ids(client, content_ids)
+
+
+def _image_time(art: Dict[str, Any]) -> Optional[datetime]:
+    """The TV's upload timestamp for an art item; None when missing or unreadable.
+
+    The TV reports its own wall-clock time with no zone, so the value is naive local time.
     """
-    now = datetime.now(timezone.utc)
-    stale: List[str] = []
+    try:
+        return datetime.strptime(art.get("image_date") or "", IMAGE_DATE_FORMAT)
+    except ValueError:
+        return None
 
-    for art in art_list:
-        content_id = art.get("content_id", "")
-        if not content_id.startswith("MY_F"):
-            continue
 
-        image_date = art.get("image_date", "")
-        if not image_date:
-            stale.append(content_id)
-            continue
+def get_stale_art_ids(
+    art_list: ArtList, max_age_hours: int = 24, now: Optional[datetime] = None
+) -> List[str]:
+    """User art older than max_age_hours by the TV's image_date, oldest first.
 
-        try:
-            ts = datetime.strptime(image_date, "%Y:%m:%d %H:%M:%S").replace(tzinfo=timezone.utc)
-            age_hours = (now - ts).total_seconds() / 3600
-            if age_hours > max_age_hours:
-                stale.append(content_id)
-        except ValueError:
-            stale.append(content_id)
+    `now` is naive local time, like the TV's dates. An item with no readable date counts as
+    oldest.
+    """
+    now = now or datetime.now()
+    by_id = {a["content_id"]: a for a in user_art(art_list)}  # the TV can list a photo twice
+    dated = sorted((_image_time(a) or datetime.min, cid) for cid, a in by_id.items())
+    return [cid for ts, cid in dated if (now - ts).total_seconds() / 3600 > max_age_hours]
 
-    return stale
+
+def plan_purge(
+    art_list: ArtList, max_age_hours: int, min_images: int, now: Optional[datetime] = None
+) -> List[str]:
+    """Stale user art to delete, oldest first, keeping the TV at `min_images` user photos."""
+    stale = get_stale_art_ids(art_list, max_age_hours, now)
+    deletable = max(0, len(user_art_ids(art_list)) - min_images)
+    return stale[:deletable]

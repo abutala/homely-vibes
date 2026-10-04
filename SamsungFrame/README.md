@@ -11,7 +11,7 @@ A Python client for managing art mode on Samsung Frame TVs. Upload images, confi
 - **Checkpointed upload**: every image is recorded the moment the TV has it, filenames are capped to 50 characters, and a rerun uploads only what is missing
 - **Safe cleanup**: deletes exactly the photos that were on the TV before the batch, never below a minimum photo count, and only once the whole batch is on the TV
 - **Verified slideshow**: reads the slideshow back from the TV (art mode, category, interval, shuffle, playlist) and fails if it is not really playing
-- **Connection Health Checks**: After 3 consecutive failures the upload tries to restore art mode, reboots the TV only if that fails (at most once per run), and stops only if that fails too
+- **Connection Health Checks**: After a failed upload the client restores art mode, reboots the TV only if that fails (at most once per run), and stops only if that fails too
 - **Matte Configuration**: Apply black borders (or other matte styles) to uploaded images
 - **Art Mode Control**: Enable art mode and start automatic slideshow
 - **TV Status**: Check connection and art mode support
@@ -93,6 +93,9 @@ uv run python -m SamsungFrame.frame_run "/Volumes/share/Trip" --no-cleanup
 uv run python -m SamsungFrame.frame_run ~/Photos/Trip --include-portraits
 uv run python -m SamsungFrame.frame_run ~/Photos/Curated --no-dedup --job /tmp/frame-jobs/curated
 uv run python -m SamsungFrame.frame_run ~/Photos/Trip --max-distance 0.3
+
+# A big album: keep the best 300, spread across the whole trip
+uv run python -m SamsungFrame.frame_run ~/Photos/Trip --max-photos 300
 ```
 
 Stages run as separate processes, in this order, and the run stops at the first one that fails. The state lives in the job dir (`/tmp/frame-jobs/<name>-<hash>/manifest.json`), so after any failure **rerun the same command** and every stage resumes. The upload stage is also retried automatically (`--upload-attempts`, default 3).
@@ -142,8 +145,39 @@ uv run python -m SamsungFrame.dedup_photos /tmp/frame-jobs/Trip-ab12cd --max-dis
 1. Apple Vision gives each photo a feature print (similarity: ~0 identical, ~0.4 near-identical, ~0.5 same scene, >0.8 unrelated), an aesthetics score and a "utility" flag; utility photos (signs, plates, receipts, screenshots) are dropped first
 2. Average-linkage clustering merges the closest pairs until none is within `--max-distance` (default 0.4); photos more than `--window` seconds apart never merge. There is no target fraction: how much is dropped depends on how many near-duplicates the folder has
 3. Per cluster, the frame with the best aesthetics score is kept (a landscape frame gets a small bonus, since the TV is landscape; sharpness only breaks ties), and the manifest records why every other photo was dropped
+4. With `--max-photos N`, the survivors are cut into N runs in capture order and the best-scored photo of each run is kept, so the selection still spans the whole album; the rest are recorded as "over the limit"
 
-The job dir lives in `/tmp` because it is scratch: if macOS clears it, the stages redo their work. The next stages (upload, cleanup, slideshow) are described above; the step-by-step routine is in [CLAUDE.md](CLAUDE.md).
+The job dir lives in `/tmp` because it is scratch: if macOS clears it, the stages redo their work. The next stages (upload, cleanup, slideshow) are described above; the step-by-step routine is in [AGENTS.md](AGENTS.md).
+
+### A New Album Every Month (the album queue)
+
+`frame_album` picks the next album from a photo library laid out `<root>/<year>/<month>/<album>`, decides which of its pictures to show, and hands them to the pipeline above with cleanup on, so the TV ends up showing that album.
+
+```bash
+uv run python -m SamsungFrame.frame_album run            # this month's album
+uv run python -m SamsungFrame.frame_album run --scheduled # the same, but only on a first Monday
+uv run python -m SamsungFrame.frame_album scan            # index new albums; prints those needing a kind
+uv run python -m SamsungFrame.frame_album classify < kinds.tsv   # path<TAB>kind<TAB>region per line
+uv run python -m SamsungFrame.frame_album shuffle         # re-deal the queue
+uv run python -m SamsungFrame.frame_album table           # rewrite and print upcoming.md
+```
+
+**The queue** is `index.tsv` in `samsung_frame.albums.data_dir`: one row per album, and line order is play order. Edit it by hand to move an album up or set its `status` to `skip`. An album is eligible when it has more than `min_pictures` pictures and its kind is `park` or `city`; the two kinds alternate. A new album found by a run joins the queue; if it is eligible it is dropped at a random slot near the top. `upcoming.md` beside the index shows the next months and the pool, and is rewritten whenever a command changes or reads the queue (not by a `--scheduled` run on another Monday, nor when the library is not mounted).
+
+**Which pictures of an album are shown**, first match wins:
+
+1. **Its labelled files**, when at least `labelled_album_min` files carry a caption someone typed (`IMG_1234-Sunset.jpg`; camera and export names do not count). Those captions are the curation, so nothing else is uploaded and dedup is skipped.
+2. **The files listed in its picks CSV** (`picks_csv`, default `frame_picks.csv`, inside the album folder), if an earlier visit wrote one.
+3. **Whatever dedup keeps**: the album is ingested and deduplicated, and the picks CSV is written into the album folder with one row per kept photo: `file` and `recommended_name` (the camera name plus Apple Vision's top labels, such as `IMG_1234-People adult outdoor.HEIC`). Nothing is renamed; the CSV is a recommendation and the record that makes the next visit skip dedup.
+
+Portraits are dropped in every case. Then:
+
+- fewer than `min_on_tv` usable pictures: the album is marked `small`, never retried, and the next album in the queue is tried in the same run;
+- more than `max_on_tv`: the album is cut into equal parts in capture order and plays one part a month; alternation resumes after its last part.
+
+**Exit codes**: 0 done; 1 failed (one Pushover says why; run again: once an album is chosen for the month the rerun returns to it and to the same part); 2 the library is not mounted (one Pushover); 3 new albums need a kind (they are printed, nothing is sent; classify them and run again). A success is one terse Pushover line; the pipeline's own notification is switched off for these runs.
+
+**Config** (`samsung_frame.albums` in `config/default.yaml`; set `root`, `data_dir` and `home_region` in `config/local.yaml`): the limits above, plus `away_weight` and `recency_half_life_years`, which bias `shuffle` towards albums from outside the home region and newer ones.
 
 ### Check TV Status
 
@@ -155,10 +189,6 @@ uv run python SamsungFrame/manage_samsung.py status
 
 Example output:
 ```
-Connecting to Samsung Frame TV at 192.168.x.x...
-==================================================
-TV STATUS
-==================================================
 Model: QN55LS03FADXZA
 Name: 55" The Frame
 Firmware: Unknown
@@ -288,7 +318,7 @@ This command:
 
 - **`samsung_client.py`**: Core client class (`SamsungFrameClient`)
   - Connection management with retry logic
-  - Image validation and upload with health checking (consecutive failure detection)
+  - Image validation and upload, with art-mode recovery after a failed image
   - Art mode control
   - Slideshow management
 
@@ -310,7 +340,6 @@ This command:
 
 ### Data Models (Pydantic)
 
-- **`UploadResult`**: Single image upload result with success/error details
 - **`ImageUploadSummary`**: Batch upload summary with counts and error list
 
 ### Dependencies

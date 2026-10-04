@@ -49,6 +49,7 @@ class Manifest(BaseModel):
     skipped: dict[str, str] = Field(default_factory=dict)  # source relpath -> reason
     kept: list[str] | None = None  # JPG names that survived dedup; None until dedup has run
     dropped: dict[str, str] = Field(default_factory=dict)  # JPG name -> why dedup dropped it
+    captions: dict[str, str] = Field(default_factory=dict)  # kept JPG name -> words describing it
     snapshot: list[ArtRecord] | None = None  # the TV's user photos before the first upload
     uploaded: dict[str, str] = Field(default_factory=dict)  # JPG name -> TV content id
     failed: dict[str, str] = Field(default_factory=dict)  # JPG name -> last upload error
@@ -94,6 +95,11 @@ def reason_counts(reasons: Iterable[str]) -> dict[str, int]:
         key = reason.split(":")[0]
         counts[key] = counts.get(key, 0) + 1
     return counts
+
+
+def drop_kind(reason: str) -> str:
+    """A dedup drop reason without the photo it names ("duplicate of a.jpg" -> "duplicate")."""
+    return "duplicate" if reason.startswith("duplicate of ") else reason
 
 
 def default_job_dir(source: Path) -> Path:

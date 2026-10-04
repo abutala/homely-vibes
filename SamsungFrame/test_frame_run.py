@@ -25,6 +25,7 @@ def args(**overrides: object) -> argparse.Namespace:
         "no_dedup": False,
         "window": 600.0,
         "max_distance": 0.4,
+        "max_photos": 0,
         "upload_attempts": 3,
         "no_cleanup": False,
         "duration": 3,
@@ -62,7 +63,7 @@ class TestBuildStages:
         ]  # fmt: skip
         assert stages[1].command == [
             "py", "-m", "SamsungFrame.dedup_photos", "/tmp/j",
-            "--window", "600.0", "--max-distance", "0.4",
+            "--window", "600.0", "--max-distance", "0.4", "--max-photos", "0",
         ]  # fmt: skip
 
     def test_upload_is_the_only_stage_that_retries(self) -> None:

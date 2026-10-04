@@ -51,6 +51,7 @@ kramdown:
 # Anything that prints (other than _layouts and assets) is unexcluded.
 exclude:
 - .github/
+- agents/
 - AppleNotesBackup/
 - August/
 - AugustUnlock/
@@ -58,6 +59,7 @@ exclude:
 - BrowserAlert/
 - ClaudeUsageBar/
 - config/
+- formal/
 - GarageCheck/
 - GPXParser/
 - lib/
