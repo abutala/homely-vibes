@@ -199,3 +199,7 @@ class TestUnattributedIds:
         manifest = Manifest(snapshot=[ArtRecord(id="MY_F1")], uploaded={"a.jpg": "MY_F2"})
         art = [{"content_id": i} for i in ("MY_F1", "MY_F2", "MY_F3", "SAM-S1")]
         assert unattributed_ids(art, manifest) == ["MY_F3"]
+
+    def test_a_photo_the_tv_lists_twice_is_counted_once(self) -> None:
+        art = [{"content_id": i} for i in ("MY_F3", "MY_F3")]
+        assert unattributed_ids(art, Manifest(snapshot=[])) == ["MY_F3"]

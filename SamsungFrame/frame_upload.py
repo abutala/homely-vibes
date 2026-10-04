@@ -34,7 +34,8 @@ def unattributed_ids(art_list: list[dict[str, Any]], manifest: Manifest) -> list
     """User photos on the TV that this batch added but cannot name (a timed-out upload that
     arrived anyway): on the TV now, in neither the old catalog nor the uploaded record."""
     known = {a.id for a in manifest.snapshot or []} | set(manifest.uploaded.values())
-    return sorted(a["content_id"] for a in user_art(art_list) if a["content_id"] not in known)
+    # a set: the TV's art list can return the same photo twice
+    return sorted({a["content_id"] for a in user_art(art_list)} - known)
 
 
 def run_upload(job: Job, client: UploadClient, matte: Optional[str] = None) -> list[str]:
