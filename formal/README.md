@@ -18,7 +18,8 @@ make formal 2>&1 | tee /tmp/formal.log             # check every pinned outcome
 ```
 
 Neither is part of `make setup`, `make lint` or `make test`, so the prod host never
-installs Quint. `make formal` is not wired into CI yet.
+installs Quint. CI runs `make formal` ([formal.yml](../.github/workflows/formal.yml)) when `formal/`,
+`lib/file_lock.py`, `RingBeams/` or the Makefile change; it is not a required check.
 
 Explore one property by hand (add `--mbt` for the action sequence):
 
