@@ -105,6 +105,7 @@ This is a **modular IoT home automation system** with independent components tha
 - **Home / IoT modules**: August, NetworkCheck, NodeCheck, RachioFlume, RingBeams, RingSecurity, SamsungFrame, Tesla
 - **AI / ML modules**: BimpopAI (RAG system), GarageCheck (computer vision), VoiceNotes (local STT)
 - **Ops modules**: PersonalCalSync (Google Apps Script)
+- **Formal models**: formal (Quint specs of concurrency designs)
 - **Client / adjacent**: NoShorts (iOS app), AugustUnlock (iOS app), VSCodeSidebarNotes (VS Code / Cursor extension), BrowserAlert, GPXParser
 
 ### Key Architectural Patterns
@@ -237,8 +238,12 @@ uv run pytest NodeCheck
 - **Config**: All modules source configuration from `lib/config.py` (OmegaConf-based hierarchical YAML)
 - **Notifications**: Standardized via MyPushover, Mailer, MyTwilio classes
 - **Secret I/O**: `lib/secure_io.py` — `write_secret_atomic(path, content)` for tokens we own (0o600 from birth), `ensure_secret_perms(path)` after third-party library writes (yalexs, SamsungTVWS). **All token/credential writes must go through these.**
-- **File lock**: `lib/file_lock.py` — POSIX `fcntl.flock` context manager for cross-process serialization on shared resources (e.g. Ring token file used by RingSecurity + RingBeams).
+- **File lock**: `lib/file_lock.py` — POSIX `fcntl.flock` context manager for cross-process serialization on shared resources (e.g. Ring token file used by RingSecurity + RingBeams). Yields its fd: a child given it via `pass_fds` keeps the lock after a killed parent.
 - **TeslaPy Submodule**: External dependency managed as Git submodule
+
+### formal (`formal/`)
+- **Stack**: Quint models (Node tooling, NOT Python). `make formal-deps` then `make formal`; deliberately outside `setup`, `lint` and `test`, so the prod host never installs it.
+- **Result semantics**: `quint run` is a randomized search, so "holds" is never "proved"; `quint verify` needs JDK 17+. See [formal/Logbook.md](formal/Logbook.md) before trusting or extending a model.
 
 ### NodeCheck Module (`NodeCheck/`)
 - **Purpose**: System node monitoring with continuous heartbeat tracking and automated device management
