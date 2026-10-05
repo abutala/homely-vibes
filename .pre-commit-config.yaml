@@ -1,3 +1,7 @@
+# `pre-commit install` (make hooks) installs one hook file per type listed here.
+# A hook whose stage is missing from this list is declared but never runs.
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: local
     hooks:
@@ -20,12 +24,6 @@ repos:
         language: script
         require_serial: true
         stages: [pre-commit]
-      - id: setup
-        name: Setup
-        entry: make setup
-        language: system
-        always_run: true
-        stages: [post-merge]
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v3.6.0
     hooks:
