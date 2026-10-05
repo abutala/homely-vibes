@@ -38,7 +38,7 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 
 ## formal Module (`formal/`)
 - **Stack**: Quint models (Node tooling, NOT Python). `make formal-deps` then `make formal`; deliberately outside `setup`, `lint` and `test`, so the prod host never installs it.
-- **Result semantics**: `quint run` is a randomized search, so "holds" is never "proved"; `quint verify` needs JDK 17+. See [formal/Logbook.md](../formal/Logbook.md) before trusting or extending a model.
+- **Result semantics**: `make formal` (`quint run`) is a randomized search, so "holds" there is never "proved"; `make formal-verify` (Apalache) is exhaustive and needs JDK 21. See [formal/Logbook.md](../formal/Logbook.md) before trusting or extending a model.
 
 ## NodeCheck Module (`NodeCheck/`)
 - **Purpose**: System node monitoring with continuous heartbeat tracking and automated device management
