@@ -1,0 +1,5 @@
+{
+  "checker": {
+    "no-deadlock": true
+  }
+}

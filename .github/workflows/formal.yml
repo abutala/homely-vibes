@@ -1,26 +1,23 @@
 name: Formal
 
-# Runs the Quint model checks (make formal). Path-filtered: the model describes
-# the Ring token lock, so it only needs to run when the model or the code it
-# describes changes. Not a required check; a skipped run reports nothing.
+# Runs the Quint model checks: the randomized search (make formal), then the
+# exhaustive check of the rows that must hold (make formal-verify).
+# Path-filtered to the model and its tooling only. A model cannot see the code
+# it describes, so running it on a code change would report green for a change
+# it never read; the tests named in formal/README.md are what tie the two.
+# Not a required check; a skipped run reports nothing.
 
 on:
   push:
     branches: [ "main" ]
     paths:
       - "formal/**"
-      - "lib/file_lock.py"
-      - "RingBeams/**"
-      - "RingSecurity/**"
       - "Makefile"
       - ".github/workflows/formal.yml"
   pull_request:
     branches: [ "main" ]
     paths:
       - "formal/**"
-      - "lib/file_lock.py"
-      - "RingBeams/**"
-      - "RingSecurity/**"
       - "Makefile"
       - ".github/workflows/formal.yml"
   workflow_dispatch:
@@ -44,8 +41,17 @@ jobs:
           cache: npm
           cache-dependency-path: formal/package-lock.json
 
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
       - name: Install Quint
         run: make formal-deps
 
-      - name: Check models
+      - name: Check models (randomized search)
         run: make formal
+
+      - name: Check models (exhaustive)
+        run: make formal-verify

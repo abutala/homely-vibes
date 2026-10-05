@@ -58,6 +58,10 @@ formal: ## Check the Quint models: pinned violated/holds outcomes (run make form
 	@test -d formal/node_modules || { echo "${RED}❌ run make formal-deps first${RESET}"; exit 1; }
 	@PATH="$$HOME/.local/bin:$$PATH" formal/check.sh
 
+formal-verify: ## Exhaustive check of the "holds" rows (Apalache; needs JDK 17+)
+	@test -d formal/node_modules || { echo "${RED}❌ run make formal-deps first${RESET}"; exit 1; }
+	@PATH="$$HOME/.local/bin:$$PATH" formal/check.sh verify
+
 colima: ## Start colima if not already running
 	@echo "🐳 Checking colima status..."
 	@if brew services list | grep -q "colima.*started"; then \
@@ -189,7 +193,7 @@ validate-jobs-yaml:
 	  || (echo "${RED}❌ Please fix errors in jobs yaml${RESET}" && exit 1)
 
 .PHONY: all \
-	setup brew-deps node-deps formal-deps formal \
+	setup brew-deps node-deps formal-deps formal formal-verify \
 	test coverage coverage-lcov coverage-html \
 	lint lint-fix codespell deptry \
 	ruff mypy vulture semgrep \

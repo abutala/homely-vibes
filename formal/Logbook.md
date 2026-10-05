@@ -54,9 +54,45 @@ prints and treats anything unrecognized as `error`, which matches no expectation
 
 ### "No violation found" is not "verified"
 
-`quint run` samples. It is the committed check because it needs no JDK, and
+`quint run` samples. It needs no JDK, so it runs anywhere, and
 [check.sh](check.sh) pins both polarities to keep it honest. Say "not found in N random
-traces", never "proved", until `quint verify` has run.
+traces", never "proved", for a `make formal` result. `make formal-verify` is the
+exhaustive one and runs in CI, where JDK 17 is installed.
+
+### `quint verify` reports a deadlock for a model whose actors simply finish
+
+```
+[violation] Found an issue
+error: reached a deadlock
+```
+
+Apalache checks for deadlocks by default, and a model where every actor runs once ends
+with no action enabled. That is termination, not a bug, but it failed every "holds" row.
+[apalache.json](apalache.json) sets `checker.no-deadlock` (singular; the plural is
+rejected as an unknown key) and `check.sh verify` passes it. A model that must never get
+stuck needs its own liveness property instead of this default.
+
+### Two `quint verify` runs at once collide
+
+Apalache listens on one fixed port, so a second `make formal-verify` on the same host
+fails with `Address already in use` or a dropped connection. `check.sh` reads that as
+`error`, which fails the row; rerun once the other has finished.
+
+### A green model says nothing about a code change
+
+The switches (`childInheritsLock`, `authTakesLock`) are set by hand. Delete `pass_fds`
+from `run_sidecar` and every row still passes: only
+`test_orphaned_sidecar_keeps_token_lock_after_parent_is_killed` in
+`RingBeams/test_beams_manager.py` notices. So the workflow runs on changes to the model, not to the code it
+describes; a green `formal` check on a RingBeams change would have read nothing of it.
+
+### The inherited lock is bounded by the sidecar timeout, not by the model
+
+A hung orphaned sidecar holds the lock at most until its watchdog fires at
+`ring_beams.sidecar_timeout_seconds`, and `acquire_lock` waits 60 s by default. The
+shipped default keeps the first below the second, so a waiting RingSecurity outlasts
+the orphan. Raise the sidecar timeout past the acquire timeout and a hung orphan can
+become a `LockTimeoutError` page instead. Nothing checks this ordering.
 
 ### Scope the model leaves out, deliberately
 

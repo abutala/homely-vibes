@@ -52,3 +52,7 @@ node_modules/
 
 # Editor
 .vscode/
+
+# Tool output: Hypothesis example database, Apalache run directories
+.hypothesis/
+formal/_apalache-out/
