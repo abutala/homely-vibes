@@ -23,7 +23,7 @@ When you fix a non-obvious bug, add the entry to `Logbook.md` in the same
 commit as the fix. `Tesla/Logbook.md` is the reference for tone and structure.
 
 ## Secrets on disk
-- **Never `open(path, "w")` for a secret**, and never `write_text()` + `chmod`. Both leave a TOCTOU window at 0o644 under a 0o022 umask. Use `lib.secure_io.write_secret_atomic()` — it opens with `O_CREAT|O_TRUNC|0o600` so the file is world-unreadable from birth.
+- **Never `open(path, "w")` for a secret**, and never `write_text()` + `chmod`. Both leave a TOCTOU window at 0o644 under a 0o022 umask. Use `lib.secure_io.write_secret_atomic()` — it writes a `0o600` temp file and renames it over the target, so the file is world-unreadable from birth and a crash mid-write leaves the previous file intact.
 - If a **third-party library** writes the token (yalexs, SamsungTVWS, ring-client-api Node), immediately call `ensure_secret_perms(path)` after the call returns.
 - Config files themselves live in `config/local.yaml` (gitignored). Tokens live under `config/tokens/` (symlinked to `~/bin/Common-configs/tokens/`, also gitignored on the code side).
 

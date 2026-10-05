@@ -19,7 +19,7 @@ from lib.config import get_config
 from lib.logger import get_logger
 from lib.MyPushover import Pushover
 from lib.notifications import Notifier
-from lib.secure_io import ensure_secret_perms
+from lib.secure_io import ensure_secret_perms, write_secret_atomic
 
 # August revoked the API key yalexs ships for Brand.AUGUST (d9984f29...): the
 # session/password-auth endpoint returns 403 {"code":"Forbidden","message":
@@ -359,6 +359,8 @@ class AugustMonitor:
         try:
             with open(self.state_file, "r") as f:
                 state = json.load(f)
+                if not isinstance(state, dict):
+                    raise ValueError("not a JSON object")
                 self.unlock_start_times = state.get("unlock_start_times", {})
                 self.ajar_start_times = state.get("ajar_start_times", {})
                 self.last_unlock_alerts = state.get("last_unlock_alerts", {})
@@ -367,8 +369,13 @@ class AugustMonitor:
                 self.last_lock_failure_alerts = state.get("last_lock_failure_alerts", {})
                 self.unknown_status_start_times = state.get("unknown_status_start_times", {})
             self.logger.debug("Loaded monitor state from file")
-        except (FileNotFoundError, json.JSONDecodeError):
+        except FileNotFoundError:
             self.logger.debug("No existing state file found, starting fresh")
+        except ValueError as e:
+            self.logger.warning(
+                f"State file {self.state_file} is corrupt ({e}); "
+                "starting fresh, unlock and ajar timers restart"
+            )
 
     def _save_state(self) -> None:
         try:
@@ -381,8 +388,7 @@ class AugustMonitor:
                 "last_lock_failure_alerts": self.last_lock_failure_alerts,
                 "unknown_status_start_times": self.unknown_status_start_times,
             }
-            with open(self.state_file, "w") as f:
-                json.dump(state, f)
+            write_secret_atomic(self.state_file, state)
             self.logger.debug("Saved monitor state to file")
         except Exception as e:
             self.logger.error(f"Error saving state: {e}")
