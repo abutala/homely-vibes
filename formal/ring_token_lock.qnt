@@ -129,11 +129,22 @@ module ring_token_lock {
     st' = { ...st, au: AuDone, fileGen: st.auTok, holders: drop(st, "au") },
   }
 
+  // Every actor has run to completion (or died). Quint's `verify` reports
+  // "no enabled action" as a deadlock, so the finished state idles explicitly:
+  // a state that is stuck BEFORE this point is still reported as a deadlock.
+  val terminal: bool =
+    (st.rs == RsDone or st.rs == RsFailed) and
+    (st.bp == BpDone or st.bp == BpDead) and
+    (st.sc == ScNone or st.sc == ScDone or st.sc == ScFailed) and
+    st.au == AuDone
+  action idle = all { terminal, st' = st }
+
   action step = any {
     rsAcquire, rsRead, rsRefresh, rsWrite,
     bpAcquire, bpSpawn, bpReap, bpKill,
     scRead, scRefresh, scWrite,
     auLogin, auWrite,
+    idle,
   }
 
   // ---- Properties ----

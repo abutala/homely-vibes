@@ -58,9 +58,9 @@ formal: ## Check the Quint models: pinned violated/holds outcomes (run make form
 	@test -d formal/node_modules || { echo "${RED}❌ run make formal-deps first${RESET}"; exit 1; }
 	@PATH="$$HOME/.local/bin:$$PATH" formal/check.sh
 
-formal-verify: ## Exhaustive check of the "holds" rows (Apalache; needs JDK 17+)
+formal-verify: ## Prove the Quint models exhaustively with Apalache (needs JDK 21; run make formal-deps first)
 	@test -d formal/node_modules || { echo "${RED}❌ run make formal-deps first${RESET}"; exit 1; }
-	@PATH="$$HOME/.local/bin:$$PATH" formal/check.sh verify
+	@PATH="$$HOME/.local/bin:$$PATH" formal/verify.sh
 
 colima: ## Start colima if not already running
 	@echo "🐳 Checking colima status..."
