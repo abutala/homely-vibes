@@ -51,7 +51,7 @@ Priority convention (`P{N}` = Pushover `priority=N`): **P-1** silent, **P0** nor
 from lib.Mailer import sendmail
 sendmail("topic", alert=True, message="<html>...</html>")
 ```
-Sends via `smtp.gmail.com:465` (SSL) using `cfg.email.*`. HTML detected by `<html>` prefix; otherwise plain UTF-8. Honors an `always_email` flag and a per-call `alert` boolean (no-op when neither is set).
+Sends via `smtp.gmail.com:465` (SSL) using `cfg.email.*`. HTML detected by `<html>` anywhere in the message; otherwise plain UTF-8. Honors an `always_email` flag and a per-call `alert` boolean (no-op when neither is set).
 
 ### `MyTwilio.py` — SMS via Twilio
 ```python
@@ -67,7 +67,7 @@ Uses `cfg.twilio.*`. Logs the message SID on success.
 - `http_req(cmd) -> str`, `no_stdout()` context manager, `redirect_to_file(text)`.
 
 ### `secure_io.py` — atomic 0o600 secret writes
-**Never** `open(path, "w")` / `write_text()` + `chmod` for a secret — both leave a TOCTOU window at 0o644 under a 0o022 umask.
+**Never** `open(path, "w")` / `write_text()` + `chmod` for a secret — both leave a TOCTOU window at 0o644 under a 0o022 umask, and `open(path, "w")` truncates first, so a crash mid-write leaves a torn file. `write_secret_atomic` writes a temp file and renames it over the target.
 
 ```python
 from lib.secure_io import write_secret_atomic, ensure_secret_perms

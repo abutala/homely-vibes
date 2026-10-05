@@ -56,8 +56,8 @@ def test_write_atomic_no_toctou_window(tmp_path: Path) -> None:
     """Under 0o022 umask, verify file never exists at 0644.
 
     Set a permissive umask, then invoke the helper. The final mode must still
-    be 0600, and (empirically) the file's create-time mode is 0600 — the
-    atomic open with an explicit mode overrides umask entirely.
+    be 0600: the temp file is created 0600 whatever the umask, and the
+    rename carries that mode onto the final path.
     """
     p = tmp_path / "s.json"
     old = os.umask(0o022)
@@ -93,3 +93,45 @@ def test_write_rejects_invalid_type(tmp_path: Path) -> None:
     p = tmp_path / "s.json"
     with pytest.raises(TypeError):
         write_secret_atomic(p, 42)  # type: ignore[arg-type]
+
+
+def test_write_replaces_rather_than_truncates(tmp_path: Path) -> None:
+    """A write must never expose a partial file.
+
+    A reader that opened the file before the write stands in for a crash
+    mid-write: an in-place truncate shows it the new bytes (or none), while
+    a rename leaves the old inode whole.
+    """
+    p = tmp_path / "s.json"
+    p.write_text("old-token")
+    with open(p) as reader:
+        write_secret_atomic(p, "new-token")
+        assert reader.read() == "old-token"
+    assert p.read_text() == "new-token"
+
+
+def test_write_leaves_no_temp_file(tmp_path: Path) -> None:
+    p = tmp_path / "s.json"
+    write_secret_atomic(p, {"k": "v"})
+    write_secret_atomic(p, {"k": "w"})
+    assert [f.name for f in tmp_path.iterdir()] == ["s.json"]
+
+
+def test_write_through_symlink_keeps_the_link(tmp_path: Path) -> None:
+    target = tmp_path / "real" / "s.json"
+    target.parent.mkdir()
+    target.write_text("old")
+    link = tmp_path / "s.json"
+    link.symlink_to(target)
+    write_secret_atomic(link, "new")
+    assert link.is_symlink()
+    assert target.read_text() == "new"
+    assert _mode(target) == 0o600
+
+
+def test_failed_write_leaves_no_temp_file(tmp_path: Path) -> None:
+    target = tmp_path / "s.json"
+    target.mkdir()
+    with pytest.raises(OSError):
+        write_secret_atomic(target, "new")
+    assert [f.name for f in tmp_path.iterdir()] == ["s.json"]

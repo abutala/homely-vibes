@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Tests for August smart lock client module."""
 
+import json
+import logging
+
 import pytest
 from pathlib import Path
 from typing import Generator
@@ -310,6 +313,58 @@ class TestAugustMonitor:
         assert monitor.ajar_start_times == {"lock2": 1234567900.0}
         assert monitor.last_unlock_alerts == {"lock1": 1234567800.0}
         assert monitor.last_ajar_alerts == {"lock2": 1234567850.0}
+
+    def test_failed_save_keeps_previous_state(self, monitor: AugustMonitor) -> None:
+        """A save that fails must leave the last good state file intact.
+
+        An unserializable value is the failure. The rename that keeps a crash
+        mid-write from tearing the file is pinned in lib/test_secure_io.py.
+        """
+        monitor.unlock_start_times = {"Lock A": 1234567890.0}
+        monitor._save_state()
+        good = Path(monitor.state_file).read_text()
+
+        monitor.unlock_start_times = {"Lock A": {1.0}}  # type: ignore[dict-item]
+        monitor._save_state()
+
+        assert Path(monitor.state_file).read_text() == good
+        assert json.loads(good)["unlock_start_times"] == {"Lock A": 1234567890.0}
+
+    @pytest.mark.parametrize(
+        "content", [b'{"unlock_start_times": {"Lock A": ', b"", b"[]", b"\xff"]
+    )
+    def test_corrupt_state_file_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, content: bytes
+    ) -> None:
+        """An unreadable state file resets every timer, so it must not pass as a first run."""
+        state_file = tmp_path / "state.json"
+        state_file.write_bytes(content)
+        with caplog.at_level(logging.WARNING):
+            monitor = AugustMonitor(
+                "test@example.com",
+                "password123",
+                client=MagicMock(spec=AugustClient),
+                pushover=MagicMock(spec=Pushover),
+                state_file=str(state_file),
+            )
+        assert monitor.unlock_start_times == {}
+        assert any(
+            r.levelno == logging.WARNING and str(state_file) in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_missing_state_file_is_quiet(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING):
+            AugustMonitor(
+                "test@example.com",
+                "password123",
+                client=MagicMock(spec=AugustClient),
+                pushover=MagicMock(spec=Pushover),
+                state_file=str(tmp_path / "absent.json"),
+            )
+        assert not caplog.records
 
     @pytest.mark.asyncio
     async def test_process_lock_status_locked(self, monitor: AugustMonitor) -> None:

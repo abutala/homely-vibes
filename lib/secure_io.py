@@ -1,9 +1,10 @@
-"""Atomic 0o600 file writes for secret material (OAuth tokens, refresh tokens, keys).
+"""Atomic 0o600 file writes for secret material and state (OAuth tokens, monitor state).
 
 Two entry points cover the two patterns in this repo:
 
 - ``write_secret_atomic(path, content)`` — we own the write: create the file with
-  ``0o600`` from birth (no TOCTOU window under a 0o022 umask).
+  ``0o600`` from birth (no TOCTOU window under a 0o022 umask) and swap it in
+  with a rename, so a crash mid-write leaves the previous file, never a torn one.
 - ``ensure_secret_perms(path)`` — a third-party library owns the write (e.g. yalexs
   writing the August token cache, SamsungTVWS writing the pairing token). Call
   this immediately after the library returns to tighten perms.
@@ -14,8 +15,10 @@ end at 0o600.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Union
 
@@ -37,24 +40,30 @@ def _to_bytes(content: _SecretContent) -> bytes:
 def write_secret_atomic(path: Union[str, Path], content: _SecretContent) -> None:
     """Write ``content`` to ``path`` with mode ``0o600``, atomically.
 
-    Uses ``os.open(..., O_WRONLY|O_CREAT|O_TRUNC, 0o600)`` so the file is
-    world-unreadable from creation — there is no window in which a peer
-    process could read it via a wider default umask.
+    The bytes go to a temp file in the same directory (``mkstemp`` creates it
+    ``0o600`` whatever the umask), are fsynced, then renamed over ``path``.
+    A reader or a crash sees the old file or the new one, never a partial
+    write, and the new content is never readable at a wider mode.
 
     ``content`` may be ``str``, ``bytes``, or ``dict`` (serialized as JSON).
 
-    If the file already existed with looser perms, ``os.open`` preserves the
-    existing mode; a final ``chmod`` normalizes those cases.
+    A symlinked ``path`` is resolved first, so the link survives and its
+    target is what gets replaced.
     """
-    p = Path(path)
+    p = Path(os.path.realpath(path))
     p.parent.mkdir(parents=True, exist_ok=True)
     payload = _to_bytes(content)
-    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    fd, tmp = tempfile.mkstemp(dir=p.parent, prefix=f".{p.name}.", suffix=".tmp")
     try:
-        os.write(fd, payload)
-    finally:
-        os.close(fd)
-    os.chmod(p, 0o600)
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, p)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def ensure_secret_perms(path: Union[str, Path]) -> None:
