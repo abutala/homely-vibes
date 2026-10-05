@@ -1,8 +1,9 @@
 name: Formal
 
-# Runs the Quint model checks (make formal). Path-filtered: the model describes
-# the Ring token lock, so it only needs to run when the model or the code it
-# describes changes. Not a required check; a skipped run reports nothing.
+# Runs the Quint model checks (make formal) and the exhaustive proofs
+# (make formal-verify). Path-filtered: the model describes the Ring token lock,
+# so it only needs to run when the model or the code it describes changes. Not a
+# required check; a skipped run reports nothing.
 
 on:
   push:
@@ -44,8 +45,23 @@ jobs:
           cache: npm
           cache-dependency-path: formal/package-lock.json
 
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Cache Quint downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.quint
+          key: quint-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('formal/package-lock.json') }}
+
       - name: Install Quint
         run: make formal-deps
 
       - name: Check models
         run: make formal
+
+      - name: Prove models
+        run: make formal-verify

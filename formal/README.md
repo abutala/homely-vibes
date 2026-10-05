@@ -14,11 +14,15 @@ the implementation is in. Gotchas and findings: [Logbook.md](Logbook.md).
 
 ```bash
 make formal-deps 2>&1 | tee /tmp/formal_deps.log   # pinned Quint; needs npm
-make formal 2>&1 | tee /tmp/formal.log             # check every pinned outcome
+make formal 2>&1 | tee /tmp/formal.log             # randomized search over every pinned outcome
+make formal-verify 2>&1 | tee /tmp/formal_verify.log  # exhaustive proof of the same outcomes
 ```
 
-Neither is part of `make setup`, `make lint` or `make test`, so the prod host never
-installs Quint. CI runs `make formal` ([formal.yml](../.github/workflows/formal.yml)) when `formal/`,
+`formal-verify` needs JDK 21 (macOS: `brew install openjdk@21`, which is keg-only and
+leaves your default `java` alone; the script finds it, or honours `JAVA_HOME`).
+
+None of these is part of `make setup`, `make lint` or `make test`, so the prod host never
+installs Quint. CI runs both ([formal.yml](../.github/workflows/formal.yml)) when `formal/`,
 `lib/file_lock.py`, `RingBeams/` or the Makefile change; it is not a required check.
 
 Explore one property by hand (add `--mbt` for the action sequence):
@@ -30,11 +34,18 @@ cd formal && npx quint run ring_token_lock.qnt --main=current \
 
 ## What a result means
 
-`quint run` is a randomized search. **A violation is a real counterexample; "holds" is
-only "not found", never a proof.** [check.sh](check.sh) pins the expected outcome of every
-(instance, property) pair, so both a regression and a model that stops reproducing its
-bug fail. For an exhaustive proof use `quint verify` (Apalache), which needs JDK 17 or
-newer; see the Logbook for the error JDK 11 gives.
+The expected outcome of every (instance, property) pair lives in [outcomes.txt](outcomes.txt),
+so both a regression and a model that stops reproducing its bug fail.
+
+| Check | Engine | "violated" means | "holds" means |
+|---|---|---|---|
+| `make formal` ([check.sh](check.sh)) | `quint run`, randomized | a real counterexample | only "not found": never a proof |
+| `make formal-verify` ([verify.sh](verify.sh)) | `quint verify`, Apalache | a counterexample the solver built | a proof over every execution of the model |
+
+A proof is about the **model**: it holds only under the model's assumptions (A1 in
+[ring_token_lock.qnt](ring_token_lock.qnt)) and says nothing about whether the code matches
+it. `verify.sh` documents why its step bound covers every run; raise it when you add an
+action or an actor.
 
 ## Linking a model to code
 

@@ -1,0 +1,19 @@
+# Expected outcome of every (instance, property) pair in ring_token_lock.qnt.
+# Read by check.sh (randomized search) and verify.sh (exhaustive, Apalache).
+# instance      property                expected
+
+# Sidecar orphaned by a killed parent. `current` must violate: it models a
+# sidecar that does not inherit the lock.
+current         lockedWritersExclusive  violated
+orphanFixed     lockedWritersExclusive  holds
+allFixed        lockedWritersExclusive  holds
+
+# The whole token-writer set, including the unlocked `auth` login.
+current         mutualExclusion         violated
+orphanFixed     mutualExclusion         violated
+allFixed        mutualExclusion         holds
+
+# The page: someone presented a rotated-away refresh token (assumption A1).
+current         noInvalidGrant          violated
+orphanFixed     noInvalidGrant          violated
+allFixed        noInvalidGrant          holds

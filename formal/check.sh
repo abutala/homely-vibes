@@ -1,8 +1,9 @@
 #!/bin/sh
-# Pins what Quint's randomized simulator must (not) find in ring_token_lock.qnt.
-# A flipped result in either direction fails: a "holds" row that now violates is
-# a regression; a "violated" row that now holds means the model stopped
-# reproducing the bug it documents. This is search, not proof: see README.md.
+# Pins what Quint's randomized simulator must (not) find in ring_token_lock.qnt,
+# row by row from outcomes.txt. A flipped result in either direction fails: a
+# "holds" row that now violates is a regression; a "violated" row that now holds
+# means the model stopped reproducing the bug it documents. This is search, not
+# proof: verify.sh is the exhaustive counterpart.
 set -eu
 cd "$(dirname "$0")"
 
@@ -29,19 +30,11 @@ check() { # instance invariant expected(holds|violated)
     fi
 }
 
-# `current` must violate: it models a sidecar that does not inherit the lock.
-check current      lockedWritersExclusive violated
-check orphanFixed  lockedWritersExclusive holds
-check allFixed     lockedWritersExclusive holds
-
-# Whole token-writer set, including the unlocked `auth` login.
-check current      mutualExclusion        violated
-check orphanFixed  mutualExclusion        violated
-check allFixed     mutualExclusion        holds
-
-# The page: someone presented a rotated-away refresh token (assumption A1).
-check current      noInvalidGrant         violated
-check orphanFixed  noInvalidGrant         violated
-check allFixed     noInvalidGrant         holds
+rows=$(mktemp)
+trap 'rm -f "$rows"' EXIT
+grep -v '^#' outcomes.txt | grep -v '^$' > "$rows"
+while read -r instance invariant expected; do
+    check "$instance" "$invariant" "$expected"
+done < "$rows"
 
 exit "$failed"

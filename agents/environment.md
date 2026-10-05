@@ -83,7 +83,8 @@ make colima         # Start colima Docker environment with disk space checks
 
 # Formal models (Quint; not part of setup, lint or test)
 make formal-deps    # Install the pinned Quint
-make formal         # Check the pinned holds/violated outcomes of every model
+make formal         # Randomized check of the pinned holds/violated outcomes of every model
+make formal-verify  # Exhaustive Apalache proof of the same outcomes (needs JDK 21)
 
 # Run specific modules
 uv run python Tesla/manage_power_clean.py
