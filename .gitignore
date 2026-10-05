@@ -55,3 +55,6 @@ node_modules/
 
 # Quint verify output
 _apalache-out/
+
+# Hypothesis example database
+.hypothesis/
