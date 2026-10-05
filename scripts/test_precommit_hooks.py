@@ -16,12 +16,10 @@ def test_every_declared_stage_is_installed() -> None:
     config = OmegaConf.to_container(OmegaConf.load(CONFIG))
     assert isinstance(config, dict)
     installed = set(config["default_install_hook_types"])
-    declared = {
-        (hook["id"], stage)
-        for repo in config["repos"]
-        for hook in repo["hooks"]
-        for stage in hook["stages"]
-    }
+    hooks = [hook for repo in config["repos"] for hook in repo["hooks"]]
+    implicit = [hook["id"] for hook in hooks if "stages" not in hook]
+    assert not implicit, f"give these hooks an explicit `stages`: {implicit}"
+    declared = {(hook["id"], stage) for hook in hooks for stage in hook["stages"]}
     assert declared, "no hook declares a stage"
     missing = sorted((hook_id, stage) for hook_id, stage in declared if stage not in installed)
     assert not missing, f"declared but never installed: {missing}"

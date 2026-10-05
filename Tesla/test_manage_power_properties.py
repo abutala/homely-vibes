@@ -23,7 +23,9 @@ _reading = st.one_of(
     st.floats(min_value=-5.0, max_value=0.0),
     st.floats(min_value=0.01, max_value=100.0),
 )
-_minutes = st.integers(min_value=0, max_value=36 * 60)
+# The shipped alert threshold and re-alert gap, in minutes, so steps land
+# exactly on the boundaries as well as either side of them.
+_minutes = st.one_of(st.integers(min_value=0, max_value=36 * 60), st.sampled_from([30, 24 * 60]))
 _steps = st.lists(st.tuples(_minutes, _reading), max_size=60)
 
 

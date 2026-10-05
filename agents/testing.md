@@ -24,7 +24,7 @@ uv run python -m pytest RachioFlume/test_integration.py::TestRachioClient -v
 # Specific test function
 uv run python -m pytest Tesla/test_manage_power.py::TestBatteryHistory::test_init -v
 
-# NodeCheck runs in isolation (uses pytest-forked)
+# NodeCheck runs in isolation (its own pytest invocation)
 uv run pytest NodeCheck
 ```
 
