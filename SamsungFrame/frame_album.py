@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Put this month's album from the photo library on the Frame TV.
+"""Put this week's album from the photo library on the Frame TV.
 
 Picks the next album from the queue (album_queue.py), works out which of its pictures to show,
 and hands them to the pipeline (frame_run.py). Which pictures:
@@ -10,7 +10,7 @@ and hands them to the pipeline (frame_run.py). Which pictures:
   name for each) into the album folder. Nothing is renamed.
 
 An album with too few usable pictures is marked and the next one is tried; one with too many
-plays in consecutive months. Once an album is chosen for the month, a rerun after a failure
+plays in consecutive weeks. Once an album is chosen for the week, a rerun after a failure
 resumes that album and part.
 """
 
@@ -126,25 +126,25 @@ def measure(
     return source, usable
 
 
-def job_for(album: Album, month: str, jobs_root: Path) -> Job:
-    return Job(jobs_root / f"album-{queue.slug(album.path)}-{month}")
+def job_for(album: Album, week: str, jobs_root: Path) -> Job:
+    return Job(jobs_root / f"album-{queue.slug(album.path)}-{week}")
 
 
 def choose_album(
     albums: list[Album],
     cfg: FrameAlbumsConfig,
     steps: Steps,
-    month: str,
+    week: str,
     jobs_root: Path,
     save: Callable[[], None],
 ) -> tuple[Album, Job, Path, list[str]] | None:
     """The first album in queue order with enough usable pictures; smaller ones are marked."""
-    while album := queue.pick(albums, cfg, month):
-        job = job_for(album, month, jobs_root)
+    while album := queue.pick(albums, cfg, week):
+        job = job_for(album, week, jobs_root)
         source, usable = measure(Path(cfg.root) / album.path, job, cfg, steps)
         enough = queue.record_measure(album, len(usable), cfg)
         if enough:
-            album.status = "playing"  # the month's choice: a rerun returns to it, whatever is new
+            album.status = "playing"  # the week's choice: a rerun returns to it, whatever is new
         save()
         if enough:
             return album, job, source, usable
@@ -161,7 +161,7 @@ def success_line(album: Album, manifest: Manifest, next_name: str) -> str:
     )
 
 
-def run_month(
+def run_week(
     cfg: FrameAlbumsConfig,
     steps: Steps,
     today: date,
@@ -174,7 +174,7 @@ def run_month(
         return EXIT_NOT_MOUNTED
     index = data_dir / "index.tsv"
     albums = queue.load_index(index)
-    month = today.strftime("%Y-%m")
+    week = queue.week_key(today)
 
     def save() -> None:
         queue.save_index(index, albums)
@@ -189,7 +189,7 @@ def run_month(
     queue.place(albums, cfg, rng)
 
     try:
-        chosen = choose_album(albums, cfg, steps, month, jobs_root, save)
+        chosen = choose_album(albums, cfg, steps, week, jobs_root, save)
     except Exception as e:
         logger.exception("Could not work out which pictures to show")
         save()
@@ -199,7 +199,7 @@ def run_month(
         steps.notify("no eligible album left in the queue", True)
         return EXIT_FAILED
     album, job, source, usable = chosen
-    part = min(queue.part_for(album, month), album.parts)
+    part = min(queue.part_for(album, week), album.parts)
     manifest = job.load()
     manifest.kept = sorted(queue.split(usable, album.parts)[part - 1])
     job.save(manifest)
@@ -210,9 +210,10 @@ def run_month(
         save()
         steps.notify(f"{album.name}: upload stopped (exit {code}); run again to resume", True)
         return EXIT_FAILED
-    queue.mark_shown(album, month)
+    queue.mark_shown(album, week)
     save()
-    later = [row[1] for row in queue.upcoming(albums, cfg, today) if row[0][:7] > month]
+    rows = queue.upcoming(albums, cfg, today)
+    later = [row[1] for row in rows if queue.week_key(date.fromisoformat(row[0])) > week]
     steps.notify(success_line(album, job.load(), later[0] if later else "nothing"), False)
     return EXIT_OK
 
@@ -253,10 +254,8 @@ def classify(albums: list[Album], lines: list[str]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
-    run = sub.add_parser("run", help="put this month's album on the TV")
-    run.add_argument(
-        "--scheduled", action="store_true", help="do nothing unless today is a first Monday"
-    )
+    run = sub.add_parser("run", help="put this week's album on the TV")
+    run.add_argument("--scheduled", action="store_true", help="do nothing unless today is a Monday")
     scan = sub.add_parser("scan", help="index new albums; print those that need a kind")
     scan.add_argument("--full", action="store_true", help="also recount albums already indexed")
     sub.add_parser("classify", help="set kind and region from `path<TAB>kind<TAB>region` on stdin")
@@ -270,10 +269,10 @@ def main() -> int:
         logger.error("Set samsung_frame.albums.root and .data_dir in config/local.yaml")
         return EXIT_FAILED
     if args.command == "run":
-        if args.scheduled and today != queue.first_monday(today.year, today.month):
-            logger.info("Not the first Monday of the month; nothing to do")
+        if args.scheduled and today.weekday() != 0:
+            logger.info("Not a Monday; nothing to do")
             return EXIT_OK
-        return run_month(cfg, real_steps(), today, random.Random())
+        return run_week(cfg, real_steps(), today, random.Random())
 
     data_dir = Path(cfg.data_dir).expanduser()
     index = data_dir / "index.tsv"

@@ -107,10 +107,10 @@ Decisions behind `frame_album.py`, so they are not re-litigated:
 - **Captions in file names are the selection.** In the library, the albums someone went through have files renamed `<camera name>-<caption>`. Those are the pictures worth showing, so a labelled album uploads only them and is never deduplicated. A handful of captioned files in a large album are strays, not curation, hence `labelled_album_min`.
 - **The picks CSV lives in the album folder**, on the library itself, not in local state: it survives a rebuilt machine, anyone browsing the album can see what was chosen, and its presence is what tells the next visit to skip dedup. Files are never renamed. The CSV is written to a temporary file and renamed into place, so a share that drops mid-write leaves no CSV rather than a truncated one; a write failure is only a warning and costs a second dedup later. A CSV that lists no existing file is ignored.
 - **Recommended names are generic.** Apple Vision's classifier returns taxonomy labels (`people`, `adult`, `outdoor`), not descriptions of the scene. Good enough to tell pictures apart in a list; not a caption a person would write.
-- **A job is keyed by album and month, and records its choice** (`album.json`: the source folder and the usable pictures). Without the record, a rerun after dedup had written the CSV would switch to the CSV path, start a new job, lose the upload checkpoints and upload everything twice.
-- **The month's album is marked `playing` as soon as it is chosen**, before the upload. A rerun after a failure therefore returns to it even if new albums were shuffled in ahead of it in the meantime.
-- **Parts are cut from the usable list in capture order**, so a later month's part can be recomputed from the CSV and lines up with the first.
-- **The scheduler cannot say "first Monday"**, so the routine fires every Monday and `run --scheduled` exits at once on the others.
+- **A job is keyed by album and week, and records its choice** (`album.json`: the source folder and the usable pictures). Without the record, a rerun after dedup had written the CSV would switch to the CSV path, start a new job, lose the upload checkpoints and upload everything twice.
+- **The week's album is marked `playing` as soon as it is chosen**, before the upload. A rerun after a failure therefore returns to it even if new albums were shuffled in ahead of it in the meantime.
+- **Parts are cut from the usable list in capture order**, so a later week's part can be recomputed from the CSV and lines up with the first.
+- **Weekly since 2026-10-05.** The scheduler fires every Monday and `run --scheduled` skips other days. The queue key is the ISO week (`2026-W41`), so rows shown under the old `YYYY-MM` keys never collide with a week; a job dir is keyed by album and week.
 
 ### Dedup Scaling
 

@@ -149,20 +149,20 @@ uv run python -m SamsungFrame.dedup_photos /tmp/frame-jobs/Trip-ab12cd --max-dis
 
 The job dir lives in `/tmp` because it is scratch: if macOS clears it, the stages redo their work. The next stages (upload, cleanup, slideshow) are described above; the step-by-step routine is in [AGENTS.md](AGENTS.md).
 
-### A New Album Every Month (the album queue)
+### A New Album Every Week (the album queue)
 
 `frame_album` picks the next album from a photo library laid out `<root>/<year>/<month>/<album>`, decides which of its pictures to show, and hands them to the pipeline above with cleanup on, so the TV ends up showing that album.
 
 ```bash
-uv run python -m SamsungFrame.frame_album run            # this month's album
-uv run python -m SamsungFrame.frame_album run --scheduled # the same, but only on a first Monday
+uv run python -m SamsungFrame.frame_album run            # this week's album
+uv run python -m SamsungFrame.frame_album run --scheduled # the same, but only on a Monday
 uv run python -m SamsungFrame.frame_album scan            # index new albums; prints those needing a kind
 uv run python -m SamsungFrame.frame_album classify < kinds.tsv   # path<TAB>kind<TAB>region per line
 uv run python -m SamsungFrame.frame_album shuffle         # re-deal the queue
 uv run python -m SamsungFrame.frame_album table           # rewrite and print upcoming.md
 ```
 
-**The queue** is `index.tsv` in `samsung_frame.albums.data_dir`: one row per album, and line order is play order. Edit it by hand to move an album up or set its `status` to `skip`. An album is eligible when it has more than `min_pictures` pictures and its kind is `park` or `city`; the two kinds alternate. A new album found by a run joins the queue; if it is eligible it is dropped at a random slot near the top. `upcoming.md` beside the index shows the next months and the pool, and is rewritten whenever a command changes or reads the queue (not by a `--scheduled` run on another Monday, nor when the library is not mounted).
+**The queue** is `index.tsv` in `samsung_frame.albums.data_dir`: one row per album, and line order is play order. Edit it by hand to move an album up or set its `status` to `skip`. An album is eligible when it has more than `min_pictures` pictures and its kind is `park` or `city`; the two kinds alternate. A new album found by a run joins the queue; if it is eligible it is dropped at a random slot near the top. `upcoming.md` beside the index shows the next weeks and the pool, and is rewritten whenever a command changes or reads the queue (not by a `--scheduled` run on another day, nor when the library is not mounted).
 
 **Which pictures of an album are shown**, first match wins:
 
@@ -173,9 +173,9 @@ uv run python -m SamsungFrame.frame_album table           # rewrite and print up
 Portraits are dropped in every case. Then:
 
 - fewer than `min_on_tv` usable pictures: the album is marked `small`, never retried, and the next album in the queue is tried in the same run;
-- more than `max_on_tv`: the album is cut into equal parts in capture order and plays one part a month; alternation resumes after its last part.
+- more than `max_on_tv`: the album is cut into equal parts in capture order and plays one part a week; alternation resumes after its last part.
 
-**Exit codes**: 0 done; 1 failed (one Pushover says why; run again: once an album is chosen for the month the rerun returns to it and to the same part); 2 the library is not mounted (one Pushover); 3 new albums need a kind (they are printed, nothing is sent; classify them and run again). A success is one terse Pushover line; the pipeline's own notification is switched off for these runs.
+**Exit codes**: 0 done; 1 failed (one Pushover says why; run again: once an album is chosen for the week the rerun returns to it and to the same part); 2 the library is not mounted (one Pushover); 3 new albums need a kind (they are printed, nothing is sent; classify them and run again). A success is one terse Pushover line; the pipeline's own notification is switched off for these runs.
 
 **Config** (`samsung_frame.albums` in `config/default.yaml`; set `root`, `data_dir` and `home_region` in `config/local.yaml`): the limits above, plus `away_weight` and `recency_half_life_years`, which bias `shuffle` towards albums from outside the home region and newer ones.
 
