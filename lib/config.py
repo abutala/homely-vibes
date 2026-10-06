@@ -219,21 +219,21 @@ class RingBeamsConfig:
 
 @dataclass
 class FrameAlbumsConfig:
-    """The monthly album queue for the Frame TV (SamsungFrame/frame_album.py)"""
+    """The weekly album queue for the Frame TV (SamsungFrame/frame_album.py)"""
 
     root: str  # photo library: <root>/<year>/<month>/<album>
     data_dir: str  # where index.tsv and upcoming.md live
     picks_csv: str  # file written into an album folder: the pictures dedup kept
     min_pictures: int  # an album needs MORE than this many pictures in its folder
     min_on_tv: int  # fewer usable pictures than this: the album is skipped
-    max_on_tv: int  # more usable pictures than this: the album plays in monthly parts
+    max_on_tv: int  # more usable pictures than this: the album plays in weekly parts
     labelled_album_min: int  # captioned files that make an album "labelled"; fewer are strays
     keep_ratio: float  # guess of usable/folder pictures for an album not measured yet
     top_k: int  # a new album lands at a random slot among the first top_k eligible rows
     home_region: str  # albums from here are less likely to sort early
     away_weight: float  # how much likelier an album from elsewhere is to sort early
     recency_half_life_years: float  # an album this much older is half as likely to sort early
-    table_months: int  # months shown in upcoming.md
+    table_weeks: int  # weeks shown in upcoming.md
 
 
 @dataclass

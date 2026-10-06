@@ -51,7 +51,7 @@ client.connect_ready()  # Same full bootstrap path
 - `manage_samsung.py` — CLI entry point with subcommands
 - `frame_job.py` — job dir (`/tmp/frame-jobs/...`) and the manifest every pipeline stage reads and writes
 - `ingest.py` — stage 1: filter by name/size, read each original once, write local <=4K JPGs, manifest saved after every small batch
-- `frame_album.py` + `album_queue.py` — the monthly album: a queue of library albums (`index.tsv`), which pictures of an album to show (labelled files, else its picks CSV, else dedup, which writes that CSV into the album folder), skip-if-small, split-if-big, then `frame_run` with cleanup on. Usage and rules: README, "A New Album Every Month"
+- `frame_album.py` + `album_queue.py` — the weekly album: a queue of library albums (`index.tsv`), which pictures of an album to show (labelled files, else its picks CSV, else dedup, which writes that CSV into the album folder), skip-if-small, split-if-big, then `frame_run` with cleanup on. Usage and rules: README, "A New Album Every Week"
 - `frame_run.py` — the driver: runs the stages as separate processes, retries the upload stage, sends one Pushover built from the manifest
 - `frame_upload.py` / `frame_cleanup.py` / `frame_slideshow.py` — stages 3 to 5: checkpointed upload, snapshot-based cleanup with the minimum-photo floor, slideshow with read-back verification
 - `dedup_photos.py` + `vision_features.swift` — stage 2: drop near-duplicates and utility shots from an ingested job (macOS Vision: feature prints, aesthetics score, utility flag; average-linkage clustering); output feeds `frame_upload.py`
@@ -88,7 +88,7 @@ Key for this codebase:
 - `frame_upload.py <job_dir>` — `--matte`, `--timeout`
 - `frame_cleanup.py <job_dir>` — `--dry-run`, `--min-images`, `--timeout`
 - `frame_slideshow.py <job_dir>` — `--duration`, `--no-shuffle`, `--timeout`
-- `frame_album.py run|scan|classify|shuffle|table` — `run --scheduled` does nothing unless today is a first Monday; `scan --full` recounts every album
+- `frame_album.py run|scan|classify|shuffle|table` — `run --scheduled` does nothing unless today is a Monday; `scan --full` recounts every album
 - `manage_samsung.py status|list-art|list-mattes|delete-all|download-thumbnails|update-mattes|cycle-images|start-slideshow|reboot|purge`
 
 ## Testing

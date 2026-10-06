@@ -1,8 +1,8 @@
-"""The queue of photo albums for the monthly Frame routine: one TSV row per album, in play order.
+"""The queue of photo albums for the weekly Frame routine: one TSV row per album, in play order.
 
 The file's line order IS the queue. `pick` takes the first eligible row whose kind differs from
 the last album shown, so the two kinds alternate; an album with more usable pictures than the TV
-should hold plays in consecutive months, one part each. Nothing here touches the TV.
+should hold plays in consecutive weeks, one part each. Nothing here touches the TV.
 """
 
 import copy
@@ -42,7 +42,7 @@ class Album:
     shown: str = ""  # YYYY-MM it was last put on the TV
     added: str = ""  # date the row was first indexed
     on_tv: int = -1  # usable pictures (portraits dropped, deduplicated); -1 = unmeasured
-    parts: int = 0  # months it takes to play; 0 = unmeasured
+    parts: int = 0  # weeks it takes to play; 0 = unmeasured
     part: int = 0  # parts played so far
 
     @property
@@ -191,11 +191,11 @@ def shuffle(
     return playable + rest
 
 
-def pick(albums: list[Album], cfg: FrameAlbumsConfig, month: str) -> Album | None:
-    """This month's album: the one already marked for the month, else the album mid-split,
+def pick(albums: list[Album], cfg: FrameAlbumsConfig, week: str) -> Album | None:
+    """This week's album: the one already marked for the week, else the album mid-split,
     else the first eligible row whose kind differs from the last one shown."""
     for album in albums:
-        if album.shown == month and album.status in ("shown", "playing"):
+        if album.shown == week and album.status in ("shown", "playing"):
             return album
     for album in albums:
         if album.status == "playing":
@@ -216,14 +216,14 @@ def record_measure(album: Album, count: int, cfg: FrameAlbumsConfig) -> bool:
     return True
 
 
-def part_for(album: Album, month: str) -> int:
-    """The part (1-based) to play in `month`: the same one again on a rerun within the month."""
-    return album.part if album.shown == month else album.part + 1
+def part_for(album: Album, week: str) -> int:
+    """The part (1-based) to play in `week`: the same one again on a rerun within the week."""
+    return album.part if album.shown == week else album.part + 1
 
 
-def mark_shown(album: Album, month: str) -> None:
-    album.part = part_for(album, month)
-    album.shown = month
+def mark_shown(album: Album, week: str) -> None:
+    album.part = part_for(album, week)
+    album.shown = week
     album.status = "shown" if album.part >= max(album.parts, 1) else "playing"
 
 
@@ -238,21 +238,16 @@ def split(items: list[str], parts: int) -> list[list[str]]:
     return chunks
 
 
-def first_monday(year: int, month: int) -> date:
-    first = date(year, month, 1)
-    return first + timedelta(days=(7 - first.weekday()) % 7)
+def week_key(day: date) -> str:
+    """The period an album is chosen for: the ISO week, e.g. `2026-W41`."""
+    year, week, _ = day.isocalendar()
+    return f"{year}-W{week:02d}"
 
 
 def run_dates(today: date, count: int) -> list[date]:
-    """The next `count` first-Mondays, today included."""
-    dates: list[date] = []
-    year, month = today.year, today.month
-    while len(dates) < count:
-        run = first_monday(year, month)
-        if run >= today:
-            dates.append(run)
-        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
-    return dates
+    """The next `count` Mondays, today included when it is one."""
+    first = today + timedelta(days=(7 - today.weekday()) % 7)
+    return [first + timedelta(weeks=i) for i in range(count)]
 
 
 def forecast(album: Album, cfg: FrameAlbumsConfig) -> tuple[int, int, bool]:
@@ -264,20 +259,20 @@ def forecast(album: Album, cfg: FrameAlbumsConfig) -> tuple[int, int, bool]:
 
 
 def upcoming(albums: list[Album], cfg: FrameAlbumsConfig, today: date) -> list[list[str]]:
-    """Table rows for the coming months, by playing the queue forward on a copy."""
+    """Table rows for the coming weeks, by playing the queue forward on a copy."""
     albums = copy.deepcopy(albums)
     rows = []
-    for run in run_dates(today, cfg.table_months):
-        month = run.strftime("%Y-%m")
-        album = pick(albums, cfg, month)
+    for run in run_dates(today, cfg.table_weeks):
+        week = week_key(run)
+        album = pick(albums, cfg, week)
         while album and is_labelled(album, cfg) and album.labelled < cfg.min_on_tv:
             album.status = "small"  # will be skipped on the day
-            album = pick(albums, cfg, month)
+            album = pick(albums, cfg, week)
         if album is None:
             break
         count, parts, measured = forecast(album, cfg)
         album.parts = parts
-        mark_shown(album, month)
+        mark_shown(album, week)
         per_part = math.ceil(count / parts)
         rows.append(
             [
@@ -299,15 +294,15 @@ def pool_stats(albums: list[Album], cfg: FrameAlbumsConfig) -> list[str]:
     kinds = ", ".join(f"{sum(a.kind == k for a in queue)} {k}" for k in sorted(PLAYABLE_KINDS))
     regions = sorted({a.region for a in queue})
     by_region = ", ".join(f"{sum(a.region == r for a in queue)} {r}" for r in regions)
-    months = sum(forecast(a, cfg)[1] for a in queue)
+    weeks = sum(forecast(a, cfg)[1] for a in queue)
     count = {s: sum(a.status == s for a in albums) for s in ("shown", "playing", "small", "skip")}
     return [
-        f"- Queue: {len(queue)} albums ({kinds}; {by_region}), about {months} months of albums",
+        f"- Queue: {len(queue)} albums ({kinds}; {by_region}), about {weeks} weeks of albums",
         f"- Labelled albums in the queue: {sum(is_labelled(a, cfg) for a in queue)}",
         f"- Shown: {count['shown']} · playing in parts: {count['playing']} · "
         f"skipped as too small: {count['small']} · vetoed: {count['skip']}",
         f"- Limits: folder > {cfg.min_pictures} pictures; on the TV {cfg.min_on_tv} to "
-        f"{cfg.max_on_tv} per month",
+        f"{cfg.max_on_tv} per week",
     ]
 
 
@@ -318,9 +313,9 @@ def table_markdown(albums: list[Album], cfg: FrameAlbumsConfig, today: date) -> 
     """The next-months table and the pool stats, as the Markdown published beside the index."""
     return "\n".join(
         [
-            "# Frame TV: next months",
+            "# Frame TV: next weeks",
             "",
-            f"Rewritten by every run of the monthly album routine; last on {today.isoformat()}. "
+            f"Rewritten by every run of the weekly album routine; last on {today.isoformat()}. "
             "`~` marks a guess for an album not measured yet; a guess under the minimum may be "
             "skipped on the day and the next album plays instead.",
             "",

@@ -27,7 +27,7 @@ def config(**overrides: object) -> FrameAlbumsConfig:
         home_region="home",
         away_weight=3.0,
         recency_half_life_years=8.0,
-        table_months=4,
+        table_weeks=4,
     )
     return FrameAlbumsConfig(**(values | overrides))  # type: ignore[arg-type]
 
@@ -119,7 +119,7 @@ class TestPick:
         albums = [album("C1", kind="city"), album("Big", status="playing", shown="2026-09", part=1)]
         assert queue.pick(albums, config(), "2026-10").name == "Big"  # type: ignore[union-attr]
 
-    def test_the_month_already_marked_is_stable(self) -> None:
+    def test_the_week_already_marked_is_stable(self) -> None:
         albums = [album("C1", kind="city"), album("P1", shown="2026-10", status="shown")]
         assert queue.pick(albums, config(), "2026-10").name == "P1"  # type: ignore[union-attr]
 
@@ -179,19 +179,23 @@ class TestParts:
         assert queue.part_for(big, "2026-10") == 1
         queue.mark_shown(big, "2026-10")
         assert (big.status, big.part) == ("playing", 1)
-        assert queue.part_for(big, "2026-10") == 1  # same month: same part
+        assert queue.part_for(big, "2026-10") == 1  # same week: same part
         queue.mark_shown(big, "2026-11")
         assert (big.status, big.part) == ("shown", 2)
 
 
 class TestTable:
-    def test_run_dates_are_first_mondays_from_today(self) -> None:
+    def test_run_dates_are_the_coming_mondays(self) -> None:
         assert queue.run_dates(TODAY, 3) == [
             date(2026, 10, 5),
-            date(2026, 11, 2),
-            date(2026, 12, 7),
+            date(2026, 10, 12),
+            date(2026, 10, 19),
         ]
-        assert queue.run_dates(date(2026, 10, 6), 1) == [date(2026, 11, 2)]
+        assert queue.run_dates(date(2026, 10, 6), 1) == [date(2026, 10, 12)]
+
+    def test_week_key_follows_the_iso_year_at_the_boundary(self) -> None:
+        assert queue.week_key(date(2026, 10, 5)) == "2026-W41"
+        assert queue.week_key(date(2027, 1, 1)) == "2026-W53"
 
     def test_forecast_uses_the_measurement_else_a_guess(self) -> None:
         cfg = config()

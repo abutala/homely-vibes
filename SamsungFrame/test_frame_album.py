@@ -1,4 +1,4 @@
-"""Tests for the monthly album command: which pictures it chooses, the picks CSV, skips, parts
+"""Tests for the weekly album command: which pictures it chooses, the picks CSV, skips, parts
 and reruns. Ingest, dedup, the pipeline and the notifier are hand-written fakes."""
 
 import csv
@@ -18,12 +18,12 @@ from SamsungFrame.frame_album import (
     Steps,
     classify,
     recommended_name,
-    run_month,
+    run_week,
 )
 from SamsungFrame.frame_job import Job, Manifest, PhotoRecord
 from SamsungFrame.test_album_queue import config
 
-OCTOBER, NOVEMBER = date(2026, 10, 5), date(2026, 11, 2)
+WEEK_1, WEEK_2 = date(2026, 10, 5), date(2026, 10, 12)
 
 
 class World:
@@ -56,7 +56,7 @@ class World:
         for file in files:
             (folder / file).write_bytes(b"x")
         albums = queue.load_index(self.data / "index.tsv")
-        queue.scan(albums, self.root, OCTOBER)
+        queue.scan(albums, self.root, WEEK_1)
         classify(albums, [f"2020/05-May/{name}\t{kind}\taway"])
         queue.save_index(self.data / "index.tsv", albums)
         return folder
@@ -88,14 +88,14 @@ class World:
         self.played.append([manifest.photos[n].source for n in manifest.upload_targets()])
         return self.pipeline_exit
 
-    def run(self, today: date = OCTOBER) -> int:
+    def run(self, today: date = WEEK_1) -> int:
         steps = Steps(
             self.ingest,
             self.dedup,
             self.pipeline,
             lambda line, error: self.notes.append((line, error)),
         )
-        return run_month(self.cfg, steps, today, random.Random(0), self.jobs)
+        return run_week(self.cfg, steps, today, random.Random(0), self.jobs)
 
     def row(self, name: str) -> queue.Album:
         albums = queue.load_index(self.data / "index.tsv")
@@ -170,24 +170,24 @@ class TestSkipsAndParts:
         assert world.row("Few").status == "small"
         assert world.played == [camera(4)]
 
-    def test_a_big_album_plays_in_equal_parts_over_consecutive_months(self, world: World) -> None:
+    def test_a_big_album_plays_in_equal_parts_over_consecutive_weeks(self, world: World) -> None:
         world.album("Big", camera(10))
         world.album("Town", camera(4), kind="city")
-        assert world.run(OCTOBER) == EXIT_OK
+        assert world.run(WEEK_1) == EXIT_OK
         assert (world.row("Big").status, world.row("Big").part, world.row("Big").parts) == (
             "playing",
             1,
             2,
         )
-        assert world.run(NOVEMBER) == EXIT_OK  # alternation is suspended: Town waits
+        assert world.run(WEEK_2) == EXIT_OK  # alternation is suspended: Town waits
         assert world.played == [camera(5), camera(5, start=6)]
         assert world.row("Big").status == "shown" and world.row("Town").status == "queued"
-        assert world.deduped == 1  # November was cut from the picks CSV
+        assert world.deduped == 1  # the second week was cut from the picks CSV
 
-    def test_a_rerun_in_the_same_month_repeats_the_same_part(self, world: World) -> None:
+    def test_a_rerun_in_the_same_week_repeats_the_same_part(self, world: World) -> None:
         world.album("Big", camera(10))
-        world.run(OCTOBER)
-        world.run(OCTOBER)
+        world.run(WEEK_1)
+        world.run(WEEK_1)
         assert world.played == [camera(5), camera(5)]
         assert world.row("Big").part == 1
         assert len(world.ingested) == 1  # the choice was recorded, not made again
@@ -218,7 +218,7 @@ class TestFailures:
         assert world.row("Trip").status == "shown"
         assert len(world.ingested) == 1 and world.deduped == 1
 
-    def test_a_new_album_cannot_take_over_a_month_already_chosen(self, world: World) -> None:
+    def test_a_new_album_cannot_take_over_a_week_already_chosen(self, world: World) -> None:
         world.album("Trip", camera(4))
         world.pipeline_exit = 1
         world.run()
@@ -252,7 +252,7 @@ class TestFailures:
         assert world.run() == EXIT_OK
         assert world.deduped == 1 and world.played == [camera(4)]
 
-    def test_next_names_the_following_month_on_a_catch_up_run(self, world: World) -> None:
+    def test_next_names_the_following_week_on_a_catch_up_run(self, world: World) -> None:
         world.album("Trip", camera(4))
         world.album("Town", camera(4), kind="city")
         world.album("Hill", camera(4))
@@ -269,7 +269,7 @@ class TestFailures:
         world.album("Town", camera(4), kind="city")
         world.run()
         assert world.notes == [("Trip (May 2020): 0 up, 0 old removed. Next: Town", False)]
-        assert "| 2026-11-02 | Town |" in (world.data / "upcoming.md").read_text()
+        assert "| 2026-10-12 | Town |" in (world.data / "upcoming.md").read_text()
 
 
 class TestClassify:
