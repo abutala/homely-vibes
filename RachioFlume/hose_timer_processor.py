@@ -42,7 +42,7 @@ def hose_poll_key(label: str) -> str:
 # while a hose-timer valve is running or recently ran. Mirrors the controller's
 # in-memory rachio state — kept in DB metadata so the two processors stay
 # decoupled (HoseTimerProcessor writes; AlertEngine reads).
-_HOSE_LAST_ACTIVE_KEY = "alert::__hose__::last_active"
+HOSE_LAST_ACTIVE_KEY = "alert::__hose__::last_active"
 
 
 class HoseTimerProcessor:
@@ -104,7 +104,7 @@ class HoseTimerProcessor:
         # while a hose valve is running or just ran.
         if any_active and not dry_run:
             self.db.set_metadata(
-                _HOSE_LAST_ACTIVE_KEY,
+                HOSE_LAST_ACTIVE_KEY,
                 json.dumps({"at": now.isoformat(), "device": self.client.label}),
             )
 

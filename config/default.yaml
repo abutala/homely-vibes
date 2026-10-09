@@ -383,12 +383,15 @@ rachio_flume:
       zone_thresholds: {}
 
     # === Whole-house sustained-flow rules (Flume only; no Rachio context) ===
-    # Suppressed while any Rachio activity (controller OR hose-timer) is recent.
+    # A rule waits until its own window is clear of irrigation (controller OR
+    # hose timer) plus a 10-min tail.
+    # trim_outliers drops the top and bottom 5% of minutes first, so a flush on
+    # top of a steady trickle, or one dropout minute, cannot hide a leak.
     default_flow_rules:
       - {name: "Pipe Break", min_gpm: 8.0, duration_minutes: 10}
       - {name: "High Flow",  min_gpm: 5.4, duration_minutes: 4}
       - {name: "Mid Flow",   min_gpm: 2.0, duration_minutes: 14}
-      - {name: "Leak",       min_gpm: 0.1, duration_minutes: 120}
+      - {name: "Leak",       min_gpm: 0.1, duration_minutes: 45, trim_outliers: true}
 
     # === Stale-zone monitoring ===
     # Fire a P2 alert if any enabled controller zone or known hose-timer

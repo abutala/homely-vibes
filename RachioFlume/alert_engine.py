@@ -24,16 +24,19 @@ from lib.notifications import Notifier
 from RachioFlume.alert_rules import AlertRule, ZoneThreshold, send_zone_outcome_pushover
 from RachioFlume.data_storage import ACTIVE_FLOW_GPM, WaterTrackingDB
 from RachioFlume.flume_client import FlumeClient, WaterReading, completed_minutes
-from RachioFlume.hose_timer_processor import hose_poll_key
-from RachioFlume.rachio_client import RachioClient
+from RachioFlume.hose_timer_processor import HOSE_LAST_ACTIVE_KEY, hose_poll_key
+from RachioFlume.rachio_client import RachioClient, Zone
 
-# Minutes to wait after Rachio reports inactive before sending the zone-end
-# report. Covers the gap for the collector cycle to persist session data.
-# Only applies when Rachio goes fully idle (not zone transitions, which are
-# detected immediately).
-RACHIO_POST_ACTIVE_SLACK_MINUTES = 10
+# Minutes after irrigation was last seen that still count as irrigation: the
+# stop is noticed up to one 5-min poll late, and the pipes drain after it.
+# A flow rule waits until its whole window is past this tail.
+IRRIGATION_TAIL_MINUTES = 10
+
+# Share of the lowest and of the highest minutes a `trim_outliers` rule drops.
+TRIM_FRACTION_PER_SIDE = 0.05
 
 _RACHIO_STATE_KEY = "alert::__rachio__::last_active"
+_RACHIO_LAST_SEEN_KEY = "alert::__rachio__::last_seen"
 _REPORTED_ZONES_KEY = "reported::zones::{date}"
 _REPORTED_RULES_KEY = "reported::rules::{date}"
 _FLUME_OUTAGE_NAME = "Flume Data Outage"
@@ -53,6 +56,34 @@ CONTROLLER_STATUS_KEY = "rachio::controller::status"
 # firmware update; it shows up in the log instead.
 LOW_BATTERY_STATUSES = {"LOW", "REPLACE"}
 _KNOWN_BATTERY_STATUSES = LOW_BATTERY_STATUSES | {"GOOD", "UNKNOWN"}
+
+
+def _irrigation_hold(
+    rule: AlertRule, now: datetime, last_irrigation: Optional[tuple[datetime, str]]
+) -> Optional[str]:
+    """The irrigation source that still overlaps this rule's window, if any.
+
+    Each rule waits only for its own window to clear the irrigation tail, so a
+    5-min rule is back 15 min after watering while a 45-min rule takes 55.
+    """
+    if last_irrigation is None:
+        return None
+    seen_at, source = last_irrigation
+    window_start = now.replace(second=0, microsecond=0) - timedelta(minutes=rule.duration_minutes)
+    if window_start <= seen_at + timedelta(minutes=IRRIGATION_TAIL_MINUTES):
+        return source
+    return None
+
+
+def trim_outliers(values: list[float]) -> list[float]:
+    """Drop the lowest and highest TRIM_FRACTION_PER_SIDE of the values.
+
+    A leak is a steady trickle. A flush on top of it, or one dropout minute,
+    is an outlier that must not hide it. Rounds down, so a short window
+    keeps every value.
+    """
+    k = int(len(values) * TRIM_FRACTION_PER_SIDE)
+    return sorted(values)[k : len(values) - k]
 
 
 def _zone_name_matches(session_name: str, lookup_name: str) -> bool:
@@ -366,6 +397,8 @@ class AlertEngine:
             return False
         recent = readings[-rule.duration_minutes :]
         values = [r.value for r in recent]
+        if rule.trim_outliers:
+            values = trim_outliers(values)
         mean_gpm = sum(values) / len(values)
 
         if mean_gpm < rule.min_gpm:
@@ -795,8 +828,8 @@ class AlertEngine:
 
         # Persist current state for next cycle.
         # Only save when something changed (zone transition or active→idle).
-        # Don't refresh last_active_at on every idle cycle — that would
-        # keep the rule-suppression window open indefinitely.
+        # Don't refresh last_active_at on every idle cycle: it marks when the
+        # zone started, which the zone-end report reads.
         if not dry_run:
             state_changed = (zone_to_report is not None) or (
                 rachio_active and (last_rachio_zone != rachio_active.name)
@@ -805,14 +838,9 @@ class AlertEngine:
                 if rachio_active:
                     self._save_rachio_state(now, rachio_active.name, rachio_active.zone_number)
                 else:
-                    # Active→idle transition: keep last_active_at for suppression,
-                    # clear zone to prevent re-detection.
+                    # Active→idle transition: keep last_active_at, clear the
+                    # zone to prevent re-detection.
                     self._save_rachio_state(last_rachio_active_at or now, None, None)
-
-        # Effective values for rule-suppression logic below
-        if rachio_active:
-            last_rachio_active_at = now
-            last_rachio_zone = rachio_active.name
 
         # --- Zone-end report (one per zone per day) ---
         if zone_to_report is not None:
@@ -826,35 +854,7 @@ class AlertEngine:
             if zone_reported:
                 results.append({"zone_report": True, "zone": zone_to_report})
 
-        # --- Suppress rule evaluation while irrigating or within slack ---
-        # Two independent suppression sources: (a) the in-process Rachio
-        # controller state above, (b) the cross-process hose-timer
-        # last-active key written by HoseTimerProcessor. Same slack window
-        # applies to both so behavior is symmetric.
-        suppressed_by: Optional[str] = None
-        if rachio_active:
-            suppressed_by = f"rachio:{rachio_active.name}"
-        elif last_rachio_active_at is not None:
-            max_duration = max((r.duration_minutes for r in self.rules), default=0)
-            threshold = timedelta(minutes=max_duration + RACHIO_POST_ACTIVE_SLACK_MINUTES)
-            if now - last_rachio_active_at < threshold:
-                suppressed_by = f"rachio:{last_rachio_zone} (recent)"
-
-        if not suppressed_by:
-            hose_blob = self.db.get_metadata("alert::__hose__::last_active")
-            if hose_blob:
-                try:
-                    hose_data = json.loads(hose_blob)
-                    last_hose_at = datetime.fromisoformat(hose_data["at"])
-                    max_duration = max((r.duration_minutes for r in self.rules), default=0)
-                    threshold = timedelta(minutes=max_duration + RACHIO_POST_ACTIVE_SLACK_MINUTES)
-                    if now - last_hose_at < threshold:
-                        suppressed_by = f"hose:{hose_data.get('device')} (recent)"
-                except (json.JSONDecodeError, KeyError, ValueError) as e:
-                    self.logger.warning(f"Bad hose last-active blob, ignoring: {e}")
-
-        if suppressed_by:
-            self.logger.debug(f"Rule evaluation suppressed by: {suppressed_by}")
+        last_irrigation = self._last_irrigation(rachio_active, now, dry_run)
 
         # --- Rule-based anomaly detection ---
         reported_rules = _load_set(self.db, _today_key(_REPORTED_RULES_KEY, now))
@@ -862,8 +862,9 @@ class AlertEngine:
         for rule in self.rules:
             entry: dict = {"rule": rule.name, "action": AlertAction.NOTHING.value}
 
-            if suppressed_by:
-                entry["suppressed_by"] = suppressed_by
+            held_by = _irrigation_hold(rule, now, last_irrigation)
+            if held_by:
+                entry["suppressed_by"] = held_by
                 results.append(entry)
                 continue
 
@@ -932,6 +933,37 @@ class AlertEngine:
             self.logger.error(f"Valve battery check failed: {e}")
 
         return results
+
+    def _last_irrigation(
+        self, rachio_active: Optional[Zone], now: datetime, dry_run: bool
+    ) -> Optional[tuple[datetime, str]]:
+        """When irrigation was last seen running, and by which source.
+
+        Two sources: the controller, polled here, and the hose timer, whose
+        processor stamps its own key. The later of the two wins.
+        """
+        seen: list[tuple[datetime, str]] = []
+        if rachio_active:
+            seen.append((now, f"rachio:{rachio_active.name}"))
+            if not dry_run:
+                self.db.set_metadata(_RACHIO_LAST_SEEN_KEY, now.isoformat())
+        else:
+            rachio_iso = self.db.get_metadata(_RACHIO_LAST_SEEN_KEY)
+            if rachio_iso:
+                seen.append((datetime.fromisoformat(rachio_iso), "rachio (recent)"))
+        hose_blob = self.db.get_metadata(HOSE_LAST_ACTIVE_KEY)
+        if hose_blob:
+            try:
+                hose_data = json.loads(hose_blob)
+                seen.append(
+                    (
+                        datetime.fromisoformat(hose_data["at"]),
+                        f"hose:{hose_data.get('device')} (recent)",
+                    )
+                )
+            except (json.JSONDecodeError, KeyError, ValueError) as e:
+                self.logger.warning(f"Bad hose last-active blob, ignoring: {e}")
+        return max(seen, default=None)
 
     def _fetch_window(self, rule: AlertRule, now: datetime) -> list[WaterReading]:
         """The rule's trailing window of completed minutes; the current one reads short."""

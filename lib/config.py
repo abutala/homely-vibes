@@ -300,6 +300,7 @@ class AlertRuleConfig:
     name: str
     min_gpm: float
     duration_minutes: int
+    trim_outliers: bool = False  # drop the top and bottom 5% of minutes before the check
 
 
 @dataclass

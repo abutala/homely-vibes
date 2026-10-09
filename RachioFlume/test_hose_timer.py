@@ -12,7 +12,7 @@ import pytest
 from RachioFlume.alert_rules import ZoneThreshold, resolve_hose_threshold
 from RachioFlume.data_storage import WaterTrackingDB
 from RachioFlume.hose_timer_processor import (
-    _HOSE_LAST_ACTIVE_KEY,
+    HOSE_LAST_ACTIVE_KEY,
     HoseTimerProcessor,
     _state_key,
     hose_poll_key,
@@ -361,7 +361,7 @@ class TestHoseActivitySuppression:
         proc, _ = _make_processor(tmp_db, valve)
         # Cycle 1 sees a new run → run_started, should stamp key
         proc.evaluate(now=datetime(2026, 6, 27, 7, 47, 0))
-        blob = tmp_db.get_metadata(_HOSE_LAST_ACTIVE_KEY)
+        blob = tmp_db.get_metadata(HOSE_LAST_ACTIVE_KEY)
         assert blob is not None
         data = json.loads(blob)
         assert data["device"] == "Hose Drip Jasmine"
@@ -371,7 +371,7 @@ class TestHoseActivitySuppression:
         valve = _valve(action=None)
         proc, _ = _make_processor(tmp_db, valve)
         proc.evaluate(now=datetime(2026, 6, 27, 7, 47, 0))
-        assert tmp_db.get_metadata(_HOSE_LAST_ACTIVE_KEY) is None
+        assert tmp_db.get_metadata(HOSE_LAST_ACTIVE_KEY) is None
 
 
 class TestListValvesParsing:

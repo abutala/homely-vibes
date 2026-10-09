@@ -93,7 +93,7 @@ assertions:
 - `test_pipe_break_fires_within_window` — Pipe Break fires within `duration_minutes + poll_interval` of injection, then clears once
 - `test_slow_leak_fires_leak_rule_not_mid_or_high` — a 0.18 gpm leak triggers Leak but never Mid/High/Pipe (threshold gating)
 - `test_slow_leak_fires_once_per_day` — daily dedup holds across the 72h leak window
-- `test_irrigation_suppresses_concurrent_high_flow` — flow during Rachio irrigation does not fire, and post-irrigation slack prevents tail-window false fires
+- `test_irrigation_suppresses_concurrent_high_flow` — flow during Rachio irrigation does not fire, and the irrigation tail prevents tail-window false fires
 - `test_short_shower_does_not_fire_mid_flow` — events too short to cross any window are silent
 - `test_pipe_break_clear_arrives_only_after_active_to_clear` — exactly one clear per active→clear transition
 
@@ -140,21 +140,15 @@ When the simulator was first run, it immediately surfaced a real bug: the
 cycle right after Rachio finished irrigating queried Flume readings that
 still overlapped the irrigation window, and the engine fired a false alarm.
 
-Fix: `RACHIO_POST_ACTIVE_SLACK_MINUTES = 10` in
-[alert_engine.py](alert_engine.py). The engine remembers when Rachio (or
-the hose timer) was last seen active and suppresses any rule whose lookback
-window plus 10-min slack overlaps that timestamp.
+Fix: `IRRIGATION_TAIL_MINUTES = 10` in [alert_engine.py](alert_engine.py).
+The engine remembers when Rachio (or the hose timer) was last seen active,
+and holds a rule until its own lookback window starts after that time plus
+the 10-min tail.
 
-**Tradeoff**: after a 30-min irrigation, the Leak rule (120 min window) is
-suppressed for ~130 min. A leak forming *immediately* after irrigation
-would be detected ~130 + 120 = 250 min (~4 hr) late. Acceptable because the
-more common failure is irrigation→false-alarm, not leak-right-after-
-irrigation.
-
-If this tradeoff turns out wrong in practice, the proper fix is to record a
-per-minute Rachio-active log and trim Flume readings to non-Rachio minutes
-before running the predicate. That's ~30 lines of additional state,
-deferred until evidence demands it.
+The first version held **every** rule for the longest window (120 + 10 min).
+On 2026-10-08 that hid a leak that began 13 min after the sprinklers
+stopped. Now a 5-min rule is back 15 min after watering, and the 45-min Leak
+rule 55 min after.
 
 ## Tuning rules with the simulator
 
