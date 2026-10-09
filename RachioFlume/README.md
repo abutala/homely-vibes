@@ -294,7 +294,7 @@ kill <process_id>
 
 6. **AlertEngine** (`alert_engine.py`) + **AlertRule** (`alert_rules.py`)
    - Runs at the end of each collector cycle
-   - **Zone-end reporting**: detects when a Rachio zone finishes, waits for slack, sends one P-2 (silent) report per zone *per cycle* — no per-day dedup; the message carries a cycle counter so repeat runs are distinguishable. Includes runtime, avg GPM, total gallons
+   - **Zone-end reporting**: detects when a Rachio zone finishes and sends one P-2 (silent) report per zone *per cycle* — no per-day dedup; the message carries a cycle counter so repeat runs are distinguishable. Includes runtime, avg GPM, total gallons
    - **Zone anomaly detection**: checks zone-end flow against per-zone thresholds (configured in `config/default.yaml` under `rachio_flume.alerts.zone_thresholds`). Alerts at P2 when flow exceeds `avg + max(0.5 GPM, 10% of avg)`. Unknown zones default to 0.5 GPM threshold.
    - **Anomaly rules**: evaluates each rule's predicate against trailing per-minute Flume readings — requires mean ≥ threshold AND CV ≤ max_cv (coefficient-of-variation filter rejects spiky noise), after dropping the top and bottom 5% of minutes for a `trim_outliers` rule
    - Anomaly fires at P2 (emergency), at most once per day per rule; P0 clear on active→clear

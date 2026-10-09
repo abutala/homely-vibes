@@ -23,9 +23,10 @@ class AlertRule(BaseModel):
     """One sustained-flow alert rule.
 
     The rule fires when the trailing `duration_minutes` window passes the mean
-    and CV tests in `AlertEngine._rule_matches`. While the condition holds, the
-    engine re-fires every `retrigger_minutes`. A normal-priority "all clear"
-    is emitted once on transition active -> clear.
+    and CV tests in `AlertEngine._rule_matches`. It sends at most once per day:
+    `retrigger_minutes` drives the state machine, but `AlertEngine.evaluate`
+    skips a repeat send on the same day. An "all clear" is emitted once on
+    transition active -> clear.
     """
 
     name: str = Field(

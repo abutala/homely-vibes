@@ -38,10 +38,11 @@ def hose_poll_key(label: str) -> str:
     return f"hose::poll::{label}::last_success"
 
 
-# Cross-component key: AlertEngine reads this to suppress Flume rule alerts
-# while a hose-timer valve is running or recently ran. Mirrors the controller's
-# in-memory rachio state — kept in DB metadata so the two processors stay
-# decoupled (HoseTimerProcessor writes; AlertEngine reads).
+# Cross-component key: when a hose-timer valve was last seen running.
+# AlertEngine holds each Flume rule until its window is clear of that time, as
+# it does with the controller's `alert::__rachio__::last_seen`. Kept in DB
+# metadata so the two processors stay decoupled (HoseTimerProcessor writes;
+# AlertEngine reads).
 HOSE_LAST_ACTIVE_KEY = "alert::__hose__::last_active"
 
 

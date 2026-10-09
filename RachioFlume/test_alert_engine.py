@@ -171,7 +171,7 @@ def test_predicate_leak_rejects_intermittent_spikes(engine: AlertEngine) -> None
 
 
 # ---------------------------------------------------------------------- #
-# State machine (Slot 2)                                               #
+# State machine (Slot 2)                                                 #
 # ---------------------------------------------------------------------- #
 
 

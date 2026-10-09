@@ -119,8 +119,8 @@ simulator: `REPORT` (P-1), `FIRE` (P2), `CLEAR` (P0). Suppressed cycles
 **Expected on a healthy 7-day replay** against current prod: roughly
 24 `Zone Report` entries (12 active zones × ~2 cycles/week), zero `Zone
 Anomaly` fires (unless you've actually had a leaking zone), zero false
-`Pipe Break` / `Leak` fires during irrigation windows, and ~half the cycles
-flagged as suppressed by Rachio during the morning irrigation hours.
+`Pipe Break` / `Leak` fires during irrigation windows, and the cycles during
+and just after the morning irrigation flagged as held.
 
 ## What we deliberately do NOT test
 
@@ -134,7 +134,7 @@ flagged as suppressed by Rachio during the morning irrigation hours.
   verified once via live probe (see the original PR description on #199);
   the unit tests use captured response shapes.
 
-## Rachio post-active slack: a tradeoff exposed by the simulator
+## The irrigation tail: a tradeoff exposed by the simulator
 
 When the simulator was first run, it immediately surfaced a real bug: the
 cycle right after Rachio finished irrigating queried Flume readings that
@@ -147,8 +147,9 @@ the 10-min tail.
 
 The first version held **every** rule for the longest window (120 + 10 min).
 On 2026-10-08 that hid a leak that began 13 min after the sprinklers
-stopped. Now a 5-min rule is back 15 min after watering, and the 45-min Leak
-rule 55 min after.
+stopped. Now a rule is back once its own window plus the 10-min tail has
+passed since irrigation was last seen: a 4-min rule after about 15 min, the
+45-min Leak rule after about 56.
 
 ## Tuning rules with the simulator
 

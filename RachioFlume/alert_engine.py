@@ -2,8 +2,8 @@
 
 Runs at the end of every collector cycle. Detects when a Rachio zone finishes
 irrigating — either because a new zone started (zone transition) or because
-Rachio went fully idle — and sends exactly **one** P-1 notification per zone
-per day reporting:
+Rachio went fully idle — and sends one P-2 (silent) report per zone end,
+every cycle, reporting:
   • Zone name
   • Runtime (minutes)
   • Average flow rate (GPM, computed from per-minute Flume readings)
@@ -321,7 +321,7 @@ class AlertEngine:
         now: datetime,
         dry_run: bool,
     ) -> bool:
-        """Send a P-1 report for a zone that just ended.
+        """Send a P-2 report for a zone that just ended.
 
         Reports every cycle (no per-day dedup). Includes cycle count in message
         so repeated runs of the same zone are distinguishable.
@@ -374,7 +374,7 @@ class AlertEngine:
         return True
 
     # ------------------------------------------------------------------ #
-    # Rule-based anomaly detection (downgraded to P1)                     #
+    # Rule-based anomaly detection (P2)                                   #
     # ------------------------------------------------------------------ #
 
     # ------------------------------------------------------------------ #
@@ -842,7 +842,7 @@ class AlertEngine:
                     # zone to prevent re-detection.
                     self._save_rachio_state(last_rachio_active_at or now, None, None)
 
-        # --- Zone-end report (one per zone per day) ---
+        # --- Zone-end report (one per zone end) ---
         if zone_to_report is not None:
             zone_reported = self._check_zone_end_report(
                 zone_to_report,
@@ -950,7 +950,10 @@ class AlertEngine:
         else:
             rachio_iso = self.db.get_metadata(_RACHIO_LAST_SEEN_KEY)
             if rachio_iso:
-                seen.append((datetime.fromisoformat(rachio_iso), "rachio (recent)"))
+                try:
+                    seen.append((datetime.fromisoformat(rachio_iso), "rachio (recent)"))
+                except ValueError as e:
+                    self.logger.warning(f"Bad Rachio last-seen value, ignoring: {e}")
         hose_blob = self.db.get_metadata(HOSE_LAST_ACTIVE_KEY)
         if hose_blob:
             try:

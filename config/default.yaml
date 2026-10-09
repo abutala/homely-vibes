@@ -356,13 +356,14 @@ flume:
 #   P2   emergencies               -- sustained-flow rules, zone anomaly,
 #                                     Flume outage (leak detection blind),
 #                                     stale zone (15d of no watering)
-# Fires re-trigger every retrigger_minutes while the condition holds, unless
-# muted; an "all clear" fires once on transition active -> clear.
+# Watchdogs re-trigger every retrigger_minutes while the condition holds,
+# unless muted; sustained-flow rules send at most once per day. An "all clear"
+# fires once on transition active -> clear.
 # Whole-house flow rules are suppressed entirely while a Rachio zone irrigates.
 rachio_flume:
   alerts:
     enabled: true
-    default_retrigger_minutes: 30   # cadence for re-firing default_flow_rules
+    default_retrigger_minutes: 30   # default_flow_rules state cadence; sends stay once per day
 
     # === Per-zone anomaly check (Rachio-sourced; fires at run end) ===
     # threshold = avg_gpm + max(absolute_gpm, percent_above/100 * avg_gpm)
