@@ -5,7 +5,7 @@ These tests use the real AlertEngine but back the Flume/Rachio clients with a
 SyntheticDataset and capture Pushover sends instead of dispatching them.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -57,9 +57,10 @@ async def test_pipe_break_fires_within_window(start: datetime) -> None:
 
     pipe_fires = _fires(result, "Pipe Break")
     assert len(pipe_fires) >= 1, "Pipe Break should fire at least once"
-    # First fire must be within (5 min rule window + 5 min poll lag) = 10 min of break start
+    # First fire must be within (5 min rule window + 5 min poll lag) of the break
+    break_at = start + timedelta(hours=10)
     first = pipe_fires[0]
-    assert (first.when - start).total_seconds() / 60 <= 10 * 60 + 10, (
+    assert first.when - break_at <= timedelta(minutes=10), (
         "Pipe Break should fire within 10 min of the break starting"
     )
 
