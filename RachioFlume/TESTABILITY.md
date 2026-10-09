@@ -113,7 +113,7 @@ uv run python RachioFlume/rfmanager.py alerts replay \
 ```
 
 Output is tab-aligned and uses the same label set as the synthetic
-simulator: `REPORT` (P-1), `FIRE` (P2), `CLEAR` (P0). Suppressed cycles
+simulator: `REPORT` (P-2), `FIRE` (P1 or P2), `CLEAR` (P0). Suppressed cycles
 (controller OR hose-timer recent) are summarized at the bottom.
 
 **Expected on a healthy 7-day replay** against current prod: roughly
@@ -140,16 +140,16 @@ When the simulator was first run, it immediately surfaced a real bug: the
 cycle right after Rachio finished irrigating queried Flume readings that
 still overlapped the irrigation window, and the engine fired a false alarm.
 
-Fix: `IRRIGATION_TAIL_MINUTES = 10` in [alert_engine.py](alert_engine.py).
-The engine remembers when Rachio (or the hose timer) was last seen active,
-and holds a rule until its own lookback window starts after that time plus
-the 10-min tail.
+Fix: the engine stamps when irrigation ran until — the latest poll that saw
+it running, or the first that saw it stopped — and holds a rule until its own
+lookback window starts after that stamp plus `irrigation_tail_minutes`
+(2, in config).
 
 The first version held **every** rule for the longest window (120 + 10 min).
 On 2026-10-08 that hid a leak that began 13 min after the sprinklers
-stopped. Now a rule is back once its own window plus the 10-min tail has
-passed since irrigation was last seen: a 4-min rule after about 15 min, the
-45-min Leak rule after about 56.
+stopped. Stamping the first idle poll is what lets the tail be 2 min, not 10:
+a stamp from the last *active* poll can sit up to one 5-min poll before the
+real stop. Pipes drain in about a minute on prod data.
 
 ## Tuning rules with the simulator
 

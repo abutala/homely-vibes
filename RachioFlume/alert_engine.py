@@ -9,8 +9,8 @@ every cycle, reporting:
   • Average flow rate (GPM, computed from per-minute Flume readings)
   • Total water used (gallons)
 
-Rule-based anomaly alerts (pipe break, leak, etc.) remain P2 (emergency)
-and fire at most once per day per rule.
+Rule-based anomaly alerts (pipe break, leak, etc.) fire P1 first, then P2
+every window while they hold, and a P0 "all clear" once they stop.
 """
 
 import json
@@ -25,20 +25,13 @@ from RachioFlume.alert_rules import AlertRule, ZoneThreshold, send_zone_outcome_
 from RachioFlume.data_storage import ACTIVE_FLOW_GPM, WaterTrackingDB
 from RachioFlume.flume_client import FlumeClient, WaterReading, completed_minutes
 from RachioFlume.hose_timer_processor import HOSE_LAST_ACTIVE_KEY, hose_poll_key
-from RachioFlume.rachio_client import RachioClient, Zone
-
-# Minutes after irrigation was last seen that still count as irrigation: the
-# stop is noticed up to one 5-min poll late, and the pipes drain after it.
-# A flow rule waits until its whole window is past this tail.
-IRRIGATION_TAIL_MINUTES = 10
-
-# Share of the lowest and of the highest minutes a `trim_outliers` rule drops.
-TRIM_FRACTION_PER_SIDE = 0.05
+from RachioFlume.rachio_client import RachioClient
 
 _RACHIO_STATE_KEY = "alert::__rachio__::last_active"
-_RACHIO_LAST_SEEN_KEY = "alert::__rachio__::last_seen"
+# Irrigation by the controller ran until no later than this: stamped on every
+# poll that sees a zone running, and on the first poll that sees it stopped.
+_RACHIO_IRRIGATING_UNTIL_KEY = "alert::__rachio__::irrigating_until"
 _REPORTED_ZONES_KEY = "reported::zones::{date}"
-_REPORTED_RULES_KEY = "reported::rules::{date}"
 _FLUME_OUTAGE_NAME = "Flume Data Outage"
 _RACHIO_OUTAGE_NAME = "Rachio Controller Data Outage"
 
@@ -59,30 +52,33 @@ _KNOWN_BATTERY_STATUSES = LOW_BATTERY_STATUSES | {"GOOD", "UNKNOWN"}
 
 
 def _irrigation_hold(
-    rule: AlertRule, now: datetime, last_irrigation: Optional[tuple[datetime, str]]
+    rule: AlertRule,
+    now: datetime,
+    last_irrigation: Optional[tuple[datetime, str]],
+    tail_minutes: int,
 ) -> Optional[str]:
     """The irrigation source that still overlaps this rule's window, if any.
 
-    Each rule waits only for its own window to clear the irrigation tail, so a
-    5-min rule is back 15 min after watering while a 45-min rule takes 55.
+    Each rule waits only until its own window starts after the irrigation
+    stamp plus the tail.
     """
     if last_irrigation is None:
         return None
-    seen_at, source = last_irrigation
+    until, source = last_irrigation
     window_start = now.replace(second=0, microsecond=0) - timedelta(minutes=rule.duration_minutes)
-    if window_start <= seen_at + timedelta(minutes=IRRIGATION_TAIL_MINUTES):
+    if window_start <= until + timedelta(minutes=tail_minutes):
         return source
     return None
 
 
-def trim_outliers(values: list[float]) -> list[float]:
-    """Drop the lowest and highest TRIM_FRACTION_PER_SIDE of the values.
+def trim_outliers(values: list[float], fraction: float) -> list[float]:
+    """Drop `fraction` of the lowest and of the highest values.
 
     A leak is a steady trickle. A flush on top of it, or one dropout minute,
     is an outlier that must not hide it. Rounds down, so a short window
     keeps every value.
     """
-    k = int(len(values) * TRIM_FRACTION_PER_SIDE)
+    k = int(len(values) * fraction)
     return sorted(values)[k : len(values) - k]
 
 
@@ -145,17 +141,6 @@ def _today_key(template: str, now: datetime) -> str:
     return template.format(date=now.strftime("%Y-%m-%d"))
 
 
-def _load_set(db: WaterTrackingDB, key: str) -> set[str]:
-    blob = db.get_metadata(key)
-    if not blob:
-        return set()
-    return set(json.loads(blob))
-
-
-def _save_set(db: WaterTrackingDB, key: str, s: set[str]) -> None:
-    db.set_metadata(key, json.dumps(sorted(s)))
-
-
 def _load_count_map(db: WaterTrackingDB, key: str) -> dict[str, int]:
     blob = db.get_metadata(key)
     if not blob:
@@ -193,6 +178,7 @@ class AlertEngine:
         device_offline_retrigger_minutes: int = 1440,
         valve_battery_retrigger_minutes: int = 1440,
         hose_device_labels: Optional[list[str]] = None,
+        irrigation_tail_minutes: int = 2,
     ) -> None:
         self.flume = flume_client
         self.rachio = rachio_client
@@ -211,6 +197,7 @@ class AlertEngine:
         self.device_offline_retrigger_minutes = device_offline_retrigger_minutes
         self.valve_battery_retrigger_minutes = valve_battery_retrigger_minutes
         self.hose_device_labels = hose_device_labels or []
+        self.irrigation_tail_minutes = irrigation_tail_minutes
         self.logger = get_logger(__name__)
 
     # ------------------------------------------------------------------ #
@@ -381,39 +368,25 @@ class AlertEngine:
     # Variance-aware rule matching                                      #
     # ------------------------------------------------------------------#
 
-    @staticmethod
-    def _max_cv(min_gpm: float) -> float:
-        """Max acceptable coefficient of variation for a rule.
-
-        Lower thresholds need tighter variance control — Flume's absolute
-        sensor noise is a larger fraction of a 0.1 GPM signal than an 8 GPM
-        pipe break.  Formula calibrated empirically; capped to [0.15, 0.5].
-        """
-        cv = 0.5 - 0.04 * min_gpm
-        return max(0.15, min(0.5, cv))
-
     def _rule_matches(self, readings: list[WaterReading], rule: AlertRule) -> bool:
         if len(readings) < rule.duration_minutes:
             return False
         recent = readings[-rule.duration_minutes :]
-        values = [r.value for r in recent]
-        if rule.trim_outliers:
-            values = trim_outliers(values)
+        values = trim_outliers([r.value for r in recent], rule.trim_fraction)
         mean_gpm = sum(values) / len(values)
 
         if mean_gpm < rule.min_gpm:
             return False
 
-        # Variance guard: sustained flow must have low relative variation.
-        # Spiky noise (a few high readings among mostly-zero minutes) will
-        # have a high CV and be rejected even if the mean passes.
-        if len(values) >= 2 and mean_gpm > 0:
+        # Spread check: spiky noise (a few high readings among mostly-zero
+        # minutes) has a high CV and is rejected even if the mean passes.
+        if rule.max_cv is not None and len(values) >= 2 and mean_gpm > 0:
             variance = sum((x - mean_gpm) ** 2 for x in values) / len(values)
             cv = variance**0.5 / mean_gpm
-            if cv > self._max_cv(rule.min_gpm):
+            if cv > rule.max_cv:
                 self.logger.debug(
                     f"Rule '{rule.name}' mean {mean_gpm:.2f} passes threshold "
-                    f"but CV {cv:.3f} > {self._max_cv(rule.min_gpm):.3f} — rejecting"
+                    f"but CV {cv:.3f} > {rule.max_cv:.3f} — rejecting"
                 )
                 return False
 
@@ -447,19 +420,19 @@ class AlertEngine:
     def _save_state(self, rule: AlertRule, state: AlertState) -> None:
         self.db.set_metadata(_state_key(rule.name), state.to_json())
 
-    def _send_fire(self, rule: AlertRule, readings: list[WaterReading]) -> None:
+    def _send_fire(self, rule: AlertRule, readings: list[WaterReading], priority: int) -> None:
         recent = readings[-rule.duration_minutes :] if readings else []
         avg = sum(r.value for r in recent) / len(recent) if recent else 0.0
         msg = (
             f"{rule.name}: sustained flow >= {rule.min_gpm} GPM "
             f"for {rule.duration_minutes} min (avg {avg:.2f} GPM)."
         )
-        self.pushover.send_message(msg, title=f"RachioFlume: {rule.name}", priority=2)
-        self.logger.warning(f"FIRED P2 alert: {rule.name}")
+        self.pushover.send_message(msg, title=f"RachioFlume: {rule.name}", priority=priority)
+        self.logger.warning(f"FIRED P{priority} alert: {rule.name}")
 
     def _send_clear(self, rule: AlertRule) -> None:
         msg = f"{rule.name}: condition cleared."
-        self.pushover.send_message(msg, title=f"RachioFlume: {rule.name} cleared", priority=-1)
+        self.pushover.send_message(msg, title=f"RachioFlume: {rule.name} cleared", priority=0)
         self.logger.info(f"Clear notification: {rule.name}")
 
     # ------------------------------------------------------------------ #
@@ -484,8 +457,6 @@ class AlertEngine:
 
         Fires `fire_message` at `fire_priority` on clear→active and on the
         retrigger cadence while active; P0 `clear_message` once on recovery.
-        Exempt from the once-per-day rule dedup: while a watchdog condition
-        holds, keep firing.
 
         `state_id` scopes the persisted state key independently of the
         display `rule_name`. Callers whose rule name embeds a user-set label
@@ -497,6 +468,8 @@ class AlertEngine:
             min_gpm=0.0,
             duration_minutes=1,
             retrigger_minutes=retrigger_minutes,
+            max_cv=None,
+            trim_fraction=0.0,
         )
         state = self._load_state(rule)
         action = self._decide_action(is_active, state, rule, now)
@@ -854,15 +827,16 @@ class AlertEngine:
             if zone_reported:
                 results.append({"zone_report": True, "zone": zone_to_report})
 
-        last_irrigation = self._last_irrigation(rachio_active, now, dry_run)
+        # The poll that first sees the controller idle still counts: the stop
+        # happened at or before it.
+        rachio_zone = rachio_active.name if rachio_active else last_rachio_zone
+        last_irrigation = self._last_irrigation(rachio_zone, now, dry_run)
 
         # --- Rule-based anomaly detection ---
-        reported_rules = _load_set(self.db, _today_key(_REPORTED_RULES_KEY, now))
-
         for rule in self.rules:
             entry: dict = {"rule": rule.name, "action": AlertAction.NOTHING.value}
 
-            held_by = _irrigation_hold(rule, now, last_irrigation)
+            held_by = _irrigation_hold(rule, now, last_irrigation, self.irrigation_tail_minutes)
             if held_by:
                 entry["suppressed_by"] = held_by
                 results.append(entry)
@@ -892,15 +866,10 @@ class AlertEngine:
                 continue
 
             if action == AlertAction.FIRE:
-                # One fire per rule per day
-                if rule.name not in reported_rules:
-                    self._send_fire(rule, readings)
-                    state.last_state = "active"
-                    state.last_fired_at = now
-                    reported_rules.add(rule.name)
-                    _save_set(self.db, _today_key(_REPORTED_RULES_KEY, now), reported_rules)
-                else:
-                    self.logger.debug(f"Rule '{rule.name}' already fired today, skipping")
+                # P1 opens the episode; every repeat while it holds is P2.
+                self._send_fire(rule, readings, priority=2 if state.last_state == "active" else 1)
+                state.last_state = "active"
+                state.last_fired_at = now
                 self._save_state(rule, state)
             elif action == AlertAction.FIRE_CLEAR:
                 self._send_clear(rule)
@@ -935,25 +904,26 @@ class AlertEngine:
         return results
 
     def _last_irrigation(
-        self, rachio_active: Optional[Zone], now: datetime, dry_run: bool
+        self, rachio_zone: Optional[str], now: datetime, dry_run: bool
     ) -> Optional[tuple[datetime, str]]:
-        """When irrigation was last seen running, and by which source.
+        """When irrigation last ran (at the latest), and by which source.
 
         Two sources: the controller, polled here, and the hose timer, whose
         processor stamps its own key. The later of the two wins.
+        `rachio_zone` is the zone running now, or the one this poll first saw stop.
         """
         seen: list[tuple[datetime, str]] = []
-        if rachio_active:
-            seen.append((now, f"rachio:{rachio_active.name}"))
+        if rachio_zone:
+            seen.append((now, f"rachio:{rachio_zone}"))
             if not dry_run:
-                self.db.set_metadata(_RACHIO_LAST_SEEN_KEY, now.isoformat())
+                self.db.set_metadata(_RACHIO_IRRIGATING_UNTIL_KEY, now.isoformat())
         else:
-            rachio_iso = self.db.get_metadata(_RACHIO_LAST_SEEN_KEY)
+            rachio_iso = self.db.get_metadata(_RACHIO_IRRIGATING_UNTIL_KEY)
             if rachio_iso:
                 try:
                     seen.append((datetime.fromisoformat(rachio_iso), "rachio (recent)"))
                 except ValueError as e:
-                    self.logger.warning(f"Bad Rachio last-seen value, ignoring: {e}")
+                    self.logger.warning(f"Bad Rachio irrigating-until value, ignoring: {e}")
         hose_blob = self.db.get_metadata(HOSE_LAST_ACTIVE_KEY)
         if hose_blob:
             try:

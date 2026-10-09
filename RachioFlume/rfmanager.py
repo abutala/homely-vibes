@@ -176,6 +176,7 @@ def _build_alert_engine() -> AlertEngine:
         device_offline_retrigger_minutes=cfg.rachio_flume.alerts.device_offline.retrigger_minutes,
         valve_battery_retrigger_minutes=cfg.rachio_flume.alerts.valve_battery.retrigger_minutes,
         hose_device_labels=[d.label for d in cfg.rachio.devices if d.type == "hose_timer"],
+        irrigation_tail_minutes=cfg.rachio_flume.alerts.irrigation_tail_minutes,
     )
 
 

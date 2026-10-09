@@ -23,10 +23,10 @@ class AlertRule(BaseModel):
     """One sustained-flow alert rule.
 
     The rule fires when the trailing `duration_minutes` window passes the mean
-    and CV tests in `AlertEngine._rule_matches`. It sends at most once per day:
-    `retrigger_minutes` drives the state machine, but `AlertEngine.evaluate`
-    skips a repeat send on the same day. An "all clear" is emitted once on
-    transition active -> clear.
+    and CV tests in `AlertEngine._rule_matches`: first at P1, then at P2 every
+    `retrigger_minutes` while it holds, and a P0 "all clear" once on transition
+    active -> clear. Flow rules from config repeat every window; watchdogs
+    reuse the model as state and set their own cadence.
     """
 
     name: str = Field(
@@ -37,9 +37,11 @@ class AlertRule(BaseModel):
     retrigger_minutes: int = Field(
         ..., ge=1, description="Cadence to re-fire while condition persists"
     )
-    trim_outliers: bool = Field(
-        default=False,
-        description="Drop the top and bottom 5% of minutes before the mean and CV checks",
+    max_cv: float | None = Field(
+        ..., ge=0.0, description="Max std/mean over the window; None skips the spread check"
+    )
+    trim_fraction: float = Field(
+        ..., ge=0.0, lt=0.5, description="Share of lowest and of highest minutes dropped first"
     )
 
 
@@ -85,16 +87,15 @@ def load_rules_from_config() -> list[AlertRule]:
     Flow / Leak) that apply to Flume readings independent of Rachio activity.
     Each waits until its window is clear of irrigation (controller or hose timer).
     """
-    cfg = get_config()
-    alerts_cfg = cfg.rachio_flume.alerts
-    default_retrigger = alerts_cfg.default_retrigger_minutes
+    alerts_cfg = get_config().rachio_flume.alerts
     return [
         AlertRule(
             name=r.name,
             min_gpm=r.min_gpm,
             duration_minutes=r.duration_minutes,
-            retrigger_minutes=default_retrigger,
-            trim_outliers=r.trim_outliers,
+            retrigger_minutes=r.duration_minutes,
+            max_cv=r.max_cv,
+            trim_fraction=r.trim_fraction,
         )
         for r in alerts_cfg.default_flow_rules
     ]

@@ -299,8 +299,9 @@ class AlertRuleConfig:
 
     name: str
     min_gpm: float
-    duration_minutes: int
-    trim_outliers: bool = False  # drop the top and bottom 5% of minutes before the check
+    duration_minutes: int  # window, and the repeat cadence while the rule holds
+    max_cv: float | None  # max std/mean over the window; null skips the spread check
+    trim_fraction: float  # share of lowest and of highest minutes dropped before the checks
 
 
 @dataclass
@@ -389,7 +390,7 @@ class RachioFlumeAlertsConfig:
     """
 
     enabled: bool
-    default_retrigger_minutes: int  # default_flow_rules state cadence; sends stay once per day
+    irrigation_tail_minutes: int  # flow rules wait this long past the first idle poll
     zone_anomaly: ZoneAnomalyConfig
     default_flow_rules: list[AlertRuleConfig]
     stale_zone_days: int
