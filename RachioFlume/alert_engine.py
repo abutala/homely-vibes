@@ -99,7 +99,7 @@ def _zone_name_matches(session_name: str, lookup_name: str) -> bool:
 class AlertAction(str, Enum):
     NOTHING = "nothing"
     ZONE_REPORT = "zone_report"  # priority 1
-    FIRE = "fire"  # priority 2 (emergency)
+    FIRE = "fire"  # flow rules: P1 opening an episode, P2 repeats
     FIRE_CLEAR = "fire_clear"  # priority 0
 
 
@@ -369,7 +369,7 @@ class AlertEngine:
         return True
 
     # ------------------------------------------------------------------ #
-    # Rule-based anomaly detection (P2)                                   #
+    # Rule-based anomaly detection (P1, then P2)                           #
     # ------------------------------------------------------------------ #
 
     # ------------------------------------------------------------------ #
@@ -995,6 +995,9 @@ class AlertEngine:
                     if state.last_fired_at
                     else None,
                     "mute_until": state.mute_until.isoformat() if state.mute_until else None,
+                    "failing_since": state.failing_since.isoformat()
+                    if state.failing_since
+                    else None,
                 }
             )
         return out

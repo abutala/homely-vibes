@@ -134,6 +134,8 @@ async def run_simulation(
         absolute_gpm=za_cfg.absolute_gpm,
         percent_above=za_cfg.percent_above,
         min_runtime_minutes=za_cfg.min_runtime_minutes,
+        irrigation_tail_minutes=cfg.rachio_flume.alerts.irrigation_tail_minutes,
+        clear_after_minutes=cfg.rachio_flume.alerts.clear_after_minutes,
     )
 
     result = SimulationResult(dataset=dataset, rules=rules)

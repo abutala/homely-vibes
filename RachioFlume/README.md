@@ -218,7 +218,7 @@ uv run python RachioFlume/rfmanager.py alerts replay \
     --hours 168 --db /tmp/prod_water_tracking.db
 ```
 
-Output is tab-aligned and shows the new label set: `REPORT` (P-2), `FIRE` (P2),
+Output is tab-aligned and shows the new label set: `REPORT` (P-2), `FIRE` (P1 or P2),
 `CLEAR` (P0). Suppressed cycles are summarized at the bottom (the suppression
 window includes both controller and hose-timer activity).
 

@@ -2,8 +2,8 @@
 
 Polls each hose-timer base station, detects valve run transitions
 (start / end) via the `lastWateringAction` discriminator, persists
-events and sessions, and emits a P-1 pushover zone-end report when a
-run completes — same format as the controller path, with the device
+events and sessions, and emits a zone-end Pushover when a run completes
+(P-2 report, or P2 anomaly) — same format as the controller path, with the device
 label and the configured baseline GPM appended for context.
 """
 

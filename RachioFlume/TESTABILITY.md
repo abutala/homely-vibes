@@ -92,7 +92,7 @@ assertions:
 
 - `test_pipe_break_fires_within_window` — Pipe Break fires within `duration_minutes + poll_interval` of injection, then clears once
 - `test_slow_leak_fires_leak_rule_not_mid_or_high` — a 0.18 gpm leak triggers Leak but never Mid/High/Pipe (threshold gating)
-- `test_slow_leak_fires_once_per_day` — daily dedup holds across the 72h leak window
+- `test_slow_leak_pages_p1_then_p2_every_window` — a 72h leak pages P1, then P2 every 45-min window, and clears once
 - `test_irrigation_suppresses_concurrent_high_flow` — flow during Rachio irrigation does not fire, and the irrigation tail prevents tail-window false fires
 - `test_short_shower_does_not_fire_mid_flow` — events too short to cross any window are silent
 - `test_pipe_break_clear_arrives_only_after_active_to_clear` — exactly one clear per active→clear transition

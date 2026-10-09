@@ -22,12 +22,12 @@ from lib.notifications import Notifier
 class AlertRule(BaseModel):
     """One sustained-flow alert rule.
 
-    The rule fires when the trailing `duration_minutes` window passes the mean
-    and CV tests in `AlertEngine._rule_matches`: first at P1, then at P2 every
-    `retrigger_minutes` while it holds, and a P0 "all clear" once it has failed
-    for `clear_after_minutes` in a row. Flow rules from config repeat every
-    window; watchdogs
-    reuse the model as state and set their own cadence.
+    A flow rule fires when the trailing `duration_minutes` window passes the
+    mean and CV tests in `AlertEngine._rule_matches`: first at P1, then at P2
+    on the first poll at or after `retrigger_minutes` (its window) while it
+    holds, and a P0 "all clear" once it has failed for `clear_after_minutes`
+    in a row. Watchdogs reuse the model as state only, with their own cadence,
+    priority and immediate clear.
     """
 
     name: str = Field(
