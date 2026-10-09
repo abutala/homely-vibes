@@ -391,6 +391,7 @@ class RachioFlumeAlertsConfig:
 
     enabled: bool
     irrigation_tail_minutes: int  # flow rules wait this long past the first idle poll
+    clear_after_minutes: int  # a flow rule clears after failing this long in a row
     zone_anomaly: ZoneAnomalyConfig
     default_flow_rules: list[AlertRuleConfig]
     stale_zone_days: int

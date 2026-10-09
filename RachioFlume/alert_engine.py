@@ -10,7 +10,8 @@ every cycle, reporting:
   • Total water used (gallons)
 
 Rule-based anomaly alerts (pipe break, leak, etc.) fire P1 first, then P2
-every window while they hold, and a P0 "all clear" once they stop.
+every window while they hold, and a P0 "all clear" once they have failed for
+clear_after_minutes in a row.
 """
 
 import json
@@ -109,6 +110,7 @@ class AlertState:
     last_state: Optional[str] = None  # "active" | "clear" | None
     last_fired_at: Optional[datetime] = None
     mute_until: Optional[datetime] = None
+    failing_since: Optional[datetime] = None  # flow rules: first failing poll of an open episode
 
     def to_json(self) -> str:
         return json.dumps(
@@ -116,6 +118,7 @@ class AlertState:
                 "last_state": self.last_state,
                 "last_fired_at": self.last_fired_at.isoformat() if self.last_fired_at else None,
                 "mute_until": self.mute_until.isoformat() if self.mute_until else None,
+                "failing_since": self.failing_since.isoformat() if self.failing_since else None,
             }
         )
 
@@ -130,6 +133,9 @@ class AlertState:
             if d.get("last_fired_at")
             else None,
             mute_until=datetime.fromisoformat(d["mute_until"]) if d.get("mute_until") else None,
+            failing_since=datetime.fromisoformat(d["failing_since"])
+            if d.get("failing_since")
+            else None,
         )
 
 
@@ -179,6 +185,7 @@ class AlertEngine:
         valve_battery_retrigger_minutes: int = 1440,
         hose_device_labels: Optional[list[str]] = None,
         irrigation_tail_minutes: int = 2,
+        clear_after_minutes: int = 10,
     ) -> None:
         self.flume = flume_client
         self.rachio = rachio_client
@@ -198,6 +205,7 @@ class AlertEngine:
         self.valve_battery_retrigger_minutes = valve_battery_retrigger_minutes
         self.hose_device_labels = hose_device_labels or []
         self.irrigation_tail_minutes = irrigation_tail_minutes
+        self.clear_after_minutes = clear_after_minutes
         self.logger = get_logger(__name__)
 
     # ------------------------------------------------------------------ #
@@ -870,15 +878,24 @@ class AlertEngine:
                 self._send_fire(rule, readings, priority=2 if state.last_state == "active" else 1)
                 state.last_state = "active"
                 state.last_fired_at = now
+                state.failing_since = None
                 self._save_state(rule, state)
             elif action == AlertAction.FIRE_CLEAR:
-                self._send_clear(rule)
-                state.last_state = "clear"
+                # A flow near its threshold can fail one poll mid-episode; only
+                # clear_after_minutes of failing in a row ends the episode.
+                state.failing_since = state.failing_since or now
+                if now - state.failing_since >= timedelta(minutes=self.clear_after_minutes):
+                    self._send_clear(rule)
+                    state.last_state = "clear"
+                    state.failing_since = None
+                else:
+                    entry["action"] = AlertAction.NOTHING.value
                 self._save_state(rule, state)
             else:
                 new_state = "active" if is_active else "clear"
-                if state.last_state != new_state:
+                if state.last_state != new_state or (is_active and state.failing_since):
                     state.last_state = new_state
+                    state.failing_since = None
                     self._save_state(rule, state)
 
             results.append(entry)

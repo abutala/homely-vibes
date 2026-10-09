@@ -31,8 +31,11 @@ Mid Flow that the old hold had hidden (household use an hour after watering).
 Follow-up the same week: every knob moved into YAML per rule (`max_cv`,
 `trim_fraction`), the tail became `irrigation_tail_minutes: 2` measured from
 the first poll that sees irrigation stopped, rules repeat every window (P1
-first, then P2, P0 on clear) instead of once a day, and the high-flow rules
-dropped the spread check (next entry).
+first, then P2) instead of once a day, and the high-flow rules dropped the
+spread check (next entry). Without the once-a-day limit Leak flapped: its
+trimmed CV sits near the cap, so one failing poll cleared it and the next
+opened a new P1 (Oct 7: P1, P0, P1 within 25 min). A rule now clears only
+after `clear_after_minutes: 10` of failing in a row.
 
 ### The spread check hid a real high flow
 

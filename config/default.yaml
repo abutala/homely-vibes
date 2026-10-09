@@ -358,13 +358,16 @@ flume:
 #                                     stale zone (15d of no watering)
 # Watchdogs re-trigger every retrigger_minutes while the condition holds,
 # unless muted. Sustained-flow rules fire P1 first, then P2 every window while
-# they hold, and send a P0 "all clear" once on transition active -> clear.
+# they hold, and send a P0 "all clear" after clear_after_minutes of failing.
 # Whole-house flow rules are suppressed entirely while a Rachio zone irrigates.
 rachio_flume:
   alerts:
     enabled: true
     # Flow rules wait this long past the first poll that sees irrigation stopped.
     irrigation_tail_minutes: 2
+    # A flow rule sends its P0 "all clear" only after failing this long in a
+    # row, so one failing poll mid-leak does not restart the episode at P1.
+    clear_after_minutes: 10
 
     # === Per-zone anomaly check (Rachio-sourced; fires at run end) ===
     # threshold = avg_gpm + max(absolute_gpm, percent_above/100 * avg_gpm)

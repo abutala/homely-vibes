@@ -367,7 +367,9 @@ async def test_evaluate_clear_emits_priority_0(engine: AlertEngine, rule: AlertR
     )
     engine.flume.get_usage.return_value = _readings([0.0, 0.0, 0.0, 0.0])  # type: ignore[attr-defined]
 
-    results = await engine.evaluate()
+    await engine.evaluate()
+    engine.pushover.send_message.assert_not_called()  # type: ignore[attr-defined]
+    results = await engine.evaluate(now=datetime.now() + timedelta(minutes=10))
 
     assert results[0]["action"] == AlertAction.FIRE_CLEAR.value
     engine.pushover.send_message.assert_called_once()  # type: ignore[attr-defined]
@@ -1199,8 +1201,22 @@ async def test_flow_rule_fires_p1_then_p2_every_window_then_p0_clear(db: WaterTr
     await engine.evaluate(now=t0 + timedelta(minutes=8))
     engine.flume.get_usage = _steady_flume(0.0)  # type: ignore[method-assign]
     await engine.evaluate(now=t0 + timedelta(minutes=9))
+    await engine.evaluate(now=t0 + timedelta(minutes=19))
 
     assert _priorities(engine) == [1, 2, 2, 0]
+
+
+async def test_flow_rule_clears_only_after_failing_for_ten_minutes(db: WaterTrackingDB) -> None:
+    # Prod, 2026-10-07: Leak's CV sat near its cap, so one failing poll mid-leak
+    # cleared it and the next poll opened a new P1 episode.
+    engine = _make_engine(db, [SHORT])
+    t0 = datetime.now().replace(second=0, microsecond=0) - timedelta(hours=2)
+    for minute, gpm in [(0, 3.0), (5, 0.0), (10, 3.0), (15, 0.0), (20, 0.0), (25, 0.0)]:
+        engine.flume.get_usage = _steady_flume(gpm)  # type: ignore[method-assign]
+        await engine.evaluate(now=t0 + timedelta(minutes=minute))
+
+    # A 5-min dip keeps the episode (P2 at 10); 10 min of failing clears it (P0 at 25).
+    assert _priorities(engine) == [1, 2, 0]
 
 
 async def test_rachio_stop_is_stamped_on_the_first_idle_poll(db: WaterTrackingDB) -> None:
