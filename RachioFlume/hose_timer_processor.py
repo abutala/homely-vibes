@@ -2,8 +2,8 @@
 
 Polls each hose-timer base station, detects valve run transitions
 (start / end) via the `lastWateringAction` discriminator, persists
-events and sessions, and emits a P-1 pushover zone-end report when a
-run completes — same format as the controller path, with the device
+events and sessions, and emits a zone-end Pushover when a run completes
+(P-2 report, or P2 anomaly) — same format as the controller path, with the device
 label and the configured baseline GPM appended for context.
 """
 
@@ -38,11 +38,13 @@ def hose_poll_key(label: str) -> str:
     return f"hose::poll::{label}::last_success"
 
 
-# Cross-component key: when a hose-timer valve was last seen running.
-# AlertEngine holds each Flume rule until its window is clear of that time, as
-# it does with the controller's `alert::__rachio__::last_seen`. Kept in DB
-# metadata so the two processors stay decoupled (HoseTimerProcessor writes;
-# AlertEngine reads).
+# Cross-component key: hose watering ran until no later than this. Stamped on
+# every poll that sees a valve running AND on the poll that finalizes the run
+# (`run_completed`, only once the run's last minute has closed), so it is never
+# before the real stop. AlertEngine holds each Flume rule until its window is
+# clear of that time plus the tail, as it does with the controller's
+# `alert::__rachio__::irrigating_until`. Kept in DB metadata so the two
+# processors stay decoupled (HoseTimerProcessor writes; AlertEngine reads).
 HOSE_LAST_ACTIVE_KEY = "alert::__hose__::last_active"
 
 

@@ -21,12 +21,31 @@ never fired since it was added. Two independent causes:
   of the last zone. The Oct 8 trickle began 13 min after watering stopped and
   ended inside the hold.
 
-Fix: Leak runs over 45 min with `trim_outliers` (drop the top and bottom 5% of
+Fix (since reshaped, see the follow-up below): Leak runs over 45 min with `trim_outliers` (drop the top and bottom 5% of
 minutes before the mean and CV tests), and each rule waits only for its own
 window to clear irrigation plus a 10-min tail. A replay of Sep 1 – Oct 8 prod
 data fires Leak on Oct 7 20:38 and Oct 8 08:09 (plus a steady 0.13 GPM run on
 Oct 1). Pipe Break / High Flow / Mid Flow fire as before, except one Sep 19
 Mid Flow that the old hold had hidden (household use an hour after watering).
+
+Follow-up the same week: every knob moved into YAML per rule (`max_cv`,
+`trim_fraction`), the tail became `irrigation_tail_minutes: 2` measured from
+the first poll that sees irrigation stopped, rules repeat every window (P1
+first, then P2) instead of once a day, and the high-flow rules dropped the
+spread check (next entry). The `default.yaml` placeholders now match prod's
+windows (Pipe Break 5 min, High Flow 8). Without the once-a-day limit Leak flapped: its
+trimmed CV sits near the cap, so one failing poll cleared it and the next
+opened a new P1 (Oct 7: P1, P0, P1 within 25 min). A rule now clears only
+after `clear_after_minutes: 10` of failing in a row.
+
+### The spread check hid a real high flow
+
+On 2026-10-01, five minutes at ~9 GPM followed a ramp (0.1, 0.1, 1.5, 6.6,
+8.8 …). High Flow's mean passed but its CV was ~0.71, over the 0.28 cap, so
+only Pipe Break paged. A break that ramps, or one under varying household
+use, has a high CV and must still page; one glitch minute cannot fake 8 GPM
+for 5 minutes. Pipe Break and High Flow therefore run with `max_cv: null`.
+Replaying Sep 1 – Oct 8 without their CV check added only that one fire.
 
 ### 2026-09-12 — the weekly report showed Z9 watering for three days
 
@@ -155,17 +174,16 @@ the first.
 ### The CV variance gate is what keeps the low-flow rules quiet
 
 **Final detector logic for sustained-flow rules** — implemented in
-[`AlertEngine._rule_matches`](alert_engine.py). A rule fires when both
-conditions hold across the trailing `duration_minutes` window:
+[`AlertEngine._rule_matches`](alert_engine.py). After dropping `trim_fraction`
+of the lowest and of the highest minutes, a rule fires when these hold across
+the trailing `duration_minutes` window (the second only if `max_cv` is set):
 
 1. **Mean test** — `mean(values) ≥ rule.min_gpm`.
-2. **CV variance gate** — `cv = stddev / mean ≤ max_cv(rule.min_gpm)`,
-   where `max_cv = clip(0.5 − 0.04 × min_gpm, 0.15, 0.5)`. Rejects
-   spiky windows where a handful of high readings drag the mean up
-   past threshold but the rest are zero — Flume sensor noise has a
-   larger relative footprint at low GPM, so low-threshold rules
-   (Leak at 0.1 GPM) get a tighter CV cap than high-threshold rules
-   (Pipe Break at 8 GPM).
+2. **CV variance gate** — `cv = stddev / mean ≤ max_cv`, set per rule in
+   YAML (`null` skips it). Rejects spiky windows where a handful of high
+   readings drag the mean up past threshold but the rest are zero. The
+   values come from the old formula `clip(0.5 − 0.04 × min_gpm, 0.15, 0.5)`,
+   rounded; the high-flow rules now run without it (entry above).
 
 Tradeoff: an *intermittent* leak (e.g. a joint that pulses) where most
 per-minute readings are zero will fail the CV gate and stay silent.
@@ -178,8 +196,8 @@ pulse, rather than weaken the noise rejection.
 
 The gate also silenced *steady* leaks, which this entry missed: at 0.1–0.2
 GPM, Flume's 1/15-gallon steps plus one outlier minute exceed the CV cap.
-Leak therefore sets `trim_outliers` — the gate stays, but runs on the middle
-90% of minutes (2026-10-07 incident above).
+Leak therefore sets `trim_fraction: 0.05` — the gate stays, but runs on the
+middle 90% of minutes (2026-10-07 incident above).
 
 ### An alert that is routinely ignored is not an alert
 

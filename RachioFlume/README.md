@@ -13,14 +13,14 @@ A Python integration that connects Rachio irrigation controllers with Flume wate
 - **Usage Alerts** (`alert_engine.py`):
   - **Single dispatch per zone end**: One Pushover per zone end — `Rachio Zone Report` (P-2, silent) below anomaly threshold, `Rachio Zone Anomaly` (P2) above. Never both. Includes runtime, avg GPM, `(thresh X.XX)` (computed anomaly threshold), Total, and Deviation line on anomalies.
   - **Zone anomaly detection**: Per-zone baselines under `rachio_flume.alerts.zone_anomaly.zone_thresholds`, keyed by device label then zone identifier (controller: stringified `zone_number`; hose-timer: valve name). For hose timers the key may be the bare valve name **or** a `"<prefix> - <valve name>"` form (e.g. `"Z13 FS - Upper Deck Planters"`) — the suffix after `" - "` is matched against the live valve name via `resolve_hose_threshold`. Threshold formula: `avg_gpm + max(absolute_gpm, percent_above/100 × avg_gpm)`.
-  - **Default flow rules** (whole-house, Flume-only): Pipe Break / High Flow / Mid Flow / Leak — P2 (emergency), at most once per day per rule. CV-based variance filter rejects spiky noise; a rule with `trim_outliers: true` (Leak) drops the top and bottom 5% of minutes first.
-  - **Irrigation exclusion**: a flow rule waits until its own window is clear of irrigation (controller OR hose timer) plus a 10-min tail. Symmetric.
+  - **Default flow rules** (whole-house, Flume-only): Pipe Break / High Flow / Mid Flow / Leak — P1 when a rule first holds, then P2 every window while it holds, P0 "all clear" once it has failed for `clear_after_minutes` (10) in a row. Every knob is per rule in YAML: `min_gpm`, `duration_minutes`, `max_cv` (spread check; `null` skips it — set on Pipe Break and High Flow so a ramping burst still pages) and `trim_fraction` (Leak drops 5% of the lowest and of the highest minutes first).
+  - **Irrigation exclusion**: a flow rule waits until its own window is clear of irrigation (controller OR hose timer) plus `irrigation_tail_minutes`. Symmetric.
   - **Stale-zone monitor** (`stale_zone_checker.py`): **P2** alert if any enabled controller zone or **known hose-timer valve — connected or not** — hasn't run within `stale_zone_days` (default **15**). Widened from 10 days because 10 still fired on ordinary seasonal gaps; the wider window is what earns the emergency priority — a zone that has missed a fortnight is a real watering failure, not a blip. A disconnected valve is exactly the failure mode that stops it running, so it is never filtered out; the alert body notes `DISCONNECTED` (battery/BLE) and roster-staleness (valve dropped from the API response) as extra actionable lines. Daily dedup; hourly evaluation gate.
   - **Flume data-outage watchdog**: P2 when no water readings have landed for `flume_outage.stale_after_minutes` (default 60) — healthy meters report every minute, so a gap means the whole leak-detection stack is blind (expired auth, API outage, dead collector). Re-fires every `flume_outage.retrigger_minutes` (default 360) while stale; never suppressed by irrigation; P0 once on recovery.
   - **Rachio data-outage watchdog**: P1 when a Rachio feed stops **polling successfully** (not merely: hasn't watered). The controller feed (`last_rachio_collection`) and each hose base station (`hose::poll::<label>::last_success`) are watched independently — either API path can die alone. Fires after `rachio_outage.stale_after_minutes` (default 180 ≈ 36 failed 5-min polls); hose message flags that runs during the outage are unrecoverable (no history API). Re-fires every `rachio_outage.retrigger_minutes` (default 360); never suppressed by irrigation; P0 on recovery. Runs inside the collector, so a fully dead collector is covered instead by rfmanager's P2 fatal handler + run-one-constantly respawn.
   - **Device-offline health check**: P1 when the **controller** reports `status` OFFLINE or a **hose valve** reports disconnected, sustained for `device_offline.debounce_minutes` (default 60) — the debounce absorbs transient WiFi/BLE dropouts. Re-fires every `device_offline.retrigger_minutes` (default 1440); P0 on recovery. Observations older than the outage window are skipped (feed death belongs to the outage watchdog).
   - **Hose-valve battery health check**: P1 when a valve reports `batteryStatus` `LOW` or `REPLACE`. Rachio exposes a four-value enum — `GOOD` / `LOW` / `REPLACE` / `UNKNOWN` — and **no percentage anywhere in the API** ([getValve schema](https://rachio.readme.io/reference/valveservice_getvalve)), so there is no level to threshold and nothing to tune but the repeat cadence (`valve_battery.retrigger_minutes`, default 1440). `UNKNOWN` never fires: that is the valve saying it hasn't reported in, which is the offline check's job, and paging on it would fire on every BLE dropout. An unrecognized value logs a warning rather than paging, so a firmware that adds an enum member can't spontaneously start waking you up. No debounce (unlike `connected`, the status doesn't flap with range); stale roster rows are skipped, same as the offline check. P0 once on recovery.
-  - Mute support; P0 "all clear" on active→clear transition for sustained-flow rules.
+  - Mute support; P0 "all clear" for sustained-flow rules after `clear_after_minutes` of failing.
 - **Synthetic Simulator** (`simulate_alerts.py`): Replay scenarios through the alert engine without hitting real APIs or Pushover; wired into `test_alert_simulation.py`. See [TESTABILITY.md](TESTABILITY.md).
 - **HTML Email Report**: Daily fixed-width table (via `<pre>` monospace) covering all zones — controllers and hose valves in one unified table. Per-zone anomaly threshold + alert-session count are surfaced alongside runtime / gallons / GPM.
 - **Continuous Monitoring**: Automated data collection service
@@ -143,8 +143,13 @@ overridable per-house in `config/local.yaml`. The block is split by scope:
   and `zone_thresholds`. Computes `threshold = avg_gpm + max(absolute_gpm, percent_above/100 × avg_gpm)`.
 - **`default_flow_rules`** — whole-house sustained-flow rules (Flume only, no
   Rachio context). Pipe Break, High Flow, Mid Flow, Leak. Each waits until its
-  own window is clear of irrigation (controller OR hose timer). Optional
-  `trim_outliers: true` per rule (set on Leak).
+  own window is clear of irrigation (controller OR hose timer). Every key is
+  required: `name`, `min_gpm`, `duration_minutes` (window and repeat cadence),
+  `max_cv` (`null` skips the spread check), `trim_fraction`.
+- **`irrigation_tail_minutes`** — how long past the first poll that sees
+  irrigation stopped a flow rule still treats as irrigation.
+- **`clear_after_minutes`** — how long a flow rule must fail in a row before
+  its P0 "all clear".
 - **`stale_zone_days`** — threshold for the stale-zone monitor (P2).
 - **`valve_battery.retrigger_minutes`** — how often the hose-valve battery
   alert repeats itself while the battery is still low.
@@ -158,18 +163,21 @@ Key behaviors:
   `Deviation: +X.XX GPM (Y%)` line. Both variants include `Total: N.N gal`.
 - **Unified threshold value** — the `(thresh X.XX)` shown on every zone-end
   report is the computed anomaly trigger value, matching what actually fires.
-- **Sustained-flow rules fire at P2** (emergency — retries until acked), at
-  most once per day per rule. P-0 "all clear" on transition active → clear.
+- **Sustained-flow rules escalate**: P1 when a rule first holds, then P2
+  (emergency — retries until acked) every `duration_minutes` while it holds,
+  and a P0 "all clear" once it has failed for `clear_after_minutes` in a row —
+  one failing poll mid-leak would otherwise restart the episode at P1.
 - **Detector logic for sustained-flow rules** — implemented in
   [`AlertEngine._rule_matches`](alert_engine.py). A rule fires when the trailing
-  `duration_minutes` window passes both a mean test and a CV variance gate.
-  A rule with `trim_outliers: true` (Leak) drops the top and bottom 5% of
-  minutes before both tests. Rationale and the tuning history: [Logbook.md](Logbook.md).
+  `duration_minutes` window passes a mean test and, unless `max_cv` is `null`,
+  a CV spread check, after dropping `trim_fraction` of the lowest and of the
+  highest minutes. Rationale and the tuning history: [Logbook.md](Logbook.md).
 - **Irrigation exclusion** — a flow rule waits until its own window starts
-  after the last time irrigation was seen, plus a 10-min tail
-  (`IRRIGATION_TAIL_MINUTES`). Controller OR hose timer, symmetric.
+  after the irrigation stamp plus `irrigation_tail_minutes`. The stamp is the
+  latest poll that saw irrigation running, or the first that saw it stopped,
+  so it is never before the real stop. Controller OR hose timer, symmetric.
   HoseTimerProcessor writes `alert::__hose__::last_active`; AlertEngine writes
-  `alert::__rachio__::last_seen` and reads both.
+  `alert::__rachio__::irrigating_until` and reads both.
 - **Stale-zone monitor** — separate `StaleZoneChecker` fires **P2** if any
   enabled controller zone or known hose-timer valve (connected or not) hasn't
   run within `stale_zone_days` (default **15**). Daily dedup per zone; hourly
@@ -210,7 +218,7 @@ uv run python RachioFlume/rfmanager.py alerts replay \
     --hours 168 --db /tmp/prod_water_tracking.db
 ```
 
-Output is tab-aligned and shows the new label set: `REPORT` (P-2), `FIRE` (P2),
+Output is tab-aligned and shows the new label set: `REPORT` (P-2), `FIRE` (P1 or P2),
 `CLEAR` (P0). Suppressed cycles are summarized at the bottom (the suppression
 window includes both controller and hose-timer activity).
 
@@ -296,10 +304,10 @@ kill <process_id>
    - Runs at the end of each collector cycle
    - **Zone-end reporting**: detects when a Rachio zone finishes and sends one P-2 (silent) report per zone *per cycle* — no per-day dedup; the message carries a cycle counter so repeat runs are distinguishable. Includes runtime, avg GPM, total gallons
    - **Zone anomaly detection**: checks zone-end flow against per-zone thresholds (configured in `config/default.yaml` under `rachio_flume.alerts.zone_thresholds`). Alerts at P2 when flow exceeds `avg + max(0.5 GPM, 10% of avg)`. Unknown zones default to 0.5 GPM threshold.
-   - **Anomaly rules**: evaluates each rule's predicate against trailing per-minute Flume readings — requires mean ≥ threshold AND CV ≤ max_cv (coefficient-of-variation filter rejects spiky noise), after dropping the top and bottom 5% of minutes for a `trim_outliers` rule
-   - Anomaly fires at P2 (emergency), at most once per day per rule; P0 clear on active→clear
-   - Each rule waits until its own window is clear of irrigation plus a 10-min tail
-   - Per-rule and per-zone reported-today state persisted as JSON in `collection_metadata`
+   - **Anomaly rules**: evaluates each rule's predicate against trailing per-minute Flume readings — requires mean ≥ threshold AND, unless `max_cv` is `null`, CV ≤ `max_cv`, after dropping `trim_fraction` of the lowest and of the highest minutes
+   - Anomaly fires P1 first, then P2 every window while it holds; P0 clear after `clear_after_minutes` of failing
+   - Each rule waits until its own window is clear of irrigation plus `irrigation_tail_minutes`
+   - Per-rule fire state and per-zone reported-today counts persisted as JSON in `collection_metadata`
 
 7. **SyntheticDataset** (`synthetic_data.py`) + **Simulator** (`simulate_alerts.py`)
    - In-code scenarios (household, irrigation, leak, pipe-break) built via `SyntheticDataset.add_*` helpers

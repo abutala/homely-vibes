@@ -353,17 +353,21 @@ flume:
 # Priority tiers (P{N} == Pushover priority=N):
 #   P-2  routine zone-end reports  -- silent, no banner; inbox + badge only
 #   P1   health checks             -- data outage, device offline, valve battery
-#   P2   emergencies               -- sustained-flow rules, zone anomaly,
+#   P2   emergencies               -- sustained-flow rules (P1 first), zone anomaly,
 #                                     Flume outage (leak detection blind),
 #                                     stale zone (15d of no watering)
 # Watchdogs re-trigger every retrigger_minutes while the condition holds,
-# unless muted; sustained-flow rules send at most once per day. An "all clear"
-# fires once on transition active -> clear.
+# unless muted. Sustained-flow rules fire P1 first, then P2 every window while
+# they hold, and send a P0 "all clear" after clear_after_minutes of failing.
 # Whole-house flow rules are suppressed entirely while a Rachio zone irrigates.
 rachio_flume:
   alerts:
     enabled: true
-    default_retrigger_minutes: 30   # default_flow_rules state cadence; sends stay once per day
+    # Flow rules wait this long past the first poll that sees irrigation stopped.
+    irrigation_tail_minutes: 2
+    # A flow rule sends its P0 "all clear" only after failing this long in a
+    # row, so one failing poll mid-leak does not restart the episode at P1.
+    clear_after_minutes: 10
 
     # === Per-zone anomaly check (Rachio-sourced; fires at run end) ===
     # threshold = avg_gpm + max(absolute_gpm, percent_above/100 * avg_gpm)
@@ -384,15 +388,19 @@ rachio_flume:
       zone_thresholds: {}
 
     # === Whole-house sustained-flow rules (Flume only; no Rachio context) ===
-    # A rule waits until its own window is clear of irrigation (controller OR
-    # hose timer) plus a 10-min tail.
-    # trim_outliers drops the top and bottom 5% of minutes first, so a flush on
-    # top of a steady trickle, or one dropout minute, cannot hide a leak.
+    # Every key is required. A rule fires when the window's mean >= min_gpm and
+    # std/mean <= max_cv (null: no spread check), after dropping trim_fraction
+    # of the lowest and of the highest minutes. It repeats every window while
+    # it holds, and waits until its window is clear of irrigation (controller
+    # OR hose timer) plus irrigation_tail_minutes.
+    # No spread check on the high-flow rules: a burst that ramps, or a break
+    # under varying household use, has a high CV and must still page.
+    # Leak trims, so a flush on top of a steady trickle cannot hide it.
     default_flow_rules:
-      - {name: "Pipe Break", min_gpm: 8.0, duration_minutes: 10}
-      - {name: "High Flow",  min_gpm: 5.4, duration_minutes: 4}
-      - {name: "Mid Flow",   min_gpm: 2.0, duration_minutes: 14}
-      - {name: "Leak",       min_gpm: 0.1, duration_minutes: 45, trim_outliers: true}
+      - {name: "Pipe Break", min_gpm: 8.0, duration_minutes: 5,  max_cv: null, trim_fraction: 0.0}
+      - {name: "High Flow",  min_gpm: 5.4, duration_minutes: 8,  max_cv: null, trim_fraction: 0.0}
+      - {name: "Mid Flow",   min_gpm: 2.0, duration_minutes: 14, max_cv: 0.42, trim_fraction: 0.0}
+      - {name: "Leak",       min_gpm: 0.1, duration_minutes: 45, max_cv: 0.50, trim_fraction: 0.05}
 
     # === Stale-zone monitoring ===
     # Fire a P2 alert if any enabled controller zone or known hose-timer

@@ -36,7 +36,14 @@ def db(tmp_path: Path) -> WaterTrackingDB:
 
 @pytest.fixture
 def rule() -> AlertRule:
-    return AlertRule(name="Mid Flow", min_gpm=2.6, duration_minutes=4, retrigger_minutes=30)
+    return AlertRule(
+        name="Mid Flow",
+        min_gpm=2.6,
+        duration_minutes=4,
+        retrigger_minutes=4,
+        max_cv=0.4,
+        trim_fraction=0.0,
+    )
 
 
 @pytest.fixture
@@ -99,13 +106,20 @@ def test_predicate_accepts_sustained_flow_with_low_cv(engine: AlertEngine, rule:
 def test_predicate_rejects_spiky_flow_even_if_mean_passes(
     engine: AlertEngine, rule: AlertRule
 ) -> None:
-    # mean([3.0, 0.0, 3.0, 4.5]) = 2.625 >= 2.6 but CV ≈ 0.62 >> max_cv ≈ 0.25
+    # mean([3.0, 0.0, 3.0, 4.5]) = 2.625 >= 2.6 but CV ≈ 0.62 > max_cv 0.4
     assert engine._rule_matches(_readings([3.0, 0.0, 3.0, 4.5]), rule) is False
 
 
 def test_predicate_single_spike_among_zeros_does_not_fire() -> None:
     # mean([8.0, 0.0, 0.0, 0.0]) = 2.0 < 8.0 — a momentary surge is not a pipe break
-    pipe_rule = AlertRule(name="Pipe Break", min_gpm=8.0, duration_minutes=4, retrigger_minutes=30)
+    pipe_rule = AlertRule(
+        name="Pipe Break",
+        min_gpm=8.0,
+        duration_minutes=4,
+        retrigger_minutes=4,
+        max_cv=None,
+        trim_fraction=0.0,
+    )
     engine = AlertEngine(
         flume_client=MagicMock(),
         rachio_client=MagicMock(),
@@ -125,7 +139,14 @@ def test_predicate_does_not_fire_with_insufficient_samples(
 
 def test_predicate_low_flow_rule_fires_on_trickle() -> None:
     """A 'Low Flow' rule (min_gpm=0.1) treats sustained low flow as active."""
-    low_rule = AlertRule(name="Low Flow", min_gpm=0.1, duration_minutes=3, retrigger_minutes=30)
+    low_rule = AlertRule(
+        name="Low Flow",
+        min_gpm=0.1,
+        duration_minutes=3,
+        retrigger_minutes=3,
+        max_cv=0.5,
+        trim_fraction=0.0,
+    )
     readings = _readings([0.15, 0.12, 0.13])
     engine = AlertEngine(
         flume_client=MagicMock(),
@@ -138,7 +159,12 @@ def test_predicate_low_flow_rule_fires_on_trickle() -> None:
 
 
 LEAK = AlertRule(
-    name="Leak", min_gpm=0.1, duration_minutes=45, retrigger_minutes=30, trim_outliers=True
+    name="Leak",
+    min_gpm=0.1,
+    duration_minutes=45,
+    retrigger_minutes=45,
+    max_cv=0.5,
+    trim_fraction=0.05,
 )
 # Flume reports in 1/15-gallon steps, so a steady ~0.14 GPM leak reads like this.
 QUANTIZED_TRICKLE = [0.07, 0.13, 0.2, 0.13, 0.13, 0.07, 0.13, 0.2, 0.13]
@@ -153,7 +179,7 @@ def test_predicate_leak_fires_on_quantized_trickle_with_outliers(engine: AlertEn
 
 def test_predicate_untrimmed_rule_keeps_outliers(engine: AlertEngine) -> None:
     values = (QUANTIZED_TRICKLE * 5)[:43] + [1.65, 0.0]
-    untrimmed = LEAK.model_copy(update={"trim_outliers": False})
+    untrimmed = LEAK.model_copy(update={"trim_fraction": 0.0})
     assert engine._rule_matches(_readings(values), untrimmed) is False
 
 
@@ -191,13 +217,13 @@ def test_state_machine_no_action_when_clear_and_no_history(
 
 def test_state_machine_re_fire_after_retrigger_window(engine: AlertEngine, rule: AlertRule) -> None:
     now = datetime.now()
-    state = AlertState(last_state="active", last_fired_at=now - timedelta(minutes=31))
+    state = AlertState(last_state="active", last_fired_at=now - timedelta(minutes=4))
     assert engine._decide_action(True, state, rule, now) == AlertAction.FIRE
 
 
 def test_state_machine_silent_within_retrigger_window(engine: AlertEngine, rule: AlertRule) -> None:
     now = datetime.now()
-    state = AlertState(last_state="active", last_fired_at=now - timedelta(minutes=10))
+    state = AlertState(last_state="active", last_fired_at=now - timedelta(minutes=2))
     assert engine._decide_action(True, state, rule, now) == AlertAction.NOTHING
 
 
@@ -224,7 +250,7 @@ def test_state_machine_expired_mute_allows_fire(engine: AlertEngine, rule: Alert
 # ---------------------------------------------------------------------- #
 
 
-async def test_evaluate_fires_priority_2_on_first_active(
+async def test_evaluate_fires_priority_1_on_first_active(
     engine: AlertEngine, rule: AlertRule
 ) -> None:
     engine.flume.get_usage.return_value = _readings([3.0, 3.0, 3.0, 3.0])  # type: ignore[attr-defined]
@@ -233,10 +259,10 @@ async def test_evaluate_fires_priority_2_on_first_active(
     # One entry per rule + Flume-outage + Rachio-controller-outage watchdogs
     assert len(results) == 3
     assert results[0]["action"] == AlertAction.FIRE.value
-    # Pushover called with priority=2 (emergency)
+    # P1 opens the episode; repeats escalate to P2
     engine.pushover.send_message.assert_called_once()  # type: ignore[attr-defined]
     _, kwargs = engine.pushover.send_message.call_args  # type: ignore[attr-defined]
-    assert kwargs["priority"] == 2
+    assert kwargs["priority"] == 1
     # State persisted as active
     state = engine._load_state(rule)
     assert state.last_state == "active"
@@ -275,8 +301,17 @@ async def test_evaluate_suppressed_by_active_rachio_zone(
     assert engine._load_state(rule).last_state is None
 
 
-SHORT = AlertRule(name="High Flow", min_gpm=2.0, duration_minutes=4, retrigger_minutes=30)
-LONG = AlertRule(name="Long Flow", min_gpm=2.0, duration_minutes=45, retrigger_minutes=30)
+SHORT = AlertRule(
+    name="High Flow",
+    min_gpm=2.0,
+    duration_minutes=4,
+    retrigger_minutes=4,
+    max_cv=None,
+    trim_fraction=0.0,
+)
+LONG = SHORT.model_copy(
+    update={"name": "Long Flow", "duration_minutes": 45, "retrigger_minutes": 45}
+)
 
 
 def _steady_flume(gpm: float) -> MagicMock:
@@ -302,6 +337,7 @@ async def test_each_rule_waits_only_for_its_own_window_after_rachio(db: WaterTra
     )
     await engine.evaluate(now=t0)
     engine.rachio.get_active_zone.return_value = None  # type: ignore[attr-defined]
+    await engine.evaluate(now=t0 + timedelta(minutes=5))  # first idle poll stamps the stop
 
     after_short = _actions(await engine.evaluate(now=t0 + timedelta(minutes=20)))
     assert after_short[SHORT.name]["action"] == AlertAction.FIRE.value
@@ -323,7 +359,7 @@ async def test_hose_run_holds_a_rule_until_its_window_is_clear(db: WaterTracking
     assert results[LONG.name]["suppressed_by"].startswith("hose:")
 
 
-async def test_evaluate_clear_emits_priority_neg1(engine: AlertEngine, rule: AlertRule) -> None:
+async def test_evaluate_clear_emits_priority_0(engine: AlertEngine, rule: AlertRule) -> None:
     # Seed state as if rule was active last cycle
     engine._save_state(
         rule,
@@ -331,19 +367,21 @@ async def test_evaluate_clear_emits_priority_neg1(engine: AlertEngine, rule: Ale
     )
     engine.flume.get_usage.return_value = _readings([0.0, 0.0, 0.0, 0.0])  # type: ignore[attr-defined]
 
-    results = await engine.evaluate()
+    await engine.evaluate()
+    engine.pushover.send_message.assert_not_called()  # type: ignore[attr-defined]
+    results = await engine.evaluate(now=datetime.now() + timedelta(minutes=10))
 
     assert results[0]["action"] == AlertAction.FIRE_CLEAR.value
     engine.pushover.send_message.assert_called_once()  # type: ignore[attr-defined]
     _, kwargs = engine.pushover.send_message.call_args  # type: ignore[attr-defined]
-    assert kwargs["priority"] == -1
+    assert kwargs["priority"] == 0
     assert engine._load_state(rule).last_state == "clear"
 
 
 async def test_evaluate_retrigger_after_window(engine: AlertEngine, rule: AlertRule) -> None:
     engine._save_state(
         rule,
-        AlertState(last_state="active", last_fired_at=datetime.now() - timedelta(minutes=45)),
+        AlertState(last_state="active", last_fired_at=datetime.now() - timedelta(minutes=5)),
     )
     engine.flume.get_usage.return_value = _readings([3.0, 3.0, 3.0, 3.0])  # type: ignore[attr-defined]
 
@@ -351,12 +389,13 @@ async def test_evaluate_retrigger_after_window(engine: AlertEngine, rule: AlertR
 
     assert results[0]["action"] == AlertAction.FIRE.value
     engine.pushover.send_message.assert_called_once()  # type: ignore[attr-defined]
+    assert engine.pushover.send_message.call_args.kwargs["priority"] == 2  # type: ignore[attr-defined]
 
 
 async def test_evaluate_silent_within_retrigger(engine: AlertEngine, rule: AlertRule) -> None:
     engine._save_state(
         rule,
-        AlertState(last_state="active", last_fired_at=datetime.now() - timedelta(minutes=10)),
+        AlertState(last_state="active", last_fired_at=datetime.now() - timedelta(minutes=2)),
     )
     engine.flume.get_usage.return_value = _readings([3.0, 3.0, 3.0, 3.0])  # type: ignore[attr-defined]
 
@@ -1134,3 +1173,65 @@ async def test_rachio_idle_reports_last_zone(engine: AlertEngine, rule: AlertRul
     await engine.evaluate()
     assert engine.pushover.send_message.call_count == 1  # type: ignore[attr-defined]
     assert "Front Yard" in engine.pushover.send_message.call_args[0][0]  # type: ignore[attr-defined]
+
+
+# Oct 1 2026, prod: five minutes at ~9 GPM after a ramp. CV ≈ 0.71 hid it from High Flow.
+RAMPING_BURST = [0.1, 0.1, 1.5, 6.6, 8.8, 8.7, 8.9, 9.0]
+
+
+def test_predicate_without_cv_check_fires_on_ramping_burst(engine: AlertEngine) -> None:
+    high = SHORT.model_copy(update={"min_gpm": 5.4, "duration_minutes": 8})
+    assert engine._rule_matches(_readings(RAMPING_BURST), high) is True
+    with_cv = high.model_copy(update={"max_cv": 0.28})
+    assert engine._rule_matches(_readings(RAMPING_BURST), with_cv) is False
+
+
+def _priorities(engine: AlertEngine) -> list[int]:
+    return [c.kwargs["priority"] for c in engine.pushover.send_message.call_args_list]  # type: ignore[attr-defined]
+
+
+async def test_flow_rule_fires_p1_then_p2_every_window_then_p0_clear(db: WaterTrackingDB) -> None:
+    engine = _make_engine(db, [SHORT])
+    engine.flume.get_usage = _steady_flume(3.0)  # type: ignore[method-assign]
+    t0 = datetime.now().replace(second=0, microsecond=0) - timedelta(hours=2)
+
+    await engine.evaluate(now=t0)
+    await engine.evaluate(now=t0 + timedelta(minutes=3))
+    await engine.evaluate(now=t0 + timedelta(minutes=4))
+    await engine.evaluate(now=t0 + timedelta(minutes=8))
+    engine.flume.get_usage = _steady_flume(0.0)  # type: ignore[method-assign]
+    await engine.evaluate(now=t0 + timedelta(minutes=9))
+    await engine.evaluate(now=t0 + timedelta(minutes=19))
+
+    assert _priorities(engine) == [1, 2, 2, 0]
+
+
+async def test_flow_rule_clears_only_after_failing_for_ten_minutes(db: WaterTrackingDB) -> None:
+    # Prod, 2026-10-07: Leak's CV sat near its cap, so one failing poll mid-leak
+    # cleared it and the next poll opened a new P1 episode.
+    engine = _make_engine(db, [SHORT])
+    t0 = datetime.now().replace(second=0, microsecond=0) - timedelta(hours=2)
+    for minute, gpm in [(0, 3.0), (5, 0.0), (10, 3.0), (15, 0.0), (20, 0.0), (25, 0.0)]:
+        engine.flume.get_usage = _steady_flume(gpm)  # type: ignore[method-assign]
+        await engine.evaluate(now=t0 + timedelta(minutes=minute))
+
+    # A 5-min dip keeps the episode (P2 at 10); 10 min of failing clears it (P0 at 25).
+    assert _priorities(engine) == [1, 2, 0]
+
+
+async def test_rachio_stop_is_stamped_on_the_first_idle_poll(db: WaterTrackingDB) -> None:
+    # The stop is known only to the poll: the last active poll can be 5 min before it.
+    engine = _make_engine(db, [SHORT])
+    engine.flume.get_usage = _steady_flume(3.0)  # type: ignore[method-assign]
+    t0 = datetime.now().replace(second=0, microsecond=0) - timedelta(hours=2)
+    engine.rachio.get_active_zone.return_value = Zone(  # type: ignore[attr-defined]
+        id="z1", zone_number=3, name="Front Yard", enabled=True
+    )
+    await engine.evaluate(now=t0)
+    engine.rachio.get_active_zone.return_value = None  # type: ignore[attr-defined]
+    await engine.evaluate(now=t0 + timedelta(minutes=5))
+
+    held = _actions(await engine.evaluate(now=t0 + timedelta(minutes=11)))
+    assert "suppressed_by" in held[SHORT.name]
+    clear = _actions(await engine.evaluate(now=t0 + timedelta(minutes=12)))
+    assert clear[SHORT.name]["action"] == AlertAction.FIRE.value

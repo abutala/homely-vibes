@@ -134,6 +134,8 @@ async def run_simulation(
         absolute_gpm=za_cfg.absolute_gpm,
         percent_above=za_cfg.percent_above,
         min_runtime_minutes=za_cfg.min_runtime_minutes,
+        irrigation_tail_minutes=cfg.rachio_flume.alerts.irrigation_tail_minutes,
+        clear_after_minutes=cfg.rachio_flume.alerts.clear_after_minutes,
     )
 
     result = SimulationResult(dataset=dataset, rules=rules)
@@ -168,7 +170,7 @@ async def run_simulation(
             # Print any pushes triggered by this cycle, as they happen.
             if print_events:
                 for push in fake_pushover.sent[pre_count:]:
-                    if push.priority == 2:
+                    if push.priority in (1, 2):
                         kind = "FIRE  "
                     elif push.priority == 0:
                         kind = "CLEAR "
@@ -222,7 +224,7 @@ def _print_header(dataset: Any, rules: list[AlertRule], poll_minutes: int) -> No
             f"[{dataset.start:%Y-%m-%d %H:%M} \u2192 {dataset.end:%Y-%m-%d %H:%M}]"
         )
     print("-" * 72)
-    print("Alerts fired (priority 2 = FIRE; priority 0 = CLEAR):")
+    print("Alerts fired (priority 1/2 = FIRE; priority 0 = CLEAR):")
     print("  (silent cycles and Rachio-suppressed cycles omitted)")
 
 

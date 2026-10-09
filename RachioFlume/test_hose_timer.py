@@ -367,6 +367,32 @@ class TestHoseActivitySuppression:
         assert data["device"] == "Hose Drip Jasmine"
         assert "at" in data
 
+    def test_completion_poll_stamps_key_at_or_after_the_run_end(
+        self, tmp_db: WaterTrackingDB
+    ) -> None:
+        # The flow-rule hold relies on this: the stamp is never before the real stop.
+        action = {
+            "start": "2026-06-27T07:46:46Z",
+            "durationSeconds": "600",
+            "reason": "QUICK_RUN",
+            "flowDetected": True,
+        }
+        proc, _ = _make_processor(tmp_db, _valve(action))
+        local_start = RachioHoseClient.parse_action_start(action)
+        assert local_start is not None
+        proc.evaluate(now=local_start + timedelta(seconds=14))
+        proc.client.list_valves.return_value = [_valve(action=None)]  # type: ignore[attr-defined]
+        completed_at = local_start + timedelta(minutes=11)
+
+        results = proc.evaluate(now=completed_at)
+
+        assert results[0]["action"] == "run_completed"
+        blob = tmp_db.get_metadata(HOSE_LAST_ACTIVE_KEY)
+        assert blob is not None
+        stamped = datetime.fromisoformat(json.loads(blob)["at"])
+        assert stamped == completed_at
+        assert stamped >= local_start + timedelta(seconds=600)
+
     def test_idle_valve_does_not_stamp_key(self, tmp_db: WaterTrackingDB) -> None:
         valve = _valve(action=None)
         proc, _ = _make_processor(tmp_db, valve)
