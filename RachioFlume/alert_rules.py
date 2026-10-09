@@ -22,10 +22,11 @@ from lib.notifications import Notifier
 class AlertRule(BaseModel):
     """One sustained-flow alert rule.
 
-    The rule fires when water flow has been >= `min_gpm` for every minute of
-    the trailing `duration_minutes` window. While the condition holds, the
-    engine re-fires every `retrigger_minutes`. A normal-priority "all clear"
-    is emitted once on transition active -> clear.
+    The rule fires when the trailing `duration_minutes` window passes the mean
+    and CV tests in `AlertEngine._rule_matches`. It sends at most once per day:
+    `retrigger_minutes` drives the state machine, but `AlertEngine.evaluate`
+    skips a repeat send on the same day. An "all clear" is emitted once on
+    transition active -> clear.
     """
 
     name: str = Field(
@@ -35,6 +36,10 @@ class AlertRule(BaseModel):
     duration_minutes: int = Field(..., ge=1, description="Sustained-flow window required to fire")
     retrigger_minutes: int = Field(
         ..., ge=1, description="Cadence to re-fire while condition persists"
+    )
+    trim_outliers: bool = Field(
+        default=False,
+        description="Drop the top and bottom 5% of minutes before the mean and CV checks",
     )
 
 
@@ -78,7 +83,7 @@ def load_rules_from_config() -> list[AlertRule]:
 
     These are whole-house sustained-flow rules (Pipe Break / High Flow / Mid
     Flow / Leak) that apply to Flume readings independent of Rachio activity.
-    Suppressed during/just-after any Rachio activity (controller or hose timer).
+    Each waits until its window is clear of irrigation (controller or hose timer).
     """
     cfg = get_config()
     alerts_cfg = cfg.rachio_flume.alerts
@@ -89,6 +94,7 @@ def load_rules_from_config() -> list[AlertRule]:
             min_gpm=r.min_gpm,
             duration_minutes=r.duration_minutes,
             retrigger_minutes=default_retrigger,
+            trim_outliers=r.trim_outliers,
         )
         for r in alerts_cfg.default_flow_rules
     ]

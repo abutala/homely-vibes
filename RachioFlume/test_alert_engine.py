@@ -1,5 +1,6 @@
 """Tests for AlertEngine: predicate, state machine, Rachio suppression, mute."""
 
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -11,6 +12,7 @@ from RachioFlume.alert_engine import AlertAction, AlertEngine, AlertState
 from RachioFlume.alert_rules import AlertRule, ZoneThreshold
 from RachioFlume.data_storage import WaterTrackingDB
 from RachioFlume.flume_client import WaterReading
+from RachioFlume.hose_timer_processor import HOSE_LAST_ACTIVE_KEY
 from RachioFlume.rachio_client import Zone
 
 
@@ -39,6 +41,10 @@ def rule() -> AlertRule:
 
 @pytest.fixture
 def engine(db: WaterTrackingDB, rule: AlertRule) -> AlertEngine:
+    return _make_engine(db, [rule])
+
+
+def _make_engine(db: WaterTrackingDB, rules: list[AlertRule]) -> AlertEngine:
     # Seed a fresh reading + a fresh Rachio poll so the outage watchdogs stay
     # quiet; outage behavior has its own test sections below. The huge Rachio
     # stale window keeps time-travelling tests from tripping it — dedicated
@@ -61,7 +67,7 @@ def engine(db: WaterTrackingDB, rule: AlertRule) -> AlertEngine:
         rachio_client=rachio,
         pushover=pushover,
         db=db,
-        rules=[rule],
+        rules=rules,
         zone_thresholds=zone_thresholds,
         rachio_outage_stale_after_minutes=100_000,
     )
@@ -129,6 +135,39 @@ def test_predicate_low_flow_rule_fires_on_trickle() -> None:
         rules=[low_rule],
     )
     assert engine._rule_matches(readings, low_rule) is True
+
+
+LEAK = AlertRule(
+    name="Leak", min_gpm=0.1, duration_minutes=45, retrigger_minutes=30, trim_outliers=True
+)
+# Flume reports in 1/15-gallon steps, so a steady ~0.14 GPM leak reads like this.
+QUANTIZED_TRICKLE = [0.07, 0.13, 0.2, 0.13, 0.13, 0.07, 0.13, 0.2, 0.13]
+
+
+def test_predicate_leak_fires_on_quantized_trickle_with_outliers(engine: AlertEngine) -> None:
+    # Prod, 2026-10-08: a steady trickle with a flush on top and a dropout minute.
+    # The untrimmed CV is ~1.4; only the outliers pushed it over the gate.
+    values = (QUANTIZED_TRICKLE * 5)[:43] + [1.65, 0.0]
+    assert engine._rule_matches(_readings(values), LEAK) is True
+
+
+def test_predicate_untrimmed_rule_keeps_outliers(engine: AlertEngine) -> None:
+    values = (QUANTIZED_TRICKLE * 5)[:43] + [1.65, 0.0]
+    untrimmed = LEAK.model_copy(update={"trim_outliers": False})
+    assert engine._rule_matches(_readings(values), untrimmed) is False
+
+
+def test_predicate_leak_trims_only_two_minutes_per_side(engine: AlertEngine) -> None:
+    # floor(45 * 5%) = 2: two spikes are trimmed, three are not.
+    steady = [0.13] * 40
+    assert engine._rule_matches(_readings(steady + [2.0] * 2 + [0.13] * 3), LEAK) is True
+    assert engine._rule_matches(_readings(steady + [2.0] * 3 + [0.13] * 2), LEAK) is False
+
+
+def test_predicate_leak_rejects_intermittent_spikes(engine: AlertEngine) -> None:
+    # Mean 0.15 GPM, but it is a few short draws among idle minutes, not a leak.
+    values = [0.0] * 39 + [1.13] * 6
+    assert engine._rule_matches(_readings(values), LEAK) is False
 
 
 # ---------------------------------------------------------------------- #
@@ -234,6 +273,54 @@ async def test_evaluate_suppressed_by_active_rachio_zone(
     engine.pushover.send_message.assert_not_called()  # type: ignore[attr-defined]
     # State unchanged (no spurious "clear" later)
     assert engine._load_state(rule).last_state is None
+
+
+SHORT = AlertRule(name="High Flow", min_gpm=2.0, duration_minutes=4, retrigger_minutes=30)
+LONG = AlertRule(name="Long Flow", min_gpm=2.0, duration_minutes=45, retrigger_minutes=30)
+
+
+def _steady_flume(gpm: float) -> MagicMock:
+    def get_usage(start: datetime, end: datetime, bucket: str = "MIN") -> list[WaterReading]:
+        last = end.replace(second=0, microsecond=0) - timedelta(minutes=1)
+        return _readings([gpm] * 60, end=last)
+
+    return MagicMock(side_effect=get_usage)
+
+
+def _actions(results: list[dict]) -> dict[str, dict]:
+    return {r["rule"]: r for r in results if r.get("rule") in (SHORT.name, LONG.name)}
+
+
+async def test_each_rule_waits_only_for_its_own_window_after_rachio(db: WaterTrackingDB) -> None:
+    # Prod, 2026-10-08: every rule waited for the longest one (120 + 10 min), which hid a
+    # leak that began 13 min after the sprinklers stopped.
+    engine = _make_engine(db, [SHORT, LONG])
+    engine.flume.get_usage = _steady_flume(3.0)  # type: ignore[method-assign]
+    t0 = datetime.now().replace(second=0, microsecond=0) - timedelta(hours=2)
+    engine.rachio.get_active_zone.return_value = Zone(  # type: ignore[attr-defined]
+        id="z1", zone_number=3, name="Front Yard", enabled=True
+    )
+    await engine.evaluate(now=t0)
+    engine.rachio.get_active_zone.return_value = None  # type: ignore[attr-defined]
+
+    after_short = _actions(await engine.evaluate(now=t0 + timedelta(minutes=20)))
+    assert after_short[SHORT.name]["action"] == AlertAction.FIRE.value
+    assert "suppressed_by" in after_short[LONG.name]
+
+    after_long = _actions(await engine.evaluate(now=t0 + timedelta(minutes=60)))
+    assert after_long[LONG.name]["action"] == AlertAction.FIRE.value
+
+
+async def test_hose_run_holds_a_rule_until_its_window_is_clear(db: WaterTrackingDB) -> None:
+    engine = _make_engine(db, [SHORT, LONG])
+    engine.flume.get_usage = _steady_flume(3.0)  # type: ignore[method-assign]
+    t0 = datetime.now().replace(second=0, microsecond=0) - timedelta(hours=2)
+    db.set_metadata(HOSE_LAST_ACTIVE_KEY, json.dumps({"at": t0.isoformat(), "device": "Hoses"}))
+
+    results = _actions(await engine.evaluate(now=t0 + timedelta(minutes=20)))
+
+    assert results[SHORT.name]["action"] == AlertAction.FIRE.value
+    assert results[LONG.name]["suppressed_by"].startswith("hose:")
 
 
 async def test_evaluate_clear_emits_priority_neg1(engine: AlertEngine, rule: AlertRule) -> None:

@@ -300,6 +300,7 @@ class AlertRuleConfig:
     name: str
     min_gpm: float
     duration_minutes: int
+    trim_outliers: bool = False  # drop the top and bottom 5% of minutes before the check
 
 
 @dataclass
@@ -379,7 +380,7 @@ class RachioFlumeAlertsConfig:
     Independent alert paths share this block:
     - zone_anomaly: scoped to Rachio events (per-zone, at run end).
     - default_flow_rules: whole-house sustained-flow rules (Flume only);
-      suppressed while any Rachio activity is recent.
+      each waits until its own window is clear of irrigation.
     - stale_zone_days: P2 if any zone/valve hasn't run in N days.
     - flume_outage: P2 watchdog when Flume readings stop entirely.
     - rachio_outage: P1 watchdog when Rachio polling stops succeeding.
@@ -388,7 +389,7 @@ class RachioFlumeAlertsConfig:
     """
 
     enabled: bool
-    default_retrigger_minutes: int  # cadence for re-firing default_flow_rules
+    default_retrigger_minutes: int  # default_flow_rules state cadence; sends stay once per day
     zone_anomaly: ZoneAnomalyConfig
     default_flow_rules: list[AlertRuleConfig]
     stale_zone_days: int

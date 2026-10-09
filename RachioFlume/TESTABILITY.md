@@ -93,7 +93,7 @@ assertions:
 - `test_pipe_break_fires_within_window` — Pipe Break fires within `duration_minutes + poll_interval` of injection, then clears once
 - `test_slow_leak_fires_leak_rule_not_mid_or_high` — a 0.18 gpm leak triggers Leak but never Mid/High/Pipe (threshold gating)
 - `test_slow_leak_fires_once_per_day` — daily dedup holds across the 72h leak window
-- `test_irrigation_suppresses_concurrent_high_flow` — flow during Rachio irrigation does not fire, and post-irrigation slack prevents tail-window false fires
+- `test_irrigation_suppresses_concurrent_high_flow` — flow during Rachio irrigation does not fire, and the irrigation tail prevents tail-window false fires
 - `test_short_shower_does_not_fire_mid_flow` — events too short to cross any window are silent
 - `test_pipe_break_clear_arrives_only_after_active_to_clear` — exactly one clear per active→clear transition
 
@@ -119,8 +119,8 @@ simulator: `REPORT` (P-1), `FIRE` (P2), `CLEAR` (P0). Suppressed cycles
 **Expected on a healthy 7-day replay** against current prod: roughly
 24 `Zone Report` entries (12 active zones × ~2 cycles/week), zero `Zone
 Anomaly` fires (unless you've actually had a leaking zone), zero false
-`Pipe Break` / `Leak` fires during irrigation windows, and ~half the cycles
-flagged as suppressed by Rachio during the morning irrigation hours.
+`Pipe Break` / `Leak` fires during irrigation windows, and the cycles during
+and just after the morning irrigation flagged as held.
 
 ## What we deliberately do NOT test
 
@@ -134,27 +134,22 @@ flagged as suppressed by Rachio during the morning irrigation hours.
   verified once via live probe (see the original PR description on #199);
   the unit tests use captured response shapes.
 
-## Rachio post-active slack: a tradeoff exposed by the simulator
+## The irrigation tail: a tradeoff exposed by the simulator
 
 When the simulator was first run, it immediately surfaced a real bug: the
 cycle right after Rachio finished irrigating queried Flume readings that
 still overlapped the irrigation window, and the engine fired a false alarm.
 
-Fix: `RACHIO_POST_ACTIVE_SLACK_MINUTES = 10` in
-[alert_engine.py](alert_engine.py). The engine remembers when Rachio (or
-the hose timer) was last seen active and suppresses any rule whose lookback
-window plus 10-min slack overlaps that timestamp.
+Fix: `IRRIGATION_TAIL_MINUTES = 10` in [alert_engine.py](alert_engine.py).
+The engine remembers when Rachio (or the hose timer) was last seen active,
+and holds a rule until its own lookback window starts after that time plus
+the 10-min tail.
 
-**Tradeoff**: after a 30-min irrigation, the Leak rule (120 min window) is
-suppressed for ~130 min. A leak forming *immediately* after irrigation
-would be detected ~130 + 120 = 250 min (~4 hr) late. Acceptable because the
-more common failure is irrigation→false-alarm, not leak-right-after-
-irrigation.
-
-If this tradeoff turns out wrong in practice, the proper fix is to record a
-per-minute Rachio-active log and trim Flume readings to non-Rachio minutes
-before running the predicate. That's ~30 lines of additional state,
-deferred until evidence demands it.
+The first version held **every** rule for the longest window (120 + 10 min).
+On 2026-10-08 that hid a leak that began 13 min after the sprinklers
+stopped. Now a rule is back once its own window plus the 10-min tail has
+passed since irrigation was last seen: a 4-min rule after about 15 min, the
+45-min Leak rule after about 56.
 
 ## Tuning rules with the simulator
 

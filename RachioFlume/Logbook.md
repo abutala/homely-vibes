@@ -6,6 +6,28 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ## Incidents
 
+### 2026-10-07 / 08 — two real leaks, no Leak alert
+
+Flume saw a steady trickle on both days: 164 min at 0.17 GPM on Oct 7 evening,
+110 min at 0.18 GPM on Oct 8 morning. The Leak rule (0.1 GPM for 120 min) had
+never fired since it was added. Two independent causes:
+
+- **The CV gate rejected a steady leak.** Flume reports in 1/15-gallon steps, so
+  0.14 GPM reads as 0.07 / 0.13 / 0.20. One flush or one dropout minute on top
+  pushes the CV past the 0.5 cap. The lowest CV in any Oct 7 window was 0.73,
+  with no idle minutes in it.
+- **Every rule waited for the longest one after irrigation.** The hold was
+  `max(duration_minutes) + 10` = 130 min for all rules, measured from the start
+  of the last zone. The Oct 8 trickle began 13 min after watering stopped and
+  ended inside the hold.
+
+Fix: Leak runs over 45 min with `trim_outliers` (drop the top and bottom 5% of
+minutes before the mean and CV tests), and each rule waits only for its own
+window to clear irrigation plus a 10-min tail. A replay of Sep 1 – Oct 8 prod
+data fires Leak on Oct 7 20:38 and Oct 8 08:09 (plus a steady 0.13 GPM run on
+Oct 1). Pipe Break / High Flow / Mid Flow fire as before, except one Sep 19
+Mid Flow that the old hold had hidden (household use an hour after watering).
+
 ### 2026-09-12 — the weekly report showed Z9 watering for three days
 
 The 2026-09-05 → 09-12 report listed Z9 at 4336 minutes. It ran for eight minutes
@@ -153,6 +175,11 @@ showed 6 Leak fires/week of ambiguous origin. Restored the gate;
 the proper fix for true intermittent leaks is to lower the per-rule
 `duration_minutes` so a shorter window can fully encompass each
 pulse, rather than weaken the noise rejection.
+
+The gate also silenced *steady* leaks, which this entry missed: at 0.1–0.2
+GPM, Flume's 1/15-gallon steps plus one outlier minute exceed the CV cap.
+Leak therefore sets `trim_outliers` — the gate stays, but runs on the middle
+90% of minutes (2026-10-07 incident above).
 
 ### An alert that is routinely ignored is not an alert
 
