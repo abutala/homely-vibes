@@ -512,6 +512,23 @@ class AppleNotesBackupConfig:
 
 
 @dataclass
+class ScreenShareAppConfig:
+    """One launcher app for a saved Screen Sharing connection"""
+
+    connection: str  # name in Screen Sharing's All Connections list, or its address
+    # View -> Zoom In clicks after Actual Size; None = scale to fit (shrinks only).
+    zoom_in_steps: int | None = None
+    name: str | None = None  # default "VNC <Host Name>"
+
+
+@dataclass
+class ScreenShareConfig:
+    """Screen Sharing launcher apps (ScreenShare/build_app.py)"""
+
+    apps: list[ScreenShareAppConfig]
+
+
+@dataclass
 class Config:
     """Root configuration for homely-vibes"""
 
@@ -536,6 +553,7 @@ class Config:
     voice_notes: VoiceNotesConfig
     prod_controller: ProdControllerConfig
     apple_notes_backup: AppleNotesBackupConfig
+    screen_share: ScreenShareConfig
     my_external_ip: str
     seconds_in_day: int
 

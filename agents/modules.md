@@ -71,7 +71,7 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 
 ## ScreenShare Module (`ScreenShare/`)
 - **Stack**: `build_app.py` fills an AppleScript template and compiles it with `osacompile`. Output is a launcher `.app` in `~/Applications` with a Dock tile, one per saved Screen Sharing connection.
-- **Build**: `make screenshare-app CONNECTION=<saved name>`. It reads Screen Sharing's `connectionsStore` and opens that entry's own URL, so it never adds a duplicate connection.
+- **Build**: `make screenshare-app` installs one app per `screen_share.apps` entry in config (`ScreenShareConfig` in `lib/config.py`). It reads Screen Sharing's `connectionsStore` and opens that entry's own URL, so it never adds a duplicate connection.
 - **Runtime**: drives Screen Sharing through System Events, so the built app needs Accessibility permission, and loses it on each rebuild.
 
 ## Tesla Module (`Tesla/`)

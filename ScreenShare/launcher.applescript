@@ -1,8 +1,8 @@
--- Opens a saved Screen Sharing connection in full screen, with scaling set.
+-- Opens a saved Screen Sharing connection in full screen, then fits it with scaling or zoom.
 -- Template: build_app.py replaces the placeholders with AppleScript literals.
 property connectionURL : __URL__
 property windowTitle : __TITLE__
-property scaleOn : __SCALE__
+property zoomInSteps : __ZOOM__ -- missing value = scale to fit
 property waitSeconds : 90
 property permissionPane : "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
 
@@ -15,8 +15,9 @@ on run
 		tell application "System Events" to tell process "Screen Sharing"
 			set frontmost to true
 			perform action "AXRaise" of sessionWindow
-			my setScaling(it)
 			set value of attribute "AXFullScreen" of sessionWindow to true
+			delay 1.5 -- let the full-screen animation finish before resizing the picture
+			my fitPicture(it)
 		end tell
 	on error errText number errNum
 		my askForPermission(errText)
@@ -38,19 +39,20 @@ on waitForSessionWindow()
 	return missing value
 end waitForSessionWindow
 
--- The View menu shows "Turn Scaling On" while scaling is off, and "Turn Scaling Off" while on.
-on setScaling(proc)
-	tell application "System Events"
-		if scaleOn then
-			set itemName to "Turn Scaling On"
+-- Scaling only shrinks, so a remote smaller than this screen needs zoom to fill it.
+-- The View menu shows "Turn Scaling On" only while scaling is off.
+on fitPicture(proc)
+	tell application "System Events" to tell menu "View" of menu bar 1 of proc
+		if zoomInSteps is missing value then
+			if exists menu item "Turn Scaling On" then click menu item "Turn Scaling On"
 		else
-			set itemName to "Turn Scaling Off"
+			click menu item "Actual Size"
+			repeat zoomInSteps times
+				click menu item "Zoom In"
+			end repeat
 		end if
-		tell menu "View" of menu bar 1 of proc
-			if exists menu item itemName then click menu item itemName
-		end tell
 	end tell
-end setScaling
+end fitPicture
 
 -- Without Accessibility permission, System Events refuses. Show the list and this app.
 on askForPermission(errText)

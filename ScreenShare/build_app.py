@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Install an app that opens one saved Screen Sharing connection in full screen.
+"""Install one app per `screen_share.apps` entry in config: each opens a saved Screen Sharing
+connection in full screen, fitted by scaling or zoom.
 
 The app opens the connection Screen Sharing already has saved (same address and user), so
 it never creates a second entry. It goes to ~/Applications and the Dock, named
-"VNC <Host Name>". See README.md for the settings.
+"VNC <Host Name>". See README.md.
 """
 
 import argparse
@@ -17,6 +18,8 @@ import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, unquote
+
+from lib.config import ScreenShareAppConfig, get_config
 
 TEMPLATE = Path(__file__).with_name("launcher.applescript")
 PERMISSION_PANE = (
@@ -75,11 +78,12 @@ def applescript_string(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render(template: str, conn: Connection, scale_on: bool) -> str:
+def render(template: str, conn: Connection, zoom_in_steps: int | None) -> str:
+    zoom = "missing value" if zoom_in_steps is None else str(int(zoom_in_steps))
     return (
         template.replace("__URL__", applescript_string(conn.url))
         .replace("__TITLE__", applescript_string(conn.name))
-        .replace("__SCALE__", "true" if scale_on else "false")
+        .replace("__ZOOM__", zoom)
     )
 
 
@@ -154,38 +158,53 @@ def show_permission_pane(app: Path) -> None:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--connection", required=True, help="saved connection name or address")
-    parser.add_argument("--name", help='app name; default "VNC <Host Name>"')
-    parser.add_argument("--scale", choices=["on", "off"], default="on")
     parser.add_argument("--dest", type=Path, default=Path.home() / "Applications")
     parser.add_argument("--no-dock", action="store_true", help="do not add a Dock tile")
     parser.add_argument("--no-settings", action="store_true", help="do not open Settings")
     return parser.parse_args(argv)
 
 
-def main(argv: list[str]) -> int:
-    args = parse_args(argv)
+def read_connections() -> list[Connection]:
     prefs = subprocess.run(
         ["defaults", "export", "com.apple.ScreenSharing", "-"], capture_output=True, check=True
     ).stdout
+    return parse_connections(prefs)
+
+
+def install(spec: ScreenShareAppConfig, conn: Connection, dest: Path, dock: bool) -> Path:
+    name = spec.name or default_app_name(conn)
+    if not NAME_PATTERN.match(name):
+        raise ValueError(f"App name may hold letters, digits, space, '.', '_' and '-': {name}")
+    app = dest / f"{name}.app"
+    dest.mkdir(parents=True, exist_ok=True)
+    compile_app(render(TEMPLATE.read_text(), conn, spec.zoom_in_steps), app)
+    fit = "scale to fit" if spec.zoom_in_steps is None else f"zoom in x{spec.zoom_in_steps}"
+    print(f'Built {app} for "{conn.name}" ({conn.url}), {fit}.')
+    if dock and add_to_dock(app):
+        print("Added to the Dock.")
+    return app
+
+
+def main(argv: list[str]) -> int:
+    args = parse_args(argv)
+    specs = get_config().screen_share.apps
+    if not specs:
+        print("No screen_share.apps in config/local.yaml. See ScreenShare/README.md.")
+        return 1
+    connections = read_connections()
     try:
-        conn = find_connection(parse_connections(prefs), args.connection)
+        apps = [
+            install(
+                spec, find_connection(connections, spec.connection), args.dest, not args.no_dock
+            )
+            for spec in specs
+        ]
     except ValueError as err:
         print(err)
         return 1
-    name = args.name or default_app_name(conn)
-    if not NAME_PATTERN.match(name):
-        print(f"App name may hold letters, digits, space, '.', '_' and '-': {name}")
-        return 1
-    app = args.dest / f"{name}.app"
-    args.dest.mkdir(parents=True, exist_ok=True)
-    compile_app(render(TEMPLATE.read_text(), conn, args.scale == "on"), app)
-    print(f'Built {app} for "{conn.name}" ({conn.url}), scaling {args.scale}.')
-    if not args.no_dock and add_to_dock(app):
-        print("Added to the Dock.")
     if not args.no_settings:
-        show_permission_pane(app)
-        print(f"Drag {name} from Finder into the Accessibility list and turn it on.")
+        show_permission_pane(apps[-1])
+        print("Drag each app from Finder into the Accessibility list and turn it on.")
     return 0
 
 

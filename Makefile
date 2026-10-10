@@ -154,8 +154,8 @@ semgrep: ## Run semgrep security analysis
 	@echo "${GREEN}semgrep completed successfully.${RESET}"
 
 ## macOS apps:
-screenshare-app: ## Install a Screen Sharing launcher app + Dock tile (CONNECTION=<saved name> [NAME=..] [SCALE=on|off] [DEST=..])
-	@uv run python ScreenShare/build_app.py --connection "$(CONNECTION)" $(if $(NAME),--name "$(NAME)") $(if $(SCALE),--scale "$(SCALE)") $(if $(DEST),--dest "$(DEST)")
+screenshare-app: ## Install Screen Sharing launcher apps + Dock tiles from screen_share.apps in config ([DEST=..])
+	@uv run python ScreenShare/build_app.py $(if $(DEST),--dest "$(DEST)")
 
 ## Hooks:
 hooks: ## Set up all the hooks

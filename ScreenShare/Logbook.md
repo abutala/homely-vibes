@@ -22,6 +22,15 @@ The Connect button in All Connections does not ask. Standard is saved as
 Sharing writes itself. Only that key is sent, so the saved quality is untouched. Other types
 still get the prompt.
 
+### Scale to fit only shrinks
+
+When the remote screen is smaller than this one (2048×1332 on 2624×1646), scaling shows it
+at 1:1 with black borders, and the full-screen window itself is capped at the remote size.
+Dynamic Resolution would fix it, but it needs High Performance (more load on the remote,
+and a virtual display that starts at the lock screen). View → Actual Size plus one Zoom In
+fills the screen in Standard mode; zoom turns scaling off. The click count is
+`zoom_in_steps` in config.
+
 ### Accessibility permission does not survive a rebuild
 
 `osacompile` signs ad hoc, so each rebuild has a new signature and the old Accessibility entry
