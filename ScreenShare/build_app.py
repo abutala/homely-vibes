@@ -49,7 +49,13 @@ def _connection(entry: dict) -> Connection:
     user = target.get("username") or ""
     port = target.get("port")
     url = "vnc://" + (f"{quote(user)}@" if user else "") + address + (f":{port}" if port else "")
-    return Connection(name=target["displayName"], address=address, url=url)
+    return Connection(name=target["displayName"], address=address, url=url + _type_query(target))
+
+
+def _type_query(target: dict) -> str:
+    """Pass the saved Standard type on, or Screen Sharing asks Standard vs High Performance."""
+    display_type = target.get("displayConfiguration", {}).get("displayType", {})
+    return "?numVirtualDisplays=0" if "compatibilityMode" in display_type else ""
 
 
 def find_connection(connections: list[Connection], wanted: str) -> Connection:

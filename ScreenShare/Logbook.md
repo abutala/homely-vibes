@@ -4,51 +4,56 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ---
 
-## Open the saved connection, never a hand-built `vnc://host` (2026-10)
+## Landmines
 
-`open location "vnc://<hostname>"` makes a **new** saved connection when the saved one uses
-another address (Screen Sharing saves Bonjour names such as `Name._rfb._tcp.local`). The new
-entry has no username, so every launch asks more questions. The builder now reads
-`connectionsStore` from `defaults export com.apple.ScreenSharing -` and opens the saved entry's
-own `vnc://user@address:port`. Screen Sharing then reuses that entry, and its window title is
-the entry's `displayName`, which the launcher waits for.
+### Never open a hand-built `vnc://<hostname>`
 
-A per-connection `sessionMetadatas` record holds `isFullScreen` and `scalingMode`, but opening
-the connection does not restore full screen. Screen Sharing's AppleScript dictionary has only
-`GetURL`, so full screen still goes through System Events.
+When the address differs from the saved one (Screen Sharing saves Bonjour names such as
+`Name._rfb._tcp.local`), Screen Sharing makes a **new** saved connection with no username, and
+every launch asks more questions. The builder reads `connectionsStore` from
+`defaults export com.apple.ScreenSharing -` and opens the saved entry's own
+`vnc://user@address:port`. The session window title is then the entry's `displayName`.
 
-## `.vncloc` files are not a launcher (2026-10)
+### The URL must carry the screen sharing type
 
-Screen Sharing writes a `.vncloc` file per open session under its container
-(`~/Library/Containers/com.apple.ScreenSharing/Data/Library/Application Support/Screen Sharing/`).
-Its `restorationAttributes` hold `isFullScreen`, `scalingMode` and `dynamicResolution`.
-These keys are not documented. A hand-made file with them opened no window, and the app
-deletes its own copy when the session closes. Do not build on them.
+Without it, every launch asks "Select Screen Sharing Type" (Standard or High Performance).
+The Connect button in All Connections does not ask. Standard is saved as
+`displayType.compatibilityMode` and maps to `?numVirtualDisplays=0`, the same query Screen
+Sharing writes itself. Only that key is sent, so the saved quality is untouched. Other types
+still get the prompt.
 
-## System Events cannot see a window on another full-screen Space
+### Accessibility permission does not survive a rebuild
 
-When the session is in full screen and a different Space is active, `windows of process
-"Screen Sharing"` is empty, but the connection is still up (`lsof -i` shows port 5900
-established). `open location` switches to the session's Space, so the launcher then finds it.
+`osacompile` signs ad hoc, so each rebuild has a new signature and the old Accessibility entry
+no longer matches. Remove it and add the app again. `osacompile` also writes no
+`CFBundleIdentifier`; without one the app never appeared in the list, so the builder sets
+`com.homelyvibes.screenshare.<name>` and re-signs.
 
-## Accessibility permission does not survive a rebuild
-
-`osacompile` signs the app ad hoc. Each rebuild gives a new signature, so the Accessibility
-entry no longer matches and the app cannot set full screen. Remove the entry and add the app
-again.
-
-The builder also sets `CFBundleIdentifier` (`com.homelyvibes.screenshare.<name>`).
-`osacompile` writes none, and an app without one did not show up in the Accessibility list.
-
-## The Accessibility list moved in macOS 27
+### The Accessibility list moved in macOS 27
 
 It is under **System Settings → Device Control and Data Access**, not Privacy & Security. The
 old deep link still opens it:
 `x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility`.
 
-## Adding a Dock tile
+### System Events cannot see a window on another full-screen Space
 
-The builder appends a minimal `persistent-apps` entry (`file-data` → `_CFURLString` with the
-app's `file://…/` URL, `_CFURLStringType` 15) with `defaults write … -array-add`, then
-`killall Dock`. The Dock fills in the rest. It checks for the same URL first, so a rebuild
-does not add a second tile.
+With the session in full screen and another Space active, `windows of process
+"Screen Sharing"` is empty while the connection is up (`lsof -i` shows port 5900
+established). `open location` switches to the session's Space, so the launcher then finds it.
+
+---
+
+## Dead ends
+
+### Full screen without System Events
+
+Screen Sharing's AppleScript dictionary has only `GetURL`. `sessionMetadatas` stores
+`isFullScreen` and `scalingMode` per connection, but opening the connection does not restore
+full screen. Hand-made `.vncloc` files with `restorationAttributes.isFullScreen` opened no
+window, and the app deletes its own `.vncloc` when the session closes.
+
+### Dock tile format
+
+Not a dead end, for reference: the builder appends a minimal `persistent-apps` entry
+(`file-data` → `_CFURLString` = the app's `file://…/` URL, `_CFURLStringType` 15), then
+`killall Dock`. It checks for the URL first, so a rebuild keeps one tile.

@@ -28,6 +28,7 @@ def _prefs(*targets: dict) -> bytes:
 
 BONJOUR = {
     "displayName": "Studio Mac",
+    "displayConfiguration": {"displayType": {"compatibilityMode": {}}},
     "address": "Studio%20Mac._rfb._tcp.local",
     "port": 5900,
     "username": "alex",
@@ -40,11 +41,11 @@ def test_parse_builds_url_with_user_and_port() -> None:
     assert conn == Connection(
         name="Studio Mac",
         address="Studio%20Mac._rfb._tcp.local",
-        url="vnc://alex@Studio%20Mac._rfb._tcp.local:5900",
+        url="vnc://alex@Studio%20Mac._rfb._tcp.local:5900?numVirtualDisplays=0",
     )
 
 
-def test_parse_omits_empty_user_and_missing_port() -> None:
+def test_parse_omits_empty_user_port_and_unknown_type() -> None:
     [conn] = parse_connections(_prefs(PLAIN))
     assert conn.url == "vnc://192.0.2.10"
 
