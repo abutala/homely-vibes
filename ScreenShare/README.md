@@ -2,8 +2,9 @@
 
 Gotchas and dead ends: [Logbook.md](Logbook.md).
 
-Builds a double-click macOS app that opens one **saved** Screen Sharing connection in full
-screen, with scaling set. Scaling on is "Scale to fit available space": the remote screen fits
+Installs a macOS app that opens one **saved** Screen Sharing connection in full screen, with
+scaling set. The app goes to `~/Applications` and gets a Dock tile. Its name is
+`VNC <Host Name>`, e.g. `VNC Studio Mac` for `studio-mac.local`. Scaling on is "Scale to fit available space": the remote screen fits
 the window, and the remote resolution does not change.
 
 The app opens the connection Screen Sharing already has saved, with its own address and user.
@@ -16,11 +17,14 @@ It never makes a new connection entry, so your saved login and settings apply.
 2. Build:
 
    ```bash
-   make screenshare-app CONNECTION="Studio Mac" NAME=Studio 2>&1 | tee /tmp/screenshare-app.log
+   make screenshare-app CONNECTION="Studio Mac" 2>&1 | tee /tmp/screenshare-app.log
    ```
 
-3. `make` opens the Accessibility list and shows the new app in Finder. Drag the app into
-   the list and turn it on. That is the only manual step.
+3. `make` installs `~/Applications/VNC Studio Mac.app`, adds it to the Dock, opens the
+   Accessibility list, and shows the app in Finder. Drag the app into the list and turn it
+   on. That is the only manual step.
+
+A rebuild replaces the app and keeps the one Dock tile.
 
 An unknown `CONNECTION` fails and prints the names of the saved connections.
 
@@ -29,12 +33,13 @@ An unknown `CONNECTION` fails and prints the names of the saved connections.
 | Setting | Default | What it does |
 |---|---|---|
 | `CONNECTION` | required | Saved connection name as Screen Sharing shows it, or its address |
-| `NAME` | `ScreenShare` | App name. The file is `<NAME>.app` |
+| `NAME` | `VNC <Host Name>` | App name. The host words are title-cased ASCII: `el-pequeno.local` → `VNC El Pequeno`. An IP stays as is |
 | `SCALE` | `on` | `on` = scale the remote screen to fit the window. `off` = show it at full size |
-| `DEST` | `~/Desktop` | Folder for the app |
+| `DEST` | `~/Applications` | Folder for the app |
 
-Direct use: `uv run python ScreenShare/build_app.py --connection "Studio Mac" --name Studio`.
-Add `--no-settings` to skip opening the Accessibility list.
+Direct use: `uv run python ScreenShare/build_app.py --connection "Studio Mac"`.
+Add `--no-dock` to skip the Dock tile, and `--no-settings` to skip opening the Accessibility
+list.
 
 ## Permissions
 

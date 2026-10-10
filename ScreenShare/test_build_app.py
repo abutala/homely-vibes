@@ -1,10 +1,14 @@
 import plistlib
+from pathlib import Path
 
 import pytest
 
 from ScreenShare.build_app import (
     TEMPLATE,
     Connection,
+    default_app_name,
+    dock_has,
+    host_label,
     applescript_string,
     bundle_id,
     find_connection,
@@ -79,3 +83,29 @@ def test_bundle_id_is_stable_slug() -> None:
 def test_real_template_has_no_placeholder_left() -> None:
     conn = Connection(name="n", address="a", url="vnc://a")
     assert "__" not in render(TEMPLATE.read_text(), conn, scale_on=True)
+
+
+@pytest.mark.parametrize(
+    ("address", "label"),
+    [
+        ("Studio%20M%C3%A1c._rfb._tcp.local", "Studio Mac"),
+        ("studio-mac.local", "Studio Mac"),
+        ("office_mini", "Office Mini"),
+        ("192.0.2.10", "192.0.2.10"),
+        ("fe80::1", "fe80::1"),
+    ],
+)
+def test_host_label_title_cases_ascii_words(address: str, label: str) -> None:
+    assert host_label(address) == label
+
+
+def test_default_app_name_prefixes_vnc() -> None:
+    conn = Connection(name="Studio Mác", address="studio-mac.local", url="vnc://studio-mac.local")
+    assert default_app_name(conn) == "VNC Studio Mac"
+
+
+def test_dock_has_matches_file_url_with_trailing_slash() -> None:
+    app = Path("/Applications/VNC Studio Mac.app")
+    tile = {"tile-data": {"file-data": {"_CFURLString": app.as_uri() + "/"}}}
+    assert dock_has([{"tile-data": {}}, tile], app)
+    assert not dock_has([{"tile-data": {}}], app)

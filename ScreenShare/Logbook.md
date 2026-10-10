@@ -45,3 +45,10 @@ The builder also sets `CFBundleIdentifier` (`com.homelyvibes.screenshare.<name>`
 It is under **System Settings → Device Control and Data Access**, not Privacy & Security. The
 old deep link still opens it:
 `x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility`.
+
+## Adding a Dock tile
+
+The builder appends a minimal `persistent-apps` entry (`file-data` → `_CFURLString` with the
+app's `file://…/` URL, `_CFURLStringType` 15) with `defaults write … -array-add`, then
+`killall Dock`. The Dock fills in the rest. It checks for the same URL first, so a rebuild
+does not add a second tile.
