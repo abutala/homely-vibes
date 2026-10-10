@@ -38,6 +38,14 @@ no longer matches. Remove it and add the app again. `osacompile` also writes no
 `CFBundleIdentifier`; without one the app never appeared in the list, so the builder sets
 `com.homelyvibes.screenshare.<name>` and re-signs.
 
+### `Assets.car` hides a custom icon
+
+`osacompile` ships the stock applet icon twice: `applet.icns` and an `Assets.car` named by
+`CFBundleIconName`. Modern macOS prefers the asset catalog, so replacing only `applet.icns`
+changes nothing. The builder deletes `Assets.car` and the `CFBundleIconName` key, writes its
+own `applet.icns`, then signs. After a rebuild, `touch` the app and `killall Dock` if the old
+icon is cached.
+
 ### The Accessibility list moved in macOS 27
 
 It is under **System Settings → Device Control and Data Access**, not Privacy & Security. The

@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from ScreenShare.icon import initials, make_icon
 from ScreenShare.build_app import (
     TEMPLATE,
     Connection,
@@ -110,3 +111,17 @@ def test_dock_has_matches_file_url_with_trailing_slash() -> None:
     tile = {"tile-data": {"file-data": {"_CFURLString": app.as_uri() + "/"}}}
     assert dock_has([{"tile-data": {}}, tile], app)
     assert not dock_has([{"tile-data": {}}], app)
+
+
+@pytest.mark.parametrize(
+    ("label", "expected"),
+    [("Studio Mac", "SM"), ("office", "O"), ("Big Studio Mac", "BS"), ("192.0.2.10", "10")],
+)
+def test_icon_initials(label: str, expected: str) -> None:
+    assert initials(label) == expected
+
+
+def test_make_icon_is_square_rgba() -> None:
+    image = make_icon("Studio Mac")
+    assert image.size == (1024, 1024)
+    assert image.mode == "RGBA"

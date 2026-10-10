@@ -20,6 +20,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote
 
 from lib.config import ScreenShareAppConfig, get_config
+from ScreenShare.icon import make_icon, write_icns
 
 TEMPLATE = Path(__file__).with_name("launcher.applescript")
 PERMISSION_PANE = (
@@ -108,8 +109,8 @@ def bundle_id(app_name: str) -> str:
     return f"com.homelyvibes.screenshare.{slug}"
 
 
-def compile_app(source: str, app: Path) -> None:
-    """osacompile, then a bundle ID so macOS privacy settings can track the app."""
+def compile_app(source: str, app: Path, icon_label: str) -> None:
+    """osacompile, then our icon and a bundle ID (so privacy settings can track the app)."""
     with tempfile.NamedTemporaryFile("w", suffix=".applescript") as script:
         script.write(source)
         script.flush()
@@ -118,7 +119,11 @@ def compile_app(source: str, app: Path) -> None:
     info_path = app / "Contents" / "Info.plist"
     info = plistlib.loads(info_path.read_bytes())
     info["CFBundleIdentifier"] = bundle_id(app.stem)
+    info.pop("CFBundleIconName", None)  # else the stock icon in Assets.car wins over applet.icns
     info_path.write_bytes(plistlib.dumps(info))
+    resources = app / "Contents" / "Resources"
+    (resources / "Assets.car").unlink(missing_ok=True)
+    write_icns(make_icon(icon_label), resources / "applet.icns")
     subprocess.run(["codesign", "--force", "--sign", "-", str(app)], check=True)
 
 
@@ -177,7 +182,9 @@ def install(spec: ScreenShareAppConfig, conn: Connection, dest: Path, dock: bool
         raise ValueError(f"App name may hold letters, digits, space, '.', '_' and '-': {name}")
     app = dest / f"{name}.app"
     dest.mkdir(parents=True, exist_ok=True)
-    compile_app(render(TEMPLATE.read_text(), conn, spec.zoom_in_steps), app)
+    compile_app(
+        render(TEMPLATE.read_text(), conn, spec.zoom_in_steps), app, host_label(conn.address)
+    )
     fit = "scale to fit" if spec.zoom_in_steps is None else f"zoom in x{spec.zoom_in_steps}"
     print(f'Built {app} for "{conn.name}" ({conn.url}), {fit}.')
     if dock and add_to_dock(app):
