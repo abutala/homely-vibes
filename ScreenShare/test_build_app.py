@@ -125,3 +125,8 @@ def test_make_icon_is_square_rgba() -> None:
     image = make_icon("Studio Mac")
     assert image.size == (1024, 1024)
     assert image.mode == "RGBA"
+
+
+def test_dock_has_matches_label_when_url_is_missing() -> None:
+    app = Path("/Applications/VNC Studio Mac.app")
+    assert dock_has([{"tile-data": {"file-label": "VNC Studio Mac"}}], app)

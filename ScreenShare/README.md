@@ -18,11 +18,13 @@ with no extra questions. Its icon is a monitor with the host's initials (`icon.p
          zoom_in_steps: 1           # omit to scale to fit
    ```
 
-3. Run `make screenshare-app 2>&1 | tee /tmp/screenshare-app.log`. It opens the
-   Accessibility list and shows the app in Finder. Drag the app into the list and turn it on.
-4. On the first launch, allow "… wants to control System Events".
+3. Run `make screenshare-app 2>&1 | tee /tmp/screenshare-app.log`.
+4. Launch the app from the Dock. On the first launch, allow "… wants to control System
+   Events". If it lacks Accessibility, it opens that list and shows itself in Finder: drag it
+   in, turn it on, and launch it again.
 
-Do step 3's drag again after each rebuild. Remove the old entry first.
+A rebuild drops the Accessibility grant. The app asks again on its next launch; remove the old
+entry first.
 
 ## Settings (per entry in `screen_share.apps`)
 
@@ -34,4 +36,4 @@ Do step 3's drag again after each rebuild. Remove the old entry first.
 
 To find `zoom_in_steps`, use the zoom buttons in the Screen Sharing toolbar until the picture
 fits, counting clicks from Actual Size. `make screenshare-app DEST=<dir>` installs elsewhere;
-`ScreenShare/build_app.py` also takes `--no-dock` and `--no-settings`.
+`ScreenShare/build_app.py` also takes `--no-dock`.

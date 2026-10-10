@@ -23,9 +23,6 @@ from lib.config import ScreenShareAppConfig, get_config
 from ScreenShare.icon import make_icon, write_icns
 
 TEMPLATE = Path(__file__).with_name("launcher.applescript")
-PERMISSION_PANE = (
-    "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
-)
 NAME_PATTERN = re.compile(r"^[\w][\w .-]*$")
 IP_PATTERN = re.compile(r"^[0-9.]+$|:")
 HOST_SUFFIXES = ("._rfb._tcp.local.", "._rfb._tcp.local", ".local.", ".local")
@@ -128,11 +125,16 @@ def compile_app(source: str, app: Path, icon_label: str) -> None:
 
 
 def dock_has(persistent_apps: list[dict], app: Path) -> bool:
+    """Match on the URL, or on the label: the Dock rewrites tiles and can drop the URL."""
     url = app.as_uri() + "/"
-    return any(
-        tile.get("tile-data", {}).get("file-data", {}).get("_CFURLString") == url
-        for tile in persistent_apps
-    )
+    for tile in persistent_apps:
+        data = tile.get("tile-data", {})
+        if (
+            data.get("file-data", {}).get("_CFURLString") == url
+            or data.get("file-label") == app.stem
+        ):
+            return True
+    return False
 
 
 def add_to_dock(app: Path) -> bool:
@@ -156,16 +158,10 @@ def add_to_dock(app: Path) -> bool:
     return True
 
 
-def show_permission_pane(app: Path) -> None:
-    subprocess.run(["open", "-R", str(app)], check=True)
-    subprocess.run(["open", PERMISSION_PANE], check=True)
-
-
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dest", type=Path, default=Path.home() / "Applications")
     parser.add_argument("--no-dock", action="store_true", help="do not add a Dock tile")
-    parser.add_argument("--no-settings", action="store_true", help="do not open Settings")
     return parser.parse_args(argv)
 
 
@@ -200,18 +196,13 @@ def main(argv: list[str]) -> int:
         return 1
     connections = read_connections()
     try:
-        apps = [
-            install(
-                spec, find_connection(connections, spec.connection), args.dest, not args.no_dock
-            )
-            for spec in specs
-        ]
+        for spec in specs:
+            conn = find_connection(connections, spec.connection)
+            install(spec, conn, args.dest, not args.no_dock)
     except ValueError as err:
         print(err)
         return 1
-    if not args.no_settings:
-        show_permission_pane(apps[-1])
-        print("Drag each app from Finder into the Accessibility list and turn it on.")
+    print("On first launch, each app asks for Accessibility permission if it needs it.")
     return 0
 
 
