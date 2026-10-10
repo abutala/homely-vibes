@@ -20,7 +20,7 @@ ICONSET_SIZES = (16, 32, 128, 256, 512)
 
 
 def initials(label: str) -> str:
-    """'El Pequeno' -> 'EP'; '192.0.2.10' -> '10'."""
+    """'Studio Mac' -> 'SM'; '192.0.2.10' -> '10'."""
     if re.fullmatch(r"[0-9.]+", label):
         return label.rsplit(".", 1)[-1]
     return "".join(word[0] for word in label.split()[:2]).upper()

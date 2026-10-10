@@ -20,7 +20,12 @@ on run
 			my fitPicture(it)
 		end tell
 	on error errText number errNum
-		my askForPermission(errText)
+		-- -1719 and -25211: System Events refused because this app lacks Accessibility.
+		if errNum is in {-1719, -25211} then
+			my askForPermission(errText)
+		else
+			display dialog (name of me) & ": " & errText buttons {"OK"} default button 1 with icon stop
+		end if
 	end try
 end run
 

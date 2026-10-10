@@ -32,7 +32,7 @@ entry first.
 |---|---|---|
 | `connection` | required | Saved connection name or address. An unknown one lists the saved names |
 | `zoom_in_steps` | none | View → Actual Size, then this many Zoom In clicks. None = scale to fit, which only shrinks |
-| `name` | `VNC <Host Name>` | App name. `el-pequeno.local` → `VNC El Pequeno`. An IP stays as is |
+| `name` | `VNC <Host Name>` | App name. `studio-mac.local` → `VNC Studio Mac`. An IP stays as is |
 
 To find `zoom_in_steps`, use the zoom buttons in the Screen Sharing toolbar until the picture
 fits, counting clicks from Actual Size. `make screenshare-app DEST=<dir>` installs elsewhere;

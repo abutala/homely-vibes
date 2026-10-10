@@ -5,6 +5,7 @@ import pytest
 
 from ScreenShare.icon import initials, make_icon
 from ScreenShare.build_app import (
+    _absolute_path,
     TEMPLATE,
     Connection,
     default_app_name,
@@ -130,3 +131,9 @@ def test_make_icon_is_square_rgba() -> None:
 def test_dock_has_matches_label_when_url_is_missing() -> None:
     app = Path("/Applications/VNC Studio Mac.app")
     assert dock_has([{"tile-data": {"file-label": "VNC Studio Mac"}}], app)
+
+
+def test_dest_expands_tilde_to_absolute() -> None:
+    dest = _absolute_path("~/Apps")
+    assert dest.is_absolute()
+    assert dest == Path.home() / "Apps"

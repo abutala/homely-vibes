@@ -86,7 +86,7 @@ def render(template: str, conn: Connection, zoom_in_steps: int | None) -> str:
 
 
 def host_label(address: str) -> str:
-    """'El%20Peque%C3%B1o._rfb._tcp.local' or 'el-pequeno.local' -> 'El Pequeno'. IPs unchanged."""
+    """'Studio%20M%C3%A1c._rfb._tcp.local' or 'studio-mac.local' -> 'Studio Mac'. IPs unchanged."""
     host = unquote(address)
     for suffix in HOST_SUFFIXES:
         host = host.removesuffix(suffix)
@@ -158,9 +158,14 @@ def add_to_dock(app: Path) -> bool:
     return True
 
 
+def _absolute_path(raw: str) -> Path:
+    """Make passes DEST quoted, so `~` arrives unexpanded."""
+    return Path(raw).expanduser().resolve()
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--dest", type=Path, default=Path.home() / "Applications")
+    parser.add_argument("--dest", type=_absolute_path, default=Path.home() / "Applications")
     parser.add_argument("--no-dock", action="store_true", help="do not add a Dock tile")
     return parser.parse_args(argv)
 

@@ -58,6 +58,13 @@ With the session in full screen and another Space active, `windows of process
 "Screen Sharing"` is empty while the connection is up (`lsof -i` shows port 5900
 established). `open location` switches to the session's Space, so the launcher then finds it.
 
+### The Dock rewrites its tiles
+
+The builder appends a minimal `persistent-apps` entry (`file-data` → `_CFURLString` = the
+app's `file://…/` URL, `_CFURLStringType` 15), then `killall Dock`. After a restart the Dock
+rewrites the entries, and a check on the URL alone once missed the existing tile. The
+duplicate check matches the URL or the `file-label`.
+
 ---
 
 ## Dead ends
@@ -68,9 +75,3 @@ Screen Sharing's AppleScript dictionary has only `GetURL`. `sessionMetadatas` st
 `isFullScreen` and `scalingMode` per connection, but opening the connection does not restore
 full screen. Hand-made `.vncloc` files with `restorationAttributes.isFullScreen` opened no
 window, and the app deletes its own `.vncloc` when the session closes.
-
-### Dock tile format
-
-Not a dead end, for reference: the builder appends a minimal `persistent-apps` entry
-(`file-data` → `_CFURLString` = the app's `file://…/` URL, `_CFURLStringType` 15), then
-`killall Dock`. It checks for the URL first, so a rebuild keeps one tile.

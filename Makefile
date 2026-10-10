@@ -200,6 +200,7 @@ validate-jobs-yaml:
 	setup brew-deps node-deps formal-deps formal formal-verify \
 	test coverage coverage-lcov coverage-html \
 	lint lint-fix codespell deptry \
+	screenshare-app \
 	ruff mypy vulture semgrep \
 	hooks clean \
 	colima \
