@@ -10,7 +10,7 @@ This is a **modular IoT home automation system** with independent components tha
 - **AI / ML modules**: BimpopAI (RAG system), GarageCheck (computer vision), VoiceNotes (local STT)
 - **Ops modules**: PersonalCalSync (Google Apps Script)
 - **Formal models**: formal (Quint specs of concurrency designs)
-- **Client / adjacent**: NoShorts (iOS app), AugustUnlock (iOS app), VSCodeSidebarNotes (VS Code / Cursor extension), BrowserAlert, GPXParser
+- **Client / adjacent**: NoShorts (iOS app), AugustUnlock (iOS app), VSCodeSidebarNotes (VS Code / Cursor extension), ScreenShare (AppleScript launcher app), BrowserAlert, GPXParser
 
 ## Key Architectural Patterns
 
@@ -20,7 +20,7 @@ This is a **modular IoT home automation system** with independent components tha
 - `lib/MyPushover.py`, `lib/Mailer.py` - Notification services
 - `lib/NetHelpers.py` - Network utilities
 
-**Independent Modules**: Each component directory (Tesla/, RachioFlume/, etc.) operates independently but follows consistent patterns:
+**Independent Modules**: Each Python component directory (Tesla/, RachioFlume/, etc.) operates independently but follows consistent patterns:
 - Main script with CLI interface
 - README.md with component-specific documentation
 - Test files following pytest conventions

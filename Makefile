@@ -153,6 +153,10 @@ semgrep: ## Run semgrep security analysis
 	@uv run semgrep --config=auto .
 	@echo "${GREEN}semgrep completed successfully.${RESET}"
 
+## macOS apps:
+screenshare-app: ## Install Screen Sharing launcher apps + Dock tiles from screen_share.apps in config ([DEST=..])
+	@uv run python ScreenShare/build_app.py $(if $(DEST),--dest "$(DEST)")
+
 ## Hooks:
 hooks: ## Set up all the hooks
 	@echo "🔧 Setting up pre-commit hooks"
@@ -196,6 +200,7 @@ validate-jobs-yaml:
 	setup brew-deps node-deps formal-deps formal formal-verify \
 	test coverage coverage-lcov coverage-html \
 	lint lint-fix codespell deptry \
+	screenshare-app \
 	ruff mypy vulture semgrep \
 	hooks clean \
 	colima \

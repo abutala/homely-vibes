@@ -87,7 +87,7 @@ See `config/default.yaml` for the full structure and `config/local.yaml.example`
 | 🧪 **formal** | Quint models of concurrency designs the tests exercise badly, starting with the Ring token lock. | [📖 README](formal/README.md) · [📓 Logbook](formal/Logbook.md) |
 | 🚗 **GarageCheck** | Machine learning-based garage door status detection using image classification and computer vision. | [📖 README](GarageCheck/README.md) |
 | 🗺️ **GPXParser** | GPX track analysis and processing tools for GPS data visualization and route analysis. | [📖 README](GPXParser/README.md) |
-| 🛠️ **lib** | Shared utilities: OmegaConf config, Pushover / Mailer / Twilio, atomic secret I/O, POSIX file lock. Used by every module. | [📖 README](lib/README.md) · [📓 Logbook](lib/Logbook.md) |
+| 🛠️ **lib** | Shared utilities: OmegaConf config, Pushover / Mailer / Twilio, atomic secret I/O, POSIX file lock. Used by every Python module. | [📖 README](lib/README.md) · [📓 Logbook](lib/Logbook.md) |
 | 🌐 **NetworkCheck** | Network uplink speedtest with outcome-driven Pushover priority and external IP reporter. | [📖 README](NetworkCheck/README.md) · [📓 Logbook](NetworkCheck/Logbook.md) |
 | 🖥️ **NodeCheck** | System node monitoring with continuous heartbeat tracking and automated device management. | [📖 README](NodeCheck/README.md) · [📓 Logbook](NodeCheck/Logbook.md) |
 | 📵 **NoShorts** | iOS app that wraps YouTube and strips all Shorts content via JS injection — clean YouTube without vertical video. | [📖 README](NoShorts/README.md) · [📓 Logbook](NoShorts/Logbook.md) |
@@ -97,6 +97,7 @@ See `config/default.yaml` for the full structure and `config/local.yaml.example`
 | 🚨 **RingBeams** | Ring Beams motion sensors + Ring Alarm contact/motion sensors, via Node.js sidecar over socket.io (ring-client-api). P1 battery, P0 tamper. | [📖 README](RingBeams/README.md) · [📓 Logbook](RingBeams/Logbook.md) |
 | 📸 **RingSecurity** | Ring cameras + doorbells daily health check via REST — P1 low-battery, P0 offline. | [📖 README](RingSecurity/README.md) · [📓 Logbook](RingSecurity/Logbook.md) |
 | 🖼️ **SamsungFrame** | Samsung Frame TV art manager with batch upload, HEIC conversion, and slideshow control. | [📖 README](SamsungFrame/README.md) · [📓 Logbook](SamsungFrame/Logbook.md) |
+| 🖥️ **ScreenShare** | Builds double-click macOS apps, one per configured saved Screen Sharing connection, that open it in full screen and fit it by scaling or zoom. | [📖 README](ScreenShare/README.md) · [📓 Logbook](ScreenShare/Logbook.md) |
 | ⚡ **Tesla** | Tesla Powerwall monitoring and intelligent power management automation for home energy optimization. | [📖 README](Tesla/README.md) · [📓 Logbook](Tesla/Logbook.md) |
 | 🎙️ **VoiceNotes** | Wispr Flow-style local push-to-talk voice transcription on macOS. Hold ⌥-right, speak, release — text streams to Markdown via whisper.cpp + Metal. No cloud. | [📖 README](VoiceNotes/README.md) · [📓 Logbook](VoiceNotes/Logbook.md) |
 | 🗒️ **VSCodeSidebarNotes** | VS Code / Cursor extension: markdown sidebar that persists across restarts and is writable by Claude for live session summaries. | [📖 README](VSCodeSidebarNotes/README.md) · [📓 Logbook](VSCodeSidebarNotes/Logbook.md) |

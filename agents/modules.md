@@ -69,6 +69,11 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 - **CLI Commands**: `frame_run.py <folder>` runs the upload pipeline (ingest, dedup, upload, cleanup, slideshow); `manage_samsung.py` has status, list-art, list-mattes, download-thumbnails, update-mattes, cycle-images, start-slideshow, reboot, delete-all, purge
 - **Image Requirements**: the pipeline converts HEIC/JPG/PNG originals to <=4K JPGs under `max_image_size_mb`; the client validates each file before upload
 
+## ScreenShare Module (`ScreenShare/`)
+- **Stack**: `build_app.py` fills an AppleScript template and compiles it with `osacompile`; `icon.py` draws the per-host icon with Pillow. Output is a launcher `.app` in `~/Applications` with a Dock tile, one per `screen_share.apps` entry.
+- **Build**: `make screenshare-app` installs one app per `screen_share.apps` entry in config (`ScreenShareConfig` in `lib/config.py`). It reads Screen Sharing's `connectionsStore` and opens that entry's own URL, so it never adds a duplicate connection.
+- **Runtime**: drives Screen Sharing through System Events, so the built app needs Accessibility permission, and loses it on each rebuild.
+
 ## Tesla Module (`Tesla/`)
 - **Authentication**: Fleet API OAuth (previously TeslaPy — migrated in PR #178)
 - **Main Features**: Powerwall monitoring, intelligent power management, battery history tracking, retry on transient Fleet API errors
