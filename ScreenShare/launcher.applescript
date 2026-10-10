@@ -20,7 +20,7 @@ on run
 end run
 
 -- The window title is the remote Mac's display name, not its hostname, so match on the
--- connection file (AXDocument) that holds the vnc:// URL instead.
+-- host in the connection file (AXDocument) that holds the vnc:// URL instead.
 on waitForSessionWindow()
 	repeat (waitSeconds * 2) times
 		tell application "System Events"
@@ -44,10 +44,14 @@ on windowIsForHost(w)
 		end try
 	end tell
 	if docURL is missing value then return false
-	set docPath to (current application's NSURL's URLWithString:docURL)'s |path|()
-	set docText to current application's NSString's stringWithContentsOfFile:docPath encoding:4 |error|:(missing value)
-	if docText is missing value then return false
-	return (docText as text) contains ("vnc://" & targetHost)
+	set connection to current application's NSDictionary's dictionaryWithContentsOfURL:(current application's NSURL's URLWithString:docURL)
+	if connection is missing value then return false
+	set sessionURL to connection's objectForKey:"URL"
+	if sessionURL is missing value then return false
+	set sessionHost to (current application's NSURL's URLWithString:sessionURL)'s |host|()
+	if sessionHost is missing value then return false
+	-- AppleScript text comparison ignores case, as hostnames do.
+	return (sessionHost as text) = targetHost
 end windowIsForHost
 
 -- The View menu shows "Turn Scaling On" while scaling is off, and "Turn Scaling Off" while on.

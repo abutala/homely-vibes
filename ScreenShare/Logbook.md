@@ -28,5 +28,5 @@ established). `open location` switches to the session's Space, so the launcher t
 ## Accessibility permission does not survive a rebuild
 
 `osacompile` signs the app ad hoc. Each rebuild gives a new signature, so the Accessibility
-entry no longer matches and full screen silently fails. Remove the entry and add the app
+entry no longer matches and the app cannot set full screen. Remove the entry and add the app
 again.

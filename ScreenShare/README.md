@@ -29,12 +29,17 @@ The script `Scripts/build_app.sh` reads the same settings from the environment, 
 ## Give the app Accessibility permission (one time)
 
 The app uses System Events to set full screen and scaling. macOS allows this only for apps
-on the Accessibility list. Without it, the session opens but stays in a window.
+on the Accessibility list. Without it, the session opens but does not go full screen, and the
+app may show an error.
 
 1. Build the app.
 2. Open **System Settings → Privacy & Security → Accessibility**.
 3. Click **+**, select the app (e.g. `~/Desktop/MiniFull.app`), and turn it on.
 4. Quit Screen Sharing. Double-click the app.
+5. On the first run macOS can ask more questions. Click **Allow** (or **OK**) for each:
+   - "… wants to control System Events" (Automation).
+   - "… would like to access data from other apps" (the app reads Screen Sharing's
+     connection file to find the session window).
 
 **After each rebuild, do steps 2–3 again.** A rebuild makes a new app signature, and macOS
 does not keep the old permission. Remove the old entry (**−**), then add the app again.

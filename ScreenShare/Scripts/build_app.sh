@@ -18,7 +18,7 @@ case "$SCALE" in
 esac
 
 src="$(cd "$(dirname "$0")/.." && pwd)/launcher.applescript"
-tmp="$(mktemp -t screenshare).applescript"
+tmp="$(mktemp "${TMPDIR:-/tmp}/screenshare.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 sed -e "s/__HOST__/$HOST/" -e "s/__SCALE__/$scale_bool/" "$src" > "$tmp"
 

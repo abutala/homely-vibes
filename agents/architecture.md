@@ -20,7 +20,7 @@ This is a **modular IoT home automation system** with independent components tha
 - `lib/MyPushover.py`, `lib/Mailer.py` - Notification services
 - `lib/NetHelpers.py` - Network utilities
 
-**Independent Modules**: Each component directory (Tesla/, RachioFlume/, etc.) operates independently but follows consistent patterns:
+**Independent Modules**: Each Python component directory (Tesla/, RachioFlume/, etc.) operates independently but follows consistent patterns:
 - Main script with CLI interface
 - README.md with component-specific documentation
 - Test files following pytest conventions
