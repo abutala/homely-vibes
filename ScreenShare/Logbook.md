@@ -4,12 +4,18 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ---
 
-## The window title is the remote display name, not the hostname
+## Open the saved connection, never a hand-built `vnc://host` (2026-10)
 
-A session window is titled with the remote Mac's display name (it can hold characters such as
-`ñ`), not with the hostname in the `vnc://` URL. A title match built from `HOST` misses. The
-launcher reads the window's `AXDocument` attribute instead. It points to a `.vncloc` file
-whose `URL` key holds the `vnc://` address.
+`open location "vnc://<hostname>"` makes a **new** saved connection when the saved one uses
+another address (Screen Sharing saves Bonjour names such as `Name._rfb._tcp.local`). The new
+entry has no username, so every launch asks more questions. The builder now reads
+`connectionsStore` from `defaults export com.apple.ScreenSharing -` and opens the saved entry's
+own `vnc://user@address:port`. Screen Sharing then reuses that entry, and its window title is
+the entry's `displayName`, which the launcher waits for.
+
+A per-connection `sessionMetadatas` record holds `isFullScreen` and `scalingMode`, but opening
+the connection does not restore full screen. Screen Sharing's AppleScript dictionary has only
+`GetURL`, so full screen still goes through System Events.
 
 ## `.vncloc` files are not a launcher (2026-10)
 
@@ -30,3 +36,12 @@ established). `open location` switches to the session's Space, so the launcher t
 `osacompile` signs the app ad hoc. Each rebuild gives a new signature, so the Accessibility
 entry no longer matches and the app cannot set full screen. Remove the entry and add the app
 again.
+
+The builder also sets `CFBundleIdentifier` (`com.homelyvibes.screenshare.<name>`).
+`osacompile` writes none, and an app without one did not show up in the Accessibility list.
+
+## The Accessibility list moved in macOS 27
+
+It is under **System Settings → Device Control and Data Access**, not Privacy & Security. The
+old deep link still opens it:
+`x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility`.

@@ -2,54 +2,57 @@
 
 Gotchas and dead ends: [Logbook.md](Logbook.md).
 
-Builds a double-clickable macOS app that opens one remote Mac in Screen Sharing, in full
-screen, with scaling set. Scaling on is "Scale to fit available space": the remote screen
-fits the window, and the remote resolution does not change.
+Builds a double-click macOS app that opens one **saved** Screen Sharing connection in full
+screen, with scaling set. Scaling on is "Scale to fit available space": the remote screen fits
+the window, and the remote resolution does not change.
+
+The app opens the connection Screen Sharing already has saved, with its own address and user.
+It never makes a new connection entry, so your saved login and settings apply.
 
 ## Build
 
-```bash
-make screenshare-app HOST=mac-mini.local NAME=MiniFull 2>&1 | tee /tmp/screenshare-app.log
-```
+1. Connect once in Screen Sharing so the connection is saved. Note its name in the
+   Screen Sharing window (e.g. `Studio Mac`).
+2. Build:
 
-The app goes to `~/Desktop/MiniFull.app`. Make one app per remote Mac.
+   ```bash
+   make screenshare-app CONNECTION="Studio Mac" NAME=Studio 2>&1 | tee /tmp/screenshare-app.log
+   ```
+
+3. `make` opens the Accessibility list and shows the new app in Finder. Drag the app into
+   the list and turn it on. That is the only manual step.
+
+An unknown `CONNECTION` fails and prints the names of the saved connections.
 
 ## Settings
 
 | Setting | Default | What it does |
 |---|---|---|
-| `HOST` | required | Hostname or IP of the remote Mac, e.g. `mac-mini.local` |
+| `CONNECTION` | required | Saved connection name as Screen Sharing shows it, or its address |
 | `NAME` | `ScreenShare` | App name. The file is `<NAME>.app` |
 | `SCALE` | `on` | `on` = scale the remote screen to fit the window. `off` = show it at full size |
 | `DEST` | `~/Desktop` | Folder for the app |
 
-The script `Scripts/build_app.sh` reads the same settings from the environment, so
-`HOST=mac-mini.local Scripts/build_app.sh` also works.
+Direct use: `uv run python ScreenShare/build_app.py --connection "Studio Mac" --name Studio`.
+Add `--no-settings` to skip opening the Accessibility list.
 
-## Give the app Accessibility permission (one time)
+## Permissions
 
-The app uses System Events to set full screen and scaling. macOS allows this only for apps
-on the Accessibility list. Without it, the session opens but does not go full screen, and the
-app may show an error.
+- **Accessibility** — needed to set full screen and scaling. On macOS 27 the list is
+  **System Settings → Device Control and Data Access → Accessibility** (on older macOS:
+  Privacy & Security → Accessibility). `make` opens it for you.
+- **Automation** — on the first run macOS asks "… wants to control System Events". Click
+  **Allow**. It asks once.
+- **After each rebuild, grant Accessibility again.** A rebuild makes a new signature, and macOS
+  does not keep the old permission. `make` opens the list again; remove the old entry (**−**)
+  and drag the new app in.
 
-1. Build the app.
-2. Open **System Settings → Privacy & Security → Accessibility**.
-3. Click **+**, select the app (e.g. `~/Desktop/MiniFull.app`), and turn it on.
-4. Quit Screen Sharing. Double-click the app.
-5. On the first run macOS can ask more questions. Click **Allow** (or **OK**) for each:
-   - "… wants to control System Events" (Automation).
-   - "… would like to access data from other apps" (the app reads Screen Sharing's
-     connection file to find the session window).
-
-**After each rebuild, do steps 2–3 again.** A rebuild makes a new app signature, and macOS
-does not keep the old permission. Remove the old entry (**−**), then add the app again.
+If the app runs without Accessibility, it opens the list, shows itself in Finder, and says
+what to do.
 
 ## How it works
 
-1. Opens `vnc://<HOST>`. Screen Sharing asks for the login if it has none saved.
-2. Waits up to 90 s for the session window for that host.
+1. Opens the saved connection's `vnc://user@address:port` URL.
+2. Waits up to 90 s for the window with the connection's name.
 3. Clicks **View → Turn Scaling On** (or **Off**), only when the menu shows the other state.
 4. Sets the window to full screen.
-
-If the host is already connected, the app brings that session to the front and applies the
-same settings.

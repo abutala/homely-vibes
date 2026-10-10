@@ -1,58 +1,42 @@
--- Opens a macOS Screen Sharing session in full screen, with scaling set.
--- Template: Scripts/build_app.sh replaces __HOST__ and __SCALE__ and compiles it.
-use framework "Foundation"
-use scripting additions
-
-property targetHost : "__HOST__"
+-- Opens a saved Screen Sharing connection in full screen, with scaling set.
+-- Template: build_app.py replaces the placeholders with AppleScript literals.
+property connectionURL : __URL__
+property windowTitle : __TITLE__
 property scaleOn : __SCALE__
 property waitSeconds : 90
+property permissionPane : "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
 
 on run
-	open location "vnc://" & targetHost
-	set sessionWindow to my waitForSessionWindow()
-	if sessionWindow is missing value then return
-	tell application "System Events" to tell process "Screen Sharing"
-		set frontmost to true
-		perform action "AXRaise" of sessionWindow
-		my setScaling(it)
-		set value of attribute "AXFullScreen" of sessionWindow to true
-	end tell
+	-- The URL is the saved connection's own address and user, so Screen Sharing reuses it.
+	open location connectionURL
+	try
+		set sessionWindow to my waitForSessionWindow()
+		if sessionWindow is missing value then return
+		tell application "System Events" to tell process "Screen Sharing"
+			set frontmost to true
+			perform action "AXRaise" of sessionWindow
+			my setScaling(it)
+			set value of attribute "AXFullScreen" of sessionWindow to true
+		end tell
+	on error errText number errNum
+		my askForPermission(errText)
+	end try
 end run
 
--- The window title is the remote Mac's display name, not its hostname, so match on the
--- host in the connection file (AXDocument) that holds the vnc:// URL instead.
+-- Saved connections open in a window titled with the connection's name.
 on waitForSessionWindow()
 	repeat (waitSeconds * 2) times
 		tell application "System Events"
 			if exists process "Screen Sharing" then
-				repeat with w in (windows of process "Screen Sharing")
-					if my windowIsForHost(w) then return contents of w
-				end repeat
+				if exists (first window of process "Screen Sharing" whose name is windowTitle) then
+					return first window of process "Screen Sharing" whose name is windowTitle
+				end if
 			end if
 		end tell
 		delay 0.5
 	end repeat
 	return missing value
 end waitForSessionWindow
-
-on windowIsForHost(w)
-	tell application "System Events"
-		try
-			set docURL to value of attribute "AXDocument" of w
-		on error
-			return false
-		end try
-	end tell
-	if docURL is missing value then return false
-	set connection to current application's NSDictionary's dictionaryWithContentsOfURL:(current application's NSURL's URLWithString:docURL)
-	if connection is missing value then return false
-	set sessionURL to connection's objectForKey:"URL"
-	if sessionURL is missing value then return false
-	set sessionHost to (current application's NSURL's URLWithString:sessionURL)'s |host|()
-	if sessionHost is missing value then return false
-	-- AppleScript text comparison ignores case, as hostnames do.
-	return (sessionHost as text) = targetHost
-end windowIsForHost
 
 -- The View menu shows "Turn Scaling On" while scaling is off, and "Turn Scaling Off" while on.
 on setScaling(proc)
@@ -67,3 +51,13 @@ on setScaling(proc)
 		end tell
 	end tell
 end setScaling
+
+-- Without Accessibility permission, System Events refuses. Show the list and this app.
+on askForPermission(errText)
+	set appName to name of me
+	do shell script "open -R " & quoted form of POSIX path of (path to me)
+	open location permissionPane
+	display dialog appName & " needs Accessibility permission to set full screen." & return & return & ¬
+		"Drag " & appName & " from Finder into the list, turn it on, then open it again." & return & return & ¬
+		"(" & errText & ")" buttons {"OK"} default button 1 with icon caution
+end askForPermission

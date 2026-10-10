@@ -70,8 +70,8 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 - **Image Requirements**: the pipeline converts HEIC/JPG/PNG originals to <=4K JPGs under `max_image_size_mb`; the client validates each file before upload
 
 ## ScreenShare Module (`ScreenShare/`)
-- **Stack**: AppleScript template compiled by `osacompile` (NOT Python — no uv, no pytest). Output is a launcher `.app`, one per remote Mac.
-- **Build**: `make screenshare-app HOST=<host>`; `Scripts/build_app.sh` validates `HOST`/`NAME`/`SCALE` before pasting them into the AppleScript source.
+- **Stack**: `build_app.py` fills an AppleScript template and compiles it with `osacompile`. Output is a launcher `.app`, one per saved Screen Sharing connection.
+- **Build**: `make screenshare-app CONNECTION=<saved name>`. It reads Screen Sharing's `connectionsStore` and opens that entry's own URL, so it never adds a duplicate connection.
 - **Runtime**: drives Screen Sharing through System Events, so the built app needs Accessibility permission, and loses it on each rebuild.
 
 ## Tesla Module (`Tesla/`)
