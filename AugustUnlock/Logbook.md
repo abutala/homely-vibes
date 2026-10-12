@@ -221,3 +221,22 @@ pre-background reading on display.
 Rejected: `GET /locks/{id}/status`. yalexs has it (`async_get_lock_status`),
 but `august_client.py` never calls it, so nothing in this repo proves its
 shape; `/locks/{id}` is the path the Python monitor already exercises.
+
+## 2026-10-12 — Backgrounding mid-operation showed "network connection lost"
+
+Reported from real use: tap unlock (or lock), switch apps, and the operation
+failed with "The network connection was lost". iOS suspends a backgrounded app
+within seconds, the ephemeral session's socket dies with it, and the reply is
+lost — though August often finished the command anyway.
+
+Fix: `run(_:)` holds a `UIApplication.beginBackgroundTask` (`BackgroundKeepAlive`)
+for exactly the life of the operation, and ends it as soon as the operation
+ends so the app can suspend. Resume no longer replaces an operation that is
+still running; it re-checks only when nothing is in flight. If iOS takes the
+time back first (about 30s; a slow bridge can take ~60s), the expiration
+handler cancels the operation and marks the screen idle, so the next open
+re-checks the lock as before.
+
+Rejected: a background `URLSession`. It outlives suspension, but it is
+delegate-based upload/download only, so every call would have to leave
+`async data(for:)` — too much for one button.
