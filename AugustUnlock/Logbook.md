@@ -188,7 +188,8 @@ is in flight, same as the toggle button already does. No attempt to cancel
 or reconcile a stale in-flight result — not worth the complexity for a
 personal one-button app; just don't let the race start. *Since 2026-09-30,
 reopening the app does cancel in-flight work (see that entry); the buttons
-stay disabled.*
+stay disabled. Since 2026-10-12, a return from the background lets a running
+operation finish instead.*
 
 ## 2026-09-30 — Resuming from the background left the screen lying about the door
 
@@ -213,6 +214,8 @@ cancels whatever is in flight, fetches the lock's state from August
 unlocks only if the lock is not already unlocked. After a lock/unlock the
 screen shows the `status` from August's reply (what yalexs'
 `async_unlock` returns), re-fetching if that is a value we don't recognize.
+*Since 2026-10-12, a return from the background no longer cancels an
+operation that is still running — see that entry.*
 Cancellation alone doesn't stop a late reply from landing, so every state
 write after an await is guarded by a cancellation check. The screen resets to
 "State unknown" when a re-check starts, so a failed check never leaves the
@@ -221,3 +224,22 @@ pre-background reading on display.
 Rejected: `GET /locks/{id}/status`. yalexs has it (`async_get_lock_status`),
 but `august_client.py` never calls it, so nothing in this repo proves its
 shape; `/locks/{id}` is the path the Python monitor already exercises.
+
+## 2026-10-12 — Backgrounding mid-operation showed "network connection lost"
+
+Reported from real use: tap unlock (or lock), switch apps, and the operation
+failed with "The network connection was lost". iOS suspends a backgrounded app
+within seconds, the ephemeral session's socket dies with it, and the reply is
+lost — though August often finished the command anyway.
+
+Fix: `run(_:)` holds a `UIApplication.beginBackgroundTask` (`BackgroundKeepAlive`)
+for exactly the life of the operation, and ends it as soon as the operation
+ends so the app can suspend. Resume no longer replaces an operation that is
+still running; it re-checks only when nothing is in flight. If iOS takes the
+time back first (about 30s; a slow bridge can take ~60s), the expiration
+handler cancels the operation and marks the screen idle, so the next open
+re-checks the lock as before.
+
+Rejected: a background `URLSession`. It outlives suspension, but it is
+delegate-based upload/download only, so every call would have to leave
+`async data(for:)` — too much for one button.

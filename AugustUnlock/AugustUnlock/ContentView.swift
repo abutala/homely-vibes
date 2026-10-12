@@ -83,7 +83,9 @@ struct ContentView: View {
                 wasBackgrounded = true
             case .active where wasBackgrounded:
                 wasBackgrounded = false
-                syncThenUnlock()
+                // An operation still in flight kept running in the
+                // background (see `run(_:)`): let it report, don't replace it.
+                if !isOperating { syncThenUnlock() }
             default:
                 break
             }
@@ -94,9 +96,9 @@ struct ContentView: View {
     /// background — fetches the lock's real state from August, then unlocks
     /// unless it already is; opening the app is the confirmation (requested
     /// explicitly). Nothing from before is trusted: the door may have
-    /// auto-locked or been operated elsewhere meanwhile, and a request iOS
-    /// suspended with the app tends to come back as a lost connection — so
-    /// whatever is still in flight is cancelled and its result discarded.
+    /// auto-locked or been operated elsewhere meanwhile. A tap or an earlier
+    /// check still in flight is cancelled and its result discarded; the
+    /// resume path skips this while one is still running (see `run(_:)`).
     private func syncThenUnlock() {
         guard phase == .ready else { return }
         run {
@@ -386,17 +388,28 @@ struct ContentView: View {
 
     /// Runs one operation at a time, cancelling any still in flight. Every
     /// state write in an operation follows a cancellation check, so a
-    /// cancelled one's late reply can't overwrite its replacement's.
+    /// cancelled one's late reply can't overwrite its replacement's. The
+    /// operation keeps running if the app is backgrounded mid-flight, and the
+    /// app may suspend once it ends. If iOS takes the time back first, the
+    /// operation is dropped and the next open re-checks the lock.
     private func run(_ operation: @escaping () async throws -> Void) {
         operationTask?.cancel()
-        operationTask = Task {
+        var task: Task<Void, Never>?
+        let keepAlive = BackgroundKeepAlive {
+            task?.cancel()
+            if task == operationTask { operationResult = .idle }
+        }
+        task = Task {
             do {
                 try await operation()
             } catch {
-                guard !Task.isCancelled else { return }
-                operationResult = .failure(error.localizedDescription)
-                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                if !Task.isCancelled {
+                    operationResult = .failure(error.localizedDescription)
+                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                }
             }
+            keepAlive.end()
+            guard !Task.isCancelled else { return }
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
             switch operationResult {
@@ -404,6 +417,31 @@ struct ContentView: View {
             case .idle, .checking, .inProgress: break
             }
         }
+        operationTask = task
+    }
+}
+
+/// A UIKit background task: iOS otherwise suspends a backgrounded app within
+/// seconds, and a lock/unlock reply still in flight comes back as "network
+/// connection lost". `end()` is idempotent because both the operation
+/// finishing and iOS expiring the time call it.
+@MainActor
+private final class BackgroundKeepAlive {
+    private var id = UIBackgroundTaskIdentifier.invalid
+
+    init(onExpire: @escaping @MainActor () -> Void) {
+        id = UIApplication.shared.beginBackgroundTask(withName: "AugustOperation") { [weak self] in
+            MainActor.assumeIsolated {
+                onExpire()
+                self?.end()
+            }
+        }
+    }
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }
 

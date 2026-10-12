@@ -75,7 +75,9 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
   button; a multi-lock account gets a one-time picker on first sign-in (and a
   "Change Lock" link on the main screen to redo it later). Every open — cold
   launch or back from the background — first fetches the lock's current
-  state from August, then unlocks only if it isn't unlocked already. The
+  state from August, then unlocks only if it isn't unlocked already. A
+  lock/unlock still running when the app is backgrounded keeps running and
+  reports its own result instead. The
   state shown after a tap is what the lock reported back, not what was
   requested, so a door that auto-locked or was operated elsewhere is picked
   up the next time the app opens.
