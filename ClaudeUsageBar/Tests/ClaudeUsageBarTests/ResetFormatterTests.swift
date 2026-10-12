@@ -40,10 +40,21 @@ final class ResetFormatterTests: XCTestCase {
 
     // MARK: - compactTimeLeft (menu bar register)
 
-    func testCompactTimeLeftKeepsLargestUnitOnly() {
-        XCTAssertEqual(ResetFormatter.compactTimeLeft(later(3600 + 43 * 60), now: now), "1h")
-        XCTAssertEqual(ResetFormatter.compactTimeLeft(later(86400 + 3 * 3600), now: now), "1d")
+    func testCompactTimeLeftKeepsLargestUnitWithOneDecimal() {
+        XCTAssertEqual(ResetFormatter.compactTimeLeft(later(3600 + 43 * 60), now: now), "1.7h")
+        XCTAssertEqual(ResetFormatter.compactTimeLeft(later(86400 + 3 * 3600), now: now), "1.1d")
         XCTAssertEqual(ResetFormatter.compactTimeLeft(later(43 * 60), now: now), "43m")
+    }
+
+    /// Whole units keep their ".0", so the width holds steady within a unit.
+    func testCompactTimeLeftKeepsTrailingZero() {
+        XCTAssertEqual(ResetFormatter.compactTimeLeft(later(3600), now: now), "1.0h")
+        XCTAssertEqual(ResetFormatter.compactTimeLeft(later(86400), now: now), "1.0d")
+    }
+
+    /// Floors the tenth: 1h 59m is 1.98h, shown as 1.9h, never 2.0h.
+    func testCompactTimeLeftFloorsTheTenth() {
+        XCTAssertEqual(ResetFormatter.compactTimeLeft(later(3600 + 59 * 60), now: now), "1.9h")
     }
 
     func testCompactTimeLeftClampsElapsedResetToZero() {

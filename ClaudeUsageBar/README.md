@@ -36,16 +36,17 @@ can be launched from Finder/Spotlight/login items like a normal app.
   `seven_day_opus`/`seven_day_sonnet` are only populated on `max`/`team`
   plans. `spend.used`/`spend.limit` are minor-unit integers (cents) plus an
   `exponent`, so divide by `10^exponent` for dollars.
-- **UI**: `NSStatusItem` menu bar title (`58% 2h · 82% 3d`) — 5-hour window
+- **UI**: `NSStatusItem` menu bar title (`58% 2.4h · 82% 3.1d`) — 5-hour window
   first, then 7-day. The title reports what is **left**, not what was consumed:
   budget remaining (`100 - utilization`) and time until reset, shown as the
-  largest non-zero unit only (`3d` / `2h` / `47m`). Time is floored, so it
+  largest non-zero unit only, days and hours to one decimal (`3.1d` / `2.4h` /
+  `47m`). Time is floored, so it
   understates rather than overstates what's left; resolution sharpens to
   minutes exactly as a window runs low. An absent `five_hour` window means
-  nothing has been spent yet and renders `100% 5h`. The dropdown keeps the
+  nothing has been spent yet and renders `100% 5.0h`. The dropdown keeps the
   opposite convention — percent *consumed* plus a precise reset time: absolute
   wall-clock with a two-unit countdown (`resets 11:20 PM (in 1h 43m)`,
-  weekday-prefixed when the reset falls on another day). The title stays coarse
+  weekday-prefixed when the reset falls on another day). The title stays terse
   because it competes for menu bar width; the dropdown is where there is room.
   The dropdown also adds usage-credit spend against its limit, a link to raise
   that limit, a manual refresh, a refresh-interval picker, and a quit item.

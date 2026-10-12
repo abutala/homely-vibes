@@ -7,14 +7,20 @@ import Foundation
 /// it testable without mocking the clock.
 enum ResetFormatter {
     /// Menu bar register: largest non-zero unit only, kept deliberately terse
-    /// because the title competes for menu bar width. Integer division floors,
-    /// so this understates time left rather than overstating it, and the
-    /// `max(0,` keeps an already-elapsed reset from rendering negative.
+    /// because the title competes for menu bar width. Days and hours carry one
+    /// decimal (`4.2h`), minutes none. Integer division floors, so this
+    /// understates time left rather than overstating it, and the `max(0,`
+    /// keeps an already-elapsed reset from rendering negative.
     static func compactTimeLeft(_ date: Date, now: Date = Date()) -> String {
         let seconds = Int(max(0, date.timeIntervalSince(now)))
-        if seconds >= 86400 { return "\(seconds / 86400)d" }
-        if seconds >= 3600 { return "\(seconds / 3600)h" }
+        if seconds >= 86400 { return tenths(seconds, per: 86400, unit: "d") }
+        if seconds >= 3600 { return tenths(seconds, per: 3600, unit: "h") }
         return "\(seconds / 60)m"
+    }
+
+    private static func tenths(_ seconds: Int, per unitSeconds: Int, unit: String) -> String {
+        let tenths = seconds * 10 / unitSeconds
+        return "\(tenths / 10).\(tenths % 10)\(unit)"
     }
 
     /// Dropdown register: absolute wall-clock plus a two-unit countdown —
