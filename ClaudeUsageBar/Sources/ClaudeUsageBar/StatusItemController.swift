@@ -7,7 +7,7 @@ final class StatusItemController {
     private var refreshTimer: Timer?
     private var lastGoodSnapshot: UsageSnapshot?
     private let spendSettingsURL = URL(string: "https://claude.ai/new#settings/usage")!
-    private static let fullFiveHourWindow = "5h"
+    private static let fullFiveHourWindow = "5.0h"
 
     // Diagnostics for the "stuck on a stale error for hours" failure mode
     // (seen 2026-08, fixed by a restart, root cause unconfirmed — could be
