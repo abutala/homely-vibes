@@ -394,11 +394,12 @@ struct ContentView: View {
     /// operation is dropped and the next open re-checks the lock.
     private func run(_ operation: @escaping () async throws -> Void) {
         operationTask?.cancel()
-        operationTask = Task {
-            let keepAlive = BackgroundKeepAlive {
-                operationTask?.cancel()
-                operationResult = .idle
-            }
+        var task: Task<Void, Never>?
+        let keepAlive = BackgroundKeepAlive {
+            task?.cancel()
+            if task == operationTask { operationResult = .idle }
+        }
+        task = Task {
             do {
                 try await operation()
             } catch {
@@ -416,6 +417,7 @@ struct ContentView: View {
             case .idle, .checking, .inProgress: break
             }
         }
+        operationTask = task
     }
 }
 

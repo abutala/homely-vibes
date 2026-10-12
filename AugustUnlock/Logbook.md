@@ -188,7 +188,8 @@ is in flight, same as the toggle button already does. No attempt to cancel
 or reconcile a stale in-flight result — not worth the complexity for a
 personal one-button app; just don't let the race start. *Since 2026-09-30,
 reopening the app does cancel in-flight work (see that entry); the buttons
-stay disabled.*
+stay disabled. Since 2026-10-12, a return from the background lets a running
+operation finish instead.*
 
 ## 2026-09-30 — Resuming from the background left the screen lying about the door
 
@@ -213,6 +214,8 @@ cancels whatever is in flight, fetches the lock's state from August
 unlocks only if the lock is not already unlocked. After a lock/unlock the
 screen shows the `status` from August's reply (what yalexs'
 `async_unlock` returns), re-fetching if that is a value we don't recognize.
+*Since 2026-10-12, a return from the background no longer cancels an
+operation that is still running — see that entry.*
 Cancellation alone doesn't stop a late reply from landing, so every state
 write after an await is guarded by a cancellation check. The screen resets to
 "State unknown" when a re-check starts, so a failed check never leaves the
