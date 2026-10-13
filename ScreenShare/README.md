@@ -20,8 +20,9 @@ it. Its icon is a monitor with the host's initials (`icon.py`).
 
 3. Run `make screenshare-app 2>&1 | tee /tmp/screenshare-app.log`.
 4. Launch the app from the Dock. On the first launch, allow "… wants to control System
-   Events". Without Accessibility it does not connect: it opens that list, shows itself in
-   Finder and says what to do. Remove any old entry for it, drag it in, turn it on, and launch
+   Events" (and Finder and System Settings, which it uses to lay out the permission windows).
+   Without Accessibility it does not connect: it opens that list and Finder side by side and
+   says what to do. Remove any old entry for it, drag it in, turn it on, and launch
    it again.
 
 A rebuild drops the Accessibility grant, even though the old entry still shows as on.

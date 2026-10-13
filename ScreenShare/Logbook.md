@@ -67,22 +67,34 @@ established). `open location` switches to the session's Space, so the launcher t
 
 ### Each View menu click must settle before the next
 
-Two races, both seen as a wrong zoom:
+In full screen with scaling on, the window is capped at the remote size (2048 wide). Actual
+Size grows it to the screen (2624). A Zoom In sent at once stacked on that resize, so one step
+zoomed twice and cropped the remote menu bar and Dock. A click during the full-screen
+animation was lost. Measured on one host, from the click until the change shows:
 
-- **Full screen, then zoom.** With a 1.5 s wait, the clicks sometimes landed during the
-  full-screen animation and the zoom was lost. The launcher waits `settleSeconds` (2 s).
-- **Actual Size, then Zoom In.** In full screen with scaling on, the window is capped at the
-  remote size (2048 wide). Actual Size grows it to the screen (2624). A Zoom In sent at once
-  stacks on that resize, so one step zooms twice and crops the remote menu bar and Dock. The
-  launcher waits `stepSeconds` (1 s) after every View menu click. Reproduced and fixed by
-  running the rendered script with `osascript`, which needs no rebuild.
+| Step | Shows after |
+|---|---|
+| Full screen | 0.8 s; the window is unreadable from 0.15 s until then |
+| Actual Size | 0.5 s |
+| Zoom In / Zoom Out | 0.1 s (scroll bars) |
+
+Fixed waits of 2 s and 1 s per click made the fit about 6 s. The launcher now polls the
+window size every `pollSeconds` until it changes (full screen, Actual Size), then waits
+`drawSeconds`; zoom clicks wait only `drawSeconds`. Reproduced and tuned by running the
+rendered script with `osascript`, which needs no rebuild.
 
 ### Check Accessibility before connecting
 
 Without the grant, the old launcher opened the session and then failed, which left a
 windowed session and a dialog. It now probes System Events (`count UI elements of process
-"Dock"`) first. The applet must `activate` before `display dialog`, or the dialog sits behind
-the Finder and System Settings windows it just opened.
+"Dock"`) first.
+
+The warning dialog hid behind System Settings: `open location` returns before Settings comes
+forward. The launcher now waits for the Settings window, lays out Settings and Finder side by
+side through their own scripting (Automation, not Accessibility), then activates itself and
+shows the dialog. System Settings caps its own width, so the layout reads it back before it
+centers the pair. The main screen's usable area comes from `NSScreen` (AppleScriptObjC):
+Finder's desktop bounds span every display.
 
 ### Relaunch on a live session only switches to it
 
