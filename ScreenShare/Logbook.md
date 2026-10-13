@@ -58,6 +58,18 @@ With the session in full screen and another Space active, `windows of process
 "Screen Sharing"` is empty while the connection is up (`lsof -i` shows port 5900
 established). `open location` switches to the session's Space, so the launcher then finds it.
 
+### Zoom clicks during the full-screen animation race it
+
+With a 1.5 s wait, the View menu clicks sometimes landed while the window was still going full
+screen, and the zoom was lost or wrong. The launcher waits `settleSeconds` (2 s) after it sets
+`AXFullScreen`, then fits the picture.
+
+### Relaunch on a live session only switches to it
+
+A new session always opens windowed, so `AXFullScreen` already true after `open location`
+means the session was up. The launcher raises it and stops: it does not redo the zoom. A check
+before `open location` cannot do this, because of the Space landmine above.
+
 ### The Dock rewrites its tiles
 
 The builder appends a minimal `persistent-apps` entry (`file-data` → `_CFURLString` = the

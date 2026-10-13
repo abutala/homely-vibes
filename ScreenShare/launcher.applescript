@@ -4,6 +4,7 @@ property connectionURL : __URL__
 property windowTitle : __TITLE__
 property zoomInSteps : __ZOOM__ -- missing value = scale to fit
 property waitSeconds : 90
+property settleSeconds : 2 -- full-screen animation; a zoom click during it is lost or misfires
 property permissionPane : "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
 
 on run
@@ -15,8 +16,10 @@ on run
 		tell application "System Events" to tell process "Screen Sharing"
 			set frontmost to true
 			perform action "AXRaise" of sessionWindow
+			-- A new session opens windowed. Full screen means it was already up: just switch.
+			if value of attribute "AXFullScreen" of sessionWindow then return
 			set value of attribute "AXFullScreen" of sessionWindow to true
-			delay 1.5 -- let the full-screen animation finish before resizing the picture
+			delay settleSeconds
 			my fitPicture(it)
 		end tell
 	on error errText number errNum

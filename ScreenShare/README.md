@@ -4,7 +4,8 @@ Landmines and dead ends: [Logbook.md](Logbook.md).
 
 Installs `~/Applications/VNC <Host Name>.app` with a Dock tile, one per configured connection.
 Each app opens a **saved** Screen Sharing connection in full screen, fitted to the screen,
-with no extra questions. Its icon is a monitor with the host's initials (`icon.py`).
+with no extra questions. If that session is already in full screen, the app only switches to
+it. Its icon is a monitor with the host's initials (`icon.py`).
 
 ## Install
 
