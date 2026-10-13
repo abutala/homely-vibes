@@ -516,8 +516,6 @@ class ScreenShareAppConfig:
     """One launcher app for a saved Screen Sharing connection"""
 
     connection: str  # name in Screen Sharing's All Connections list, or its address
-    # View -> Zoom In clicks after Actual Size; None = scale to fit (shrinks only).
-    zoom_in_steps: int | None = None
     name: str | None = None  # default "VNC <Host Name>"
 
 

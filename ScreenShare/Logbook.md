@@ -27,9 +27,16 @@ still get the prompt.
 When the remote screen is smaller than this one (2048×1332 on 2624×1646), scaling shows it
 at 1:1 with black borders, and the full-screen window itself is capped at the remote size.
 Dynamic Resolution would fix it, but it needs High Performance (more load on the remote,
-and a virtual display that starts at the lock screen). View → Actual Size plus one Zoom In
-fills the screen in Standard mode; zoom turns scaling off. The click count is
-`zoom_in_steps` in config.
+and a virtual display that starts at the lock screen). View → Actual Size plus Zoom In
+fills the screen in Standard mode; zoom turns scaling off.
+
+### Scroll bars tell when the zoom is one step too far
+
+The `AXSharedScreen` element in the session window gets `AXScrollBar` children only while the
+picture is larger than the window, on either axis. The launcher zooms in from Actual Size
+until one appears, then zooms out once. This replaced a per-host `zoom_in_steps` setting. It
+needs no screenshot, so no Screen Recording permission. System Events `entire contents`
+returns nothing for this window; walk `UI elements` instead.
 
 ### Accessibility permission does not survive a rebuild
 
@@ -69,6 +76,13 @@ Two races, both seen as a wrong zoom:
   stacks on that resize, so one step zooms twice and crops the remote menu bar and Dock. The
   launcher waits `stepSeconds` (1 s) after every View menu click. Reproduced and fixed by
   running the rendered script with `osascript`, which needs no rebuild.
+
+### Check Accessibility before connecting
+
+Without the grant, the old launcher opened the session and then failed, which left a
+windowed session and a dialog. It now probes System Events (`count UI elements of process
+"Dock"`) first. The applet must `activate` before `display dialog`, or the dialog sits behind
+the Finder and System Settings windows it just opened.
 
 ### Relaunch on a live session only switches to it
 

@@ -74,8 +74,7 @@ def test_applescript_string_escapes_quotes_and_backslashes() -> None:
 
 def test_render_fills_every_placeholder() -> None:
     conn = Connection(name='Ma"c', address="x", url="vnc://x")
-    assert render("__URL__|__TITLE__|__ZOOM__", conn, None) == '"vnc://x"|"Ma\\"c"|missing value'
-    assert render("__ZOOM__", conn, 2) == "2"
+    assert render("__URL__|__TITLE__", conn) == '"vnc://x"|"Ma\\"c"'
 
 
 def test_bundle_id_is_stable_slug() -> None:
@@ -85,7 +84,7 @@ def test_bundle_id_is_stable_slug() -> None:
 
 def test_real_template_has_no_placeholder_left() -> None:
     conn = Connection(name="n", address="a", url="vnc://a")
-    assert "__" not in render(TEMPLATE.read_text(), conn, 1)
+    assert "__" not in render(TEMPLATE.read_text(), conn)
 
 
 @pytest.mark.parametrize(
