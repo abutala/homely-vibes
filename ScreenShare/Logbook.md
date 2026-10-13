@@ -27,9 +27,16 @@ still get the prompt.
 When the remote screen is smaller than this one (2048×1332 on 2624×1646), scaling shows it
 at 1:1 with black borders, and the full-screen window itself is capped at the remote size.
 Dynamic Resolution would fix it, but it needs High Performance (more load on the remote,
-and a virtual display that starts at the lock screen). View → Actual Size plus one Zoom In
-fills the screen in Standard mode; zoom turns scaling off. The click count is
-`zoom_in_steps` in config.
+and a virtual display that starts at the lock screen). View → Actual Size plus Zoom In
+fills the screen in Standard mode; zoom turns scaling off.
+
+### Scroll bars tell when the zoom is one step too far
+
+The `AXSharedScreen` element in the session window gets `AXScrollBar` children only while the
+picture is larger than the window, on either axis. The launcher zooms in from Actual Size
+until one appears, then zooms out once. This replaced a per-host `zoom_in_steps` setting. It
+needs no screenshot, so no Screen Recording permission. System Events `entire contents`
+returns nothing for this window; walk `UI elements` instead.
 
 ### Accessibility permission does not survive a rebuild
 
@@ -57,6 +64,43 @@ old deep link still opens it:
 With the session in full screen and another Space active, `windows of process
 "Screen Sharing"` is empty while the connection is up (`lsof -i` shows port 5900
 established). `open location` switches to the session's Space, so the launcher then finds it.
+
+### Each View menu click must settle before the next
+
+In full screen with scaling on, the window is capped at the remote size (2048 wide). Actual
+Size grows it to the screen (2624). A Zoom In sent at once stacked on that resize, so one step
+zoomed twice and cropped the remote menu bar and Dock. A click during the full-screen
+animation was lost. Measured on one host, from the click until the change shows:
+
+| Step | Shows after |
+|---|---|
+| Full screen | 0.8 s; the window is unreadable from 0.15 s until then |
+| Actual Size | 0.5 s |
+| Zoom In / Zoom Out | 0.1 s (scroll bars) |
+
+Fixed waits of 2 s and 1 s per click made the fit about 6 s. The launcher now polls the
+window size every `pollSeconds` until it changes (full screen, Actual Size), then waits
+`drawSeconds`; zoom clicks wait only `drawSeconds`. Reproduced and tuned by running the
+rendered script with `osascript`, which needs no rebuild.
+
+### Check Accessibility before connecting
+
+Without the grant, the old launcher opened the session and then failed, which left a
+windowed session and a dialog. It now probes System Events (`count UI elements of process
+"Dock"`) first.
+
+The warning dialog hid behind System Settings: `open location` returns before Settings comes
+forward. The launcher now waits for the Settings window, lays out Settings and Finder side by
+side through their own scripting (Automation, not Accessibility), then activates itself and
+shows the dialog. System Settings caps its own width, so the layout reads it back before it
+centers the pair. The main screen's usable area comes from `NSScreen` (AppleScriptObjC):
+Finder's desktop bounds span every display.
+
+### Relaunch on a live session only switches to it
+
+A new session always opens windowed, so `AXFullScreen` already true after `open location`
+means the session was up. The launcher raises it and stops: it does not redo the zoom. A check
+before `open location` cannot do this, because of the Space landmine above.
 
 ### The Dock rewrites its tiles
 

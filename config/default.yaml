@@ -492,5 +492,4 @@ screen_share:
   # One app per saved Screen Sharing connection, e.g. in local.yaml:
   #   apps:
   #     - connection: "Studio Mac"   # name in Screen Sharing's All Connections list
-  #       zoom_in_steps: 1           # View -> Zoom In clicks after Actual Size; omit to scale to fit
   apps: []

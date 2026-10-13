@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Install one app per `screen_share.apps` entry in config: each opens a saved Screen Sharing
-connection in full screen, fitted by scaling or zoom.
+connection in full screen, fitted to the screen.
 
 The app opens the connection Screen Sharing already has saved (same address and user), so
 it never creates a second entry. It goes to ~/Applications and the Dock, named
@@ -76,12 +76,9 @@ def applescript_string(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render(template: str, conn: Connection, zoom_in_steps: int | None) -> str:
-    zoom = "missing value" if zoom_in_steps is None else str(int(zoom_in_steps))
-    return (
-        template.replace("__URL__", applescript_string(conn.url))
-        .replace("__TITLE__", applescript_string(conn.name))
-        .replace("__ZOOM__", zoom)
+def render(template: str, conn: Connection) -> str:
+    return template.replace("__URL__", applescript_string(conn.url)).replace(
+        "__TITLE__", applescript_string(conn.name)
     )
 
 
@@ -183,11 +180,8 @@ def install(spec: ScreenShareAppConfig, conn: Connection, dest: Path, dock: bool
         raise ValueError(f"App name may hold letters, digits, space, '.', '_' and '-': {name}")
     app = dest / f"{name}.app"
     dest.mkdir(parents=True, exist_ok=True)
-    compile_app(
-        render(TEMPLATE.read_text(), conn, spec.zoom_in_steps), app, host_label(conn.address)
-    )
-    fit = "scale to fit" if spec.zoom_in_steps is None else f"zoom in x{spec.zoom_in_steps}"
-    print(f'Built {app} for "{conn.name}" ({conn.url}), {fit}.')
+    compile_app(render(TEMPLATE.read_text(), conn), app, host_label(conn.address))
+    print(f'Built {app} for "{conn.name}" ({conn.url}).')
     if dock and add_to_dock(app):
         print("Added to the Dock.")
     return app
