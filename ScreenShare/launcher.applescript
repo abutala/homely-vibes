@@ -5,6 +5,7 @@ property windowTitle : __TITLE__
 property zoomInSteps : __ZOOM__ -- missing value = scale to fit
 property waitSeconds : 90
 property settleSeconds : 2 -- full-screen animation; a zoom click during it is lost or misfires
+property stepSeconds : 1 -- between View menu clicks, so each resize settles
 property permissionPane : "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_Accessibility"
 
 on run
@@ -54,9 +55,12 @@ on fitPicture(proc)
 		if zoomInSteps is missing value then
 			if exists menu item "Turn Scaling On" then click menu item "Turn Scaling On"
 		else
+			-- Actual Size resizes the window. A Zoom In before that settles stacks on it.
 			click menu item "Actual Size"
+			delay stepSeconds
 			repeat zoomInSteps times
 				click menu item "Zoom In"
+				delay stepSeconds
 			end repeat
 		end if
 	end tell

@@ -58,11 +58,17 @@ With the session in full screen and another Space active, `windows of process
 "Screen Sharing"` is empty while the connection is up (`lsof -i` shows port 5900
 established). `open location` switches to the session's Space, so the launcher then finds it.
 
-### Zoom clicks during the full-screen animation race it
+### Each View menu click must settle before the next
 
-With a 1.5 s wait, the View menu clicks sometimes landed while the window was still going full
-screen, and the zoom was lost or wrong. The launcher waits `settleSeconds` (2 s) after it sets
-`AXFullScreen`, then fits the picture.
+Two races, both seen as a wrong zoom:
+
+- **Full screen, then zoom.** With a 1.5 s wait, the clicks sometimes landed during the
+  full-screen animation and the zoom was lost. The launcher waits `settleSeconds` (2 s).
+- **Actual Size, then Zoom In.** In full screen with scaling on, the window is capped at the
+  remote size (2048 wide). Actual Size grows it to the screen (2624). A Zoom In sent at once
+  stacks on that resize, so one step zooms twice and crops the remote menu bar and Dock. The
+  launcher waits `stepSeconds` (1 s) after every View menu click. Reproduced and fixed by
+  running the rendered script with `osascript`, which needs no rebuild.
 
 ### Relaunch on a live session only switches to it
 
