@@ -12,15 +12,13 @@ can be launched from Finder/Spotlight/login items like a normal app.
 
 ## How it works
 
-- **Auth**: the app **owns its own Keychain item**, `com.deviationlabs.ClaudeUsageBar`,
-  the way every well-behaved macOS app does (`Chrome Safe Storage`,
-  `Slack Safe Storage`, …). Reads go, in order: in-memory cache → own item →
-  bootstrap from the `claude` CLI's `Claude Code-credentials` item via
-  `/usr/bin/security`, whose result is then written into our own item. A 401
-  from the API drops *both* the memory cache and the own item, so the next tick
-  re-bootstraps rather than replaying a token the server already rejected.
-  See "Keychain access" in [Logbook.md](Logbook.md) for why this shape is the
-  only durable one.
+- **Auth**: reads the token the **Claude desktop app** keeps for itself — not
+  the `claude` CLI's, which is a separate login. Each tick decrypts
+  `oauth:tokenCacheV2` from the desktop app's `config.json` with the
+  `Claude Safe Storage` Keychain secret, read once via `/usr/bin/security`.
+  The first read shows one Keychain prompt; answer **Always Allow**. The app
+  only reads: the desktop app refreshes its own tokens while it runs. Format
+  and selection rules: "Desktop token cache" in [Logbook.md](Logbook.md).
 - **Data**: calls `GET https://api.anthropic.com/api/oauth/usage` with that
   bearer token — the same endpoint the CLI's `/usage` command calls. Response
   looks like:
@@ -51,10 +49,11 @@ can be launched from Finder/Spotlight/login items like a normal app.
   The dropdown also adds usage-credit spend against its limit, a link to raise
   that limit, a manual refresh, a refresh-interval picker, and a quit item.
 - **Failure states**: a failed refresh never blanks a working display — the last
-  good numbers stay, marked `⚠︎`, with the reason in the dropdown. "Run `claude`
-  once to sign in" appears only when the credentials are genuinely absent or
-  expired; a *blocked* Keychain read says so instead and notes that it is
-  retrying, because telling you to sign in when you already are is a dead end.
+  good numbers stay, marked `⚠︎`, with the reason in the dropdown. "Open the
+  Claude app and sign in" appears only when the desktop login is genuinely
+  absent, signed out or expired; a *blocked* Keychain read says so instead and
+  notes that it is retrying, because telling you to sign in when you already
+  are is a dead end.
 - **Refresh cadence**: 180s by default, changeable from the dropdown
   (30s / 1 / 3 / 5 / 10 / 30 min) and persisted in `UserDefaults`, so the
   choice survives relaunch. The default is deliberately slow: the 5-hour bar
@@ -74,14 +73,10 @@ open ClaudeUsageBar.app
 ## Diagnostics
 
 ```bash
-.build/debug/ClaudeUsageBar --probe-keychain   # reports which source served the token (cache / own item / bootstrap); never prints a secret
-.build/debug/ClaudeUsageBar --probe-usage      # one-shot fetch + print, no menu bar UI
-.build/debug/ClaudeUsageBar --probe-nudge      # can the `claude` CLI be located and driven? shows each candidate path
+.build/debug/ClaudeUsageBar --probe-token   # reads the desktop app's token step by step; never prints a secret
+.build/debug/ClaudeUsageBar --probe-usage   # one-shot fetch + print, no menu bar UI
 CLAUDE_USAGE_DEBUG=1 .build/debug/ClaudeUsageBar --probe-usage  # also dumps the raw response body to stderr
 ```
-
-`--probe-nudge` is safe to run at any time: on a still-valid token the CLI's
-refresh short-circuits to "not_needed", so it only proves reachability.
 
 The running app also logs every poll tick (success/failure/reason) and sleep/wake
 events to the unified log, subsystem `com.deviationlabs.ClaudeUsageBar`,

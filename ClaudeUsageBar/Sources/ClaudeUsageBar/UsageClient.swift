@@ -23,7 +23,7 @@ struct UsageSnapshot {
 
 enum UsageClientError: Error {
     /// Carries *why* the token could not be read, so the UI can distinguish a
-    /// signed-out Mac from one whose Keychain merely refused the read.
+    /// signed-out desktop app from a Keychain that merely refused the read.
     case tokenUnavailable(TokenReadError)
     case unauthorized
     case badResponse(Int)
@@ -37,7 +37,7 @@ enum UsageClient {
 
     static func fetchSnapshot() async throws -> UsageSnapshot {
         let token: OAuthToken
-        switch KeychainTokenReader.readValidToken() {
+        switch DesktopTokenReader.readValidToken() {
         case .success(let value): token = value
         case .failure(let error): throw UsageClientError.tokenUnavailable(error)
         }
@@ -52,14 +52,9 @@ enum UsageClient {
         if ProcessInfo.processInfo.environment["CLAUDE_USAGE_DEBUG"] != nil {
             FileHandle.standardError.write("UsageClient: status=\(http.statusCode) bytes=\(data.count) body=\(String(data: data, encoding: .utf8) ?? "<non-utf8>")\n".data(using: .utf8)!)
         }
-        // A 401 means the cached token is no longer good even if it hasn't hit
-        // its own expiry — the CLI rotates tokens on its own schedule. Drop it
-        // so the next tick re-reads the Keychain rather than replaying a token
-        // the server has already rejected.
-        if http.statusCode == 401 {
-            KeychainTokenReader.invalidateCache()
-            throw UsageClientError.unauthorized
-        }
+        // A 401 means the token was revoked before its stated expiry. Nothing
+        // to drop: every tick re-reads the desktop app's cache.
+        if http.statusCode == 401 { throw UsageClientError.unauthorized }
         guard http.statusCode == 200 else { throw UsageClientError.badResponse(http.statusCode) }
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
