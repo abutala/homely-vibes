@@ -28,7 +28,7 @@ commit as the fix. `Tesla/Logbook.md` is the reference for tone and structure.
 - Config files themselves live in `config/local.yaml` (gitignored). Tokens live under `config/tokens/` (symlinked to `~/bin/Common-configs/tokens/`, also gitignored on the code side).
 
 ## macOS Keychain (native apps)
-- **Own the item you read.** Reading a Keychain item another app writes cannot be made durable: the owner's rewrites reset both access lists. Create your own item (`com.deviationlabs.<App>`) and treat the foreign item as a one-time bootstrap source only. This is what Chrome/Slack/Cursor all do — one ACL entry, `teamid:` partition.
+- **Own the item you read, or read one its owner never rewrites.** A grant on a Keychain item another app rewrites cannot be made durable: each rewrite resets both access lists. Either create your own item (`com.deviationlabs.<App>`, as Chrome/Slack/Cursor do — one ACL entry, `teamid:` partition) and treat the foreign item as a bootstrap source, or read a foreign item that is written once (an Electron `<App> Safe Storage` key).
 - **A read is gated by TWO lists**: the ACL application list *and* the partition list. `codesign -d -r-` only tells you about the first. Inspect the second with `security dump-keychain -a`; `teamid:` is stable across rebuilds, `cdhash:` is not.
 - **`cdat` vs `mdat`** on an item reveals who rewrites it — a moving `mdat` under a fixed `cdat` means another process owns the write path.
 - To read a foreign item without a consent prompt, shell out to `/usr/bin/security`: it carries `apple-tool:`, which survives the owner's rewrites. Pipe the secret back — never through `argv`, never to disk.

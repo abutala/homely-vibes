@@ -18,12 +18,6 @@ final class StatusItemController {
     private var refreshTickCount = 0
     private var lastRefreshFireDate: Date?
 
-    private let refresher: CredentialRefresher
-
-    init(refresher: CredentialRefresher = CredentialRefresher()) {
-        self.refresher = refresher
-    }
-
     private enum State {
         case loading
         case ok(UsageSnapshot)
@@ -92,16 +86,6 @@ final class StatusItemController {
             logger.info("refresh: tick=\(tick, privacy: .public) OK")
             render(.ok(snapshot))
         } catch {
-            // An expired CLI token is the only failure a nudge can fix, so it
-            // is the only one that gets one. `.notFound` means there is
-            // nothing to refresh and `.accessDenied` means the read was
-            // blocked — spawning the CLI would help neither.
-            if case UsageClientError.tokenUnavailable(.expired) = error,
-               let recovered = await nudgeAndRetry(tick: tick) {
-                lastGoodSnapshot = recovered
-                render(.ok(recovered))
-                return
-            }
             let reason = describeError(error)
             logger.error("refresh: tick=\(tick, privacy: .public) FAILED reason=\(reason, privacy: .public) hadLastGood=\(self.lastGoodSnapshot != nil, privacy: .public)")
             if let stale = lastGoodSnapshot {
@@ -111,29 +95,6 @@ final class StatusItemController {
             } else {
                 render(.unavailable(reason))
             }
-        }
-    }
-
-    /// Asks the `claude` CLI to refresh its own token, then re-reads once.
-    /// Runs off the main actor so the subprocess never stalls the menu bar.
-    ///
-    /// The re-read needs no cache invalidation: our own Keychain item still
-    /// holds the expired copy, so `readValidToken()` falls through it and
-    /// re-bootstraps from the CLI's item, which the nudge has just refreshed.
-    private func nudgeAndRetry(tick: Int) async -> UsageSnapshot? {
-        let outcome = await Task.detached(priority: .utility) { [refresher] in
-            refresher.nudge()
-        }.value
-        logger.info("refresh: tick=\(tick, privacy: .public) nudge=\(outcome.logDescription, privacy: .public)")
-        guard outcome.didRun else { return nil }
-
-        do {
-            let snapshot = try await UsageClient.fetchSnapshot()
-            logger.info("refresh: tick=\(tick, privacy: .public) recovered after CLI nudge")
-            return snapshot
-        } catch {
-            logger.error("refresh: tick=\(tick, privacy: .public) still failing after CLI nudge: \(self.describeError(error), privacy: .public)")
-            return nil
         }
     }
 
@@ -189,11 +150,11 @@ final class StatusItemController {
             menu.addItem(NSMenuItem(title: "Loading…", action: nil, keyEquivalent: ""))
         case .tokenUnavailable(let reason):
             menu.addItem(NSMenuItem(title: "\u{26A0}\u{FE0E} \(reason.menuDetail)", action: nil, keyEquivalent: ""))
-            // "Run claude to sign in" is only true advice when the credentials
-            // are absent or expired. Offering it for a *blocked* read sends the
+            // "Open Claude" is only true advice when the desktop login is
+            // absent or expired. Offering it for a *blocked* read sends the
             // user chasing a sign-in they have already completed.
-            if reason.isFixedByRunningClaude {
-                menu.addItem(NSMenuItem(title: "Run \u{2018}claude\u{2019} once to sign in", action: nil, keyEquivalent: ""))
+            if reason.isFixedByOpeningClaude {
+                menu.addItem(NSMenuItem(title: "Open the Claude app and sign in", action: nil, keyEquivalent: ""))
             } else {
                 menu.addItem(NSMenuItem(title: retryNote(), action: nil, keyEquivalent: ""))
             }

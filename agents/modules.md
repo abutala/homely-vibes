@@ -25,9 +25,8 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 ## ClaudeUsageBar Module (`ClaudeUsageBar/`)
 - **Stack**: Swift Package Manager executable wrapped into a `.app` bundle (NOT Python — no uv, no pytest). Menu bar widget (`LSUIElement`, no Dock icon) showing Claude Code plan usage.
 - **Build**: `swift build` for dev; `./Scripts/build_app.sh` for the signed `.app`. `swift test` runs the XCTest target.
-- **Keychain**: owns its own item `com.deviationlabs.ClaudeUsageBar`; bootstraps from the `claude` CLI's item via `/usr/bin/security`. Never read the CLI's item with `SecItem` — see "macOS Keychain" in [practices.md](practices.md).
-- **Signing matters for correctness, not Gatekeeper**: `swift build` is ad-hoc (no team ID) so items it creates are `cdhash`-pinned and re-prompt; only the certificate-signed `.app` gets a stable `teamid:` partition entry.
-- **Diagnostics**: `--probe-keychain` (which source served the token), `--probe-usage` (one-shot fetch). Neither ever prints a secret.
+- **Token**: reads the **Claude desktop app's** token (`oauth:tokenCacheV2` in its `config.json`), decrypted with the `Claude Safe Storage` secret read via `/usr/bin/security`. Not the `claude` CLI's — a separate login, and on a Fireworks-routed Mac never a claude.ai one. Never refreshes. Detail: the module's Logbook.
+- **Diagnostics**: `--probe-token` (each step of the token read), `--probe-usage` (one-shot fetch). Neither ever prints a secret.
 
 ## lib/ (shared library)
 - **Config**: All modules source configuration from `lib/config.py` (OmegaConf-based hierarchical YAML)

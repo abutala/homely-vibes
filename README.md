@@ -82,7 +82,7 @@ See `config/default.yaml` for the full structure and `config/local.yaml.example`
 | 📝 **AppleNotesBackup** | Versioned local backup of Apple Notes with per-note history and point-in-time recovery. | [📖 README](AppleNotesBackup/README.md) · [📓 Logbook](AppleNotesBackup/Logbook.md) |
 | 🔐 **August** | August Smart Lock monitoring with automated unlock alerts and pushover notifications for home security. | [📖 README](August/README.md) · [📓 Logbook](August/Logbook.md) |
 | 🤖 **BimpopAI** | RAG (Retrieval Augmented Generation) system with AI voice assistant, indexing, and Streamlit frontend. A startup concept for business intelligence in Mom-n-Pop stores. | [📖 README](BimpopAI/README.md) · [📓 Logbook](BimpopAI/Logbook.md) |
-| 📊 **ClaudeUsageBar** | macOS menu-bar widget showing Claude Code plan usage. Swift, own Keychain item, bootstrapped from the `claude` CLI. | [📖 README](ClaudeUsageBar/README.md) · [📓 Logbook](ClaudeUsageBar/Logbook.md) |
+| 📊 **ClaudeUsageBar** | macOS menu-bar widget showing Claude Code plan usage. Swift, reads the Claude desktop app's login. | [📖 README](ClaudeUsageBar/README.md) · [📓 Logbook](ClaudeUsageBar/Logbook.md) |
 | 🌐 **BrowserAlert** | Web usage monitoring and alerting system for tracking browsing activity and digital wellness. | [📖 README](BrowserAlert/README.md) · [📓 Logbook](BrowserAlert/Logbook.md) |
 | 🧪 **formal** | Quint models of concurrency designs the tests exercise badly, starting with the Ring token lock. | [📖 README](formal/README.md) · [📓 Logbook](formal/Logbook.md) |
 | 🚗 **GarageCheck** | Machine learning-based garage door status detection using image classification and computer vision. | [📖 README](GarageCheck/README.md) |

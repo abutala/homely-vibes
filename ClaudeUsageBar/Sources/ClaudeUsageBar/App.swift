@@ -4,16 +4,12 @@ import AppKit
 struct ClaudeUsageBarApp {
     @MainActor
     static func main() {
-        if CommandLine.arguments.contains("--probe-keychain") {
-            KeychainTokenReader.probe()
+        if CommandLine.arguments.contains("--probe-token") {
+            DesktopTokenReader.probe()
             return
         }
         if CommandLine.arguments.contains("--probe-usage") {
             probeUsage()
-            return
-        }
-        if CommandLine.arguments.contains("--probe-nudge") {
-            probeNudge()
             return
         }
 
@@ -22,22 +18,6 @@ struct ClaudeUsageBarApp {
         let delegate = AppDelegate()
         app.delegate = delegate
         app.run()
-    }
-
-    /// Reports whether the `claude` CLI can be located and driven, without
-    /// waiting for a real expiry. Safe to run any time: on a still-valid token
-    /// the CLI's refresh path short-circuits to "not_needed", so this only
-    /// proves reachability. `ClaudeUsageBar --probe-nudge`.
-    private static func probeNudge() {
-        let resolved = CredentialRefresher.resolveCLIPath()
-        print("claude CLI: \(resolved ?? "NOT FOUND on any candidate path")")
-        for candidate in CredentialRefresher.defaultCandidatePaths {
-            let executable = FileManager.default.isExecutableFile(atPath: candidate)
-            print("  \(executable ? "✓" : "✗") \(candidate)")
-        }
-        guard resolved != nil else { return }
-        let outcome = CredentialRefresher().nudge()
-        print("nudge:      \(outcome.logDescription)")
     }
 
     /// One-shot fetch + print, for verifying the API call against `/usage`
