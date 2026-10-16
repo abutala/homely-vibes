@@ -52,9 +52,10 @@ can be launched from Finder/Spotlight/login items like a normal app.
   that limit, a manual refresh, a refresh-interval picker, and a quit item.
 - **Failure states**: a failed refresh never blanks a working display — the last
   good numbers stay, marked `⚠︎`, with the reason in the dropdown. "Run `claude`
-  once to sign in" appears only when the credentials are genuinely absent or
-  expired; a *blocked* Keychain read says so instead and notes that it is
-  retrying, because telling you to sign in when you already are is a dead end.
+  once to sign in" appears only when the credentials are genuinely absent,
+  signed out or expired; a *blocked* Keychain read says so instead and notes
+  that it is retrying, because telling you to sign in when you already are is a
+  dead end.
 - **Refresh cadence**: 180s by default, changeable from the dropdown
   (30s / 1 / 3 / 5 / 10 / 30 min) and persisted in `UserDefaults`, so the
   choice survives relaunch. The default is deliberately slow: the 5-hour bar

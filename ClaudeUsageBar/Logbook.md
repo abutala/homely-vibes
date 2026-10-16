@@ -6,6 +6,29 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ## Incidents
 
+### 2026-10 — Signed-out CLI reported as `credentials expired`
+
+The bar showed `⚠︎` stale numbers for over a day. The unified log had
+`FAILED reason=credentials expired` on every tick and `still failing after CLI
+nudge` every 12 minutes. The real state: `claude auth status` said
+`"loggedIn": false`. The CLI had rewritten `Claude Code-credentials` with
+`accessToken: ""`, `expiresAt: 0` and no `refreshToken`. It kept `scopes` and
+`subscriptionType`, so the item still existed and still parsed.
+
+The Claude desktop app does not use this item — it authenticates through its
+own host — so Claude Code kept working there while the terminal CLI was signed
+out.
+
+`parseToken` accepted the empty token and `expiresAt: 0` is in the past, so a
+sign-out looked exactly like an expiry and the nudge ran with nothing to
+refresh. `validateCLIPayload` now checks for a blank token first and reports
+`.signedOut`, which gets no nudge. Fix the machine with `claude auth login`.
+
+Not explained: our own item was last written 2026-10-15 09:19 UTC and the
+CLI's item was blanked 2026-10-16 01:18 UTC. The token expired in between and
+roughly 75 nudges did not refresh it. Whether `claude auth status` still
+refreshes in CLI 2.1.296, and what signed the CLI out, is unconfirmed.
+
 ### 2026-08 — Menu bar stuck on `credentials expired`
 
 The unified-log tick logging (the `log show` / `log stream` commands under
@@ -209,6 +232,7 @@ signing in:
 | Dropdown says | Meaning | Fix |
 |---|---|---|
 | `no Claude Code credentials on this Mac` | No `Claude Code-credentials` item exists | Run `claude` once |
+| `Claude Code is signed out` | The item exists but its token is blank — the CLI signed out | `claude auth login` |
 | `credentials expired` | The CLI's token is past `expiresAt` | Usually self-healing — the app nudges the CLI to refresh (see "Expired tokens"). Persists only if the nudge cannot find or drive `claude`; check `--probe-nudge` |
 | `Keychain access denied` / `keychain locked` | The token exists and is fine; the *read* was refused | Unlock the login keychain; see below |
 | `credentials unreadable` | Payload did not parse | File a bug — the CLI's schema likely moved |

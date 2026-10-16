@@ -60,6 +60,34 @@ final class KeychainTokenReaderTests: XCTestCase {
         XCTAssertNil(KeychainTokenReader.parseToken(from: data("not json at all")))
     }
 
+    // MARK: - validateCLIPayload
+
+    /// What a signed-out CLI leaves behind (observed 2026-10, CLI 2.1.296): the
+    /// item survives with the token blanked and `expiresAt` zeroed. It must not
+    /// read as `.expired`, or the app nudges a CLI that has nothing to refresh.
+    func testBlankedTokenIsSignedOutNotExpired() {
+        let payload = #"{"claudeAiOauth":{"accessToken":"","expiresAt":0,"scopes":["user:inference"]}}"#
+        XCTAssertEqual(
+            KeychainTokenReader.validateCLIPayload(data(payload)).failure, .signedOut
+        )
+    }
+
+    func testPastExpiryIsExpired() {
+        let payload = #"{"claudeAiOauth":{"accessToken":"sk-x","expiresAt":1000}}"#
+        XCTAssertEqual(KeychainTokenReader.validateCLIPayload(data(payload)).failure, .expired)
+    }
+
+    func testFutureExpiryIsAccepted() {
+        let payload = #"{"claudeAiOauth":{"accessToken":"sk-x","expiresAt":99999999999999}}"#
+        XCTAssertEqual(
+            try? KeychainTokenReader.validateCLIPayload(data(payload)).get().accessToken, "sk-x"
+        )
+    }
+
+    func testUnparsablePayloadIsMalformed() {
+        XCTAssertEqual(KeychainTokenReader.validateCLIPayload(data("nope")).failure, .malformed)
+    }
+
     // MARK: - classifySecurityFailure
 
     func testClassifiesItemNotFoundExitCode() {
@@ -112,7 +140,15 @@ final class KeychainTokenReaderTests: XCTestCase {
     func testOnlyAbsentOrExpiredCredentialsAdviseRunningClaude() {
         XCTAssertTrue(TokenReadError.notFound.isFixedByRunningClaude)
         XCTAssertTrue(TokenReadError.expired.isFixedByRunningClaude)
+        XCTAssertTrue(TokenReadError.signedOut.isFixedByRunningClaude)
         XCTAssertFalse(TokenReadError.accessDenied("denied").isFixedByRunningClaude)
         XCTAssertFalse(TokenReadError.malformed.isFixedByRunningClaude)
+    }
+}
+
+private extension Result {
+    var failure: Failure? {
+        if case .failure(let error) = self { return error }
+        return nil
     }
 }

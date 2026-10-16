@@ -11,15 +11,18 @@ struct OAuthToken {
 /// machine — and the UI told the user to sign in while holding a valid token.
 enum TokenReadError: Error, Equatable {
     case notFound
+    case signedOut
     case accessDenied(String)
     case expired
     case malformed
 
-    /// Short phrase for the dropdown. Only `.notFound` and `.expired` are
-    /// fixed by running `claude`; saying so for the others is misleading.
+    /// Short phrase for the dropdown. Only `.notFound`, `.signedOut` and
+    /// `.expired` are fixed by running `claude`; saying so for the others is
+    /// misleading.
     var menuDetail: String {
         switch self {
         case .notFound: return "no Claude Code credentials on this Mac"
+        case .signedOut: return "Claude Code is signed out"
         case .accessDenied(let detail): return detail
         case .expired: return "credentials expired"
         case .malformed: return "credentials unreadable"
@@ -28,7 +31,7 @@ enum TokenReadError: Error, Equatable {
 
     var isFixedByRunningClaude: Bool {
         switch self {
-        case .notFound, .expired: return true
+        case .notFound, .signedOut, .expired: return true
         case .accessDenied, .malformed: return false
         }
     }
@@ -165,10 +168,18 @@ enum KeychainTokenReader {
         case .failure(let error):
             return .failure(error)
         case .success(let data):
-            guard let token = parseToken(from: data) else { return .failure(.malformed) }
-            guard isUnexpired(token) else { return .failure(.expired) }
-            return .success((data, token))
+            return validateCLIPayload(data).map { (data, $0) }
         }
+    }
+
+    /// A signed-out CLI keeps its item but blanks `accessToken` and zeroes
+    /// `expiresAt`. Checking expiry alone reports that as `.expired`, and the
+    /// app then nudges a CLI that has nothing to refresh. Pure, for tests.
+    static func validateCLIPayload(_ data: Data) -> Result<OAuthToken, TokenReadError> {
+        guard let token = parseToken(from: data) else { return .failure(.malformed) }
+        guard !token.accessToken.isEmpty else { return .failure(.signedOut) }
+        guard isUnexpired(token) else { return .failure(.expired) }
+        return .success(token)
     }
 
     /// The secret travels back over a pipe — never through `argv`, never to
