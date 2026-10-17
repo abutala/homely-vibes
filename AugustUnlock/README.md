@@ -89,7 +89,7 @@ from the command to August's reply. For a per-request split, stream the
 device log from the Mac while the phone is connected:
 
 ```bash
-log stream --predicate 'subsystem == "AugustUnlock"' 2>&1 | tee /tmp/augustunlock-timing.log
+log stream --level info --predicate 'subsystem == "AugustUnlock"' 2>&1 | tee /tmp/augustunlock-timing.log
 ```
 
 Each request logs a line like `PUT /remoteoperate/<id>/unlock -> 200 in 4612 ms`.
