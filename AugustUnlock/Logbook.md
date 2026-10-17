@@ -46,9 +46,9 @@ notes).
 August/Yale never published a public BLE SDK. The community reverse-engineered
 protocol (`yalexs-ble`, used by Home Assistant for local control) is
 Python-only, with no Swift port, and implements an encrypted offline-key
-handshake that isn't publicly documented — porting it from scratch is out of
-scope for a one-button convenience app. The cloud API round-trip is the
-practical option; it's typically 1-2 seconds.
+handshake — open source, but porting it to CoreBluetooth is out of scope for a
+one-button convenience app. The cloud API round-trip is the practical option.
+*It was never measured at 1-2 s: real use shows ~5 s — see 2026-10-17.*
 
 ## 2026-09-22 — Two auth bugs the original build never caught, because it was never run
 
@@ -129,7 +129,7 @@ Implementation notes:
   someone else (the physical keypad, another household member's app) won't
   be reflected until this app issues its own command.
 - *The last two bullets were replaced on 2026-09-30 by a status fetch on every
-  open — see that entry.*
+  open — see that entry — and that fetch by unlock-first on 2026-10-17.*
 
 ## 2026-09-22 — Two bugs in the auto-unlock feature, caught by PR review before merge
 
@@ -215,10 +215,11 @@ unlocks only if the lock is not already unlocked. After a lock/unlock the
 screen shows the `status` from August's reply (what yalexs'
 `async_unlock` returns), re-fetching if that is a value we don't recognize.
 *Since 2026-10-12, a return from the background no longer cancels an
-operation that is still running — see that entry.*
+operation that is still running — see that entry. Since 2026-10-17, an open
+no longer fetches the state first — it unlocks at once.*
 Cancellation alone doesn't stop a late reply from landing, so every state
 write after an await is guarded by a cancellation check. The screen resets to
-"State unknown" when a re-check starts, so a failed check never leaves the
+"State unknown" when an open starts, so a failed open never leaves the
 pre-background reading on display.
 
 Rejected: `GET /locks/{id}/status`. yalexs has it (`async_get_lock_status`),
@@ -235,11 +236,43 @@ lost — though August often finished the command anyway.
 Fix: `run(_:)` holds a `UIApplication.beginBackgroundTask` (`BackgroundKeepAlive`)
 for exactly the life of the operation, and ends it as soon as the operation
 ends so the app can suspend. Resume no longer replaces an operation that is
-still running; it re-checks only when nothing is in flight. If iOS takes the
+still running; it opens afresh only when nothing is in flight. If iOS takes the
 time back first (about 30s; a slow bridge can take ~60s), the expiration
 handler cancels the operation and marks the screen idle, so the next open
-re-checks the lock as before.
+unlocks again.
 
 Rejected: a background `URLSession`. It outlives suspension, but it is
 delegate-based upload/download only, so every call would have to leave
 `async data(for:)` — too much for one button.
+
+## 2026-10-17 — ~5 s to unlock; the official app takes ~1 s
+
+Reported from real use. Each open made two serial cloud calls: `GET
+/locks/{id}` for the state, then the sync `PUT /remoteoperate/{id}/unlock`,
+which answers only after August relays the command to the lock and the bolt
+moves. The official August app is fast because, near the door, it talks to the
+lock over Bluetooth and skips the cloud entirely.
+
+Reviewed adversarially (prosecution, defense, refute) before any code. Shipped:
+
+1. **Unlock first.** The open path sends the unlock at once; the GET is gone.
+   Unlocking an unlocked door is a no-op, and the reply's `status` is the real
+   state. Trade-off, accepted: opening the app to *lock* an unlocked door now
+   waits for a redundant unlock before the button works.
+2. **Timing.** Every request logs its wall time (`os.Logger`, subsystem
+   `AugustUnlock`); the screen shows the last command's total. Nothing had
+   been measured before — the BLE entry's "1-2 seconds" was a guess.
+
+Rejected, with the evidence:
+
+- **Wake the lock on every open** (`/remoteoperate/{id}/status?...&intent=wakeup`,
+  which Home Assistant sends at startup). yalexs `manager/ratelimit.py` allows
+  one per 26 minutes and warns the server may block the client permanently.
+- **`&connection=persistent`** ("hyper bridge"). yalexs adds it only to the
+  `type=async` URLs, never the sync unlock; untested here, so not shipped blind.
+- **Async op** (`type=async`). The bolt does not move sooner; the result
+  arrives over PubNub, a new dependency.
+- **HomeKit.** Irrelevant: the 1 s baseline is the August app over Bluetooth.
+
+Next, if the timings show the PUT alone is still ~4 s: the cloud path cannot
+reach 1 s, and the only route left is the Bluetooth port above.

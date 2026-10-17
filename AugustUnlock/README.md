@@ -4,9 +4,10 @@ Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
 
 A one-button iOS app: open it, your August door unlocks — no tap needed, opening
 the app *is* the confirmation. Tap the button again to lock back up. No home
-server, no VPN — the app talks to August's cloud API directly, the same way the
-official August app does, so it works from anywhere with a network connection
-(WiFi or cellular), not just at home.
+server, no VPN — the app talks to August's cloud API directly, the same API the
+official August app uses when it is out of Bluetooth range, so it works from
+anywhere with a network connection (WiFi or cellular), not just at home. Near
+the door the official app is faster (~1 s vs ~5 s) because it uses Bluetooth.
 
 ## Why no server
 
@@ -19,11 +20,10 @@ the request shapes already proven out in [`August/august_client.py`](../August/a
 (this repo's Python August integration, built on the `yalexs` library).
 
 Real BLE (Bluetooth) control was considered too, since it avoids the cloud
-round-trip. There's no viable path for a personal project: August has never
+round-trip. It's not worth it for a personal project yet: August has never
 published a public BLE SDK, and the community reverse-engineered protocol
 (`yalexs-ble`, used by Home Assistant) is Python-only with no Swift port —
-porting it means reverse-engineering an encrypted offline-key handshake from
-scratch.
+porting its encrypted offline-key handshake to CoreBluetooth is a large job.
 
 ## Setup
 
@@ -74,13 +74,25 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
   code entry → the unlock screen. A single-lock account skips straight to the
   button; a multi-lock account gets a one-time picker on first sign-in (and a
   "Change Lock" link on the main screen to redo it later). Every open — cold
-  launch or back from the background — first fetches the lock's current
-  state from August, then unlocks only if it isn't unlocked already. A
+  launch or back from the background — sends the unlock at once, with no
+  status check first (an already-unlocked door just stays unlocked). A
   lock/unlock still running when the app is backgrounded keeps running and
   reports its own result instead. The
-  state shown after a tap is what the lock reported back, not what was
+  state shown after each command is what the lock reported back, not what was
   requested, so a door that auto-locked or was operated elsewhere is picked
   up the next time the app opens.
+
+## Measuring lag
+
+The screen shows how long the last lock/unlock took ("Last unlock: 4.8 s"),
+from the command to August's reply. For a per-request split, stream the
+device log from the Mac while the phone is connected:
+
+```bash
+log stream --level info --predicate 'subsystem == "AugustUnlock"' 2>&1 | tee /tmp/augustunlock-timing.log
+```
+
+Each request logs a line like `PUT /remoteoperate/<id>/unlock -> 200 in 4612 ms`.
 
 ## Security notes
 
