@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 enum AugustError: LocalizedError {
     case badCredentials
@@ -308,7 +309,27 @@ final class AugustClient {
         return request
     }
 
+    /// Logs every request's wall time, so a slow unlock can be split into
+    /// its calls (`log stream --predicate 'subsystem == "AugustUnlock"'`).
     private func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
-        try await session.data(for: request)
+        let start = ContinuousClock.now
+        let method = request.httpMethod ?? "GET"
+        let path = request.url?.path ?? ""
+        do {
+            let (data, response) = try await session.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+            Self.log.info("\(method, privacy: .public) \(path, privacy: .public) -> \(status) in \(Self.ms(since: start)) ms")
+            return (data, response)
+        } catch {
+            Self.log.error("\(method, privacy: .public) \(path, privacy: .public) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+    }
+
+    private static let log = Logger(subsystem: "AugustUnlock", category: "timing")
+
+    private static func ms(since start: ContinuousClock.Instant) -> Int {
+        let elapsed = ContinuousClock.now - start
+        return Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
     }
 }

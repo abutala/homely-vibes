@@ -32,10 +32,12 @@ struct ContentView: View {
     /// `.background -> .active` pairing), so this can't be a same-call
     /// oldPhase/newPhase check — see the Logbook entry for why.
     @State private var wasBackgrounded = false
+    /// Wall time of the last lock/unlock, tap or open to August's reply —
+    /// shown on screen so lag can be read off the phone without Console.
+    @State private var lastTiming: String?
 
     private enum OperationResult: Equatable {
         case idle
-        case checking
         case inProgress(unlocking: Bool)
         case success
         case failure(String)
@@ -43,7 +45,7 @@ struct ContentView: View {
 
     private var isOperating: Bool {
         switch operationResult {
-        case .checking, .inProgress: return true
+        case .inProgress: return true
         case .idle, .success, .failure: return false
         }
     }
@@ -66,7 +68,7 @@ struct ContentView: View {
         .padding()
         .onAppear {
             phase = AugustClient.shared.isReady ? .ready : .needsLogin
-            syncThenUnlock()
+            openUnlock()
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Covers reopening from the background, not just cold launch —
@@ -85,7 +87,7 @@ struct ContentView: View {
                 wasBackgrounded = false
                 // An operation still in flight kept running in the
                 // background (see `run(_:)`): let it report, don't replace it.
-                if !isOperating { syncThenUnlock() }
+                if !isOperating { openUnlock() }
             default:
                 break
             }
@@ -93,25 +95,18 @@ struct ContentView: View {
     }
 
     /// Opening the app — cold launch, finishing setup, or returning from the
-    /// background — fetches the lock's real state from August, then unlocks
-    /// unless it already is; opening the app is the confirmation (requested
-    /// explicitly). Nothing from before is trusted: the door may have
-    /// auto-locked or been operated elsewhere meanwhile. A tap or an earlier
-    /// check still in flight is cancelled and its result discarded; the
-    /// resume path skips this while one is still running (see `run(_:)`).
-    private func syncThenUnlock() {
+    /// background — unlocks at once; opening the app is the confirmation
+    /// (requested explicitly). No status fetch first: it cost a full cloud
+    /// round trip before the command, and unlocking an unlocked door is a
+    /// no-op. The reply's `status` is the lock's real state, so nothing from
+    /// before is trusted. A tap still in flight is cancelled and its result
+    /// discarded; the resume path skips this while one is still running
+    /// (see `run(_:)`).
+    private func openUnlock() {
         guard phase == .ready else { return }
         run {
             lockState = .unknown
-            operationResult = .checking
-            let state = try await AugustClient.shared.fetchLockState()
-            try Task.checkCancellation()
-            lockState = state
-            if state == .unlocked {
-                operationResult = .idle
-            } else {
-                try await performOperation(unlocking: true)
-            }
+            try await performOperation(unlocking: true)
         }
     }
 
@@ -186,14 +181,14 @@ struct ContentView: View {
         }
     }
 
-    /// Enters the ready/unlock screen and syncs + auto-unlocks — the single
+    /// Enters the ready/unlock screen and auto-unlocks — the single
     /// path every "setup just finished" transition (already-signed-in,
     /// single-lock auto-select, or a fresh lock pick) must go through so the
     /// promised "opens unlocked" behavior actually holds the first time,
     /// not just on a later cold launch or background resume.
     private func enterReady() {
         phase = .ready
-        syncThenUnlock()
+        openUnlock()
     }
 
     // MARK: - 2FA code
@@ -292,6 +287,13 @@ struct ContentView: View {
 
             statusText
 
+            if let lastTiming {
+                Text(lastTiming)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
+            }
+
             HStack(spacing: 24) {
                 Button("Change Lock") {
                     Task { await presentLockPicker() }
@@ -302,6 +304,7 @@ struct ContentView: View {
                     password = ""
                     code = ""
                     lockState = .unknown
+                    lastTiming = nil
                     phase = .needsLogin
                 }
             }
@@ -321,6 +324,7 @@ struct ContentView: View {
     /// signing all the way out.
     private func presentLockPicker() async {
         errorMessage = nil
+        lastTiming = nil
         do {
             availableLocks = try await AugustClient.shared.fetchLocks()
             phase = availableLocks.isEmpty ? .ready : .pickLock
@@ -335,7 +339,7 @@ struct ContentView: View {
     private var buttonColor: Color {
         switch operationResult {
         case .failure: return .red
-        case .checking, .inProgress: return .accentColor
+        case .inProgress: return .accentColor
         case .idle, .success: return lockState == .unlocked ? .green : .accentColor
         }
     }
@@ -362,7 +366,6 @@ struct ContentView: View {
         case .idle:
             Text("\(stateLabel) \u{2014} tap to \(lockState == .unlocked ? "lock" : "unlock")")
                 .foregroundStyle(.secondary)
-        case .checking: Text("Checking lock\u{2026}").foregroundStyle(.secondary)
         case .inProgress(let unlocking):
             Text(unlocking ? "Unlocking\u{2026}" : "Locking\u{2026}").foregroundStyle(.secondary)
         case .success: Text(stateLabel).foregroundStyle(lockState == .unlocked ? .green : .secondary)
@@ -379,8 +382,12 @@ struct ContentView: View {
 
     private func performOperation(unlocking: Bool) async throws {
         operationResult = .inProgress(unlocking: unlocking)
+        let start = ContinuousClock.now
         let state = try await (unlocking ? AugustClient.shared.unlock() : AugustClient.shared.lock())
         try Task.checkCancellation()
+        let elapsed = ContinuousClock.now - start
+        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        lastTiming = "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s"
         lockState = state
         operationResult = .success
         UINotificationFeedbackGenerator().notificationOccurred(.success)
@@ -391,7 +398,7 @@ struct ContentView: View {
     /// cancelled one's late reply can't overwrite its replacement's. The
     /// operation keeps running if the app is backgrounded mid-flight, and the
     /// app may suspend once it ends. If iOS takes the time back first, the
-    /// operation is dropped and the next open re-checks the lock.
+    /// operation is dropped and the next open unlocks again.
     private func run(_ operation: @escaping () async throws -> Void) {
         operationTask?.cancel()
         var task: Task<Void, Never>?
@@ -414,7 +421,7 @@ struct ContentView: View {
             guard !Task.isCancelled else { return }
             switch operationResult {
             case .success, .failure: operationResult = .idle
-            case .idle, .checking, .inProgress: break
+            case .idle, .inProgress: break
             }
         }
         operationTask = task
