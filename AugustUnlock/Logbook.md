@@ -375,3 +375,22 @@ so anything under ~2 s risks sending opens at the door to the cloud.
 **The icon** is the Bluetooth rune, drawn here as a template SVG in
 `Assets.xcassets` — SF Symbols has no Bluetooth mark (it is the Bluetooth
 SIG's trademark).
+
+## 2026-10-18 — Quit after 5 minutes in the background
+
+Asked for: the app terminates itself when backgrounded for more than 5 minutes
+(`BackgroundExitPolicy.defaultTimeout`, the one constant); foregrounding sooner
+cancels it; an operation in flight finishes first.
+
+Non-obvious: iOS suspends a backgrounded app within seconds (the 2026-10-12
+entry), and a suspended process runs no timers. A `Task.sleep` for 5 minutes
+therefore almost never fires on its own. So the check is the timestamp
+comparison on return to the foreground (`exit(0)` if the deadline passed),
+with the timer as a best effort for the cases where iOS keeps the process
+awake. The visible cost: reopening after more than 5 minutes flashes the app
+and closes it; the next launch is a clean cold start that unlocks as usual.
+
+An in-flight operation postpones the exit: the timer and `run(_:)` both ask
+again when it ends, so the background task from the 2026-10-12 fix is never
+cut short. The policy is a pure struct that takes `Date` as a parameter; its
+tests run with `swift test` (it is in `Package.swift`).
