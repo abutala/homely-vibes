@@ -110,7 +110,7 @@ struct ContentView: View {
             case .active where wasBackgrounded:
                 wasBackgrounded = false
                 exitTimer?.cancel()
-                let expired = exitPolicy.shouldExit(at: Date(), operationInFlight: false)
+                let expired = exitPolicy.shouldExit(at: Date(), operationInFlight: isOperating)
                 exitPolicy.didForeground()
                 if expired { exit(0) }
                 // An operation still in flight kept running in the
