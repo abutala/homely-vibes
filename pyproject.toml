@@ -131,6 +131,7 @@ DEP001 = [
     "rumps",
     "pynput",
     "PyObjCTools",  # transitive via rumps, only present with --extra voice
+    "yalexs_ble",  # AugustUnlock/scripts/gen_ble_vectors.py, a uv inline-script dependency
     "aiy",
     "google",
     "google_auth_oauthlib",
@@ -228,6 +229,7 @@ module = [
     "rumps.*",
     "pynput.*",
     "yalexs.*",
+    "yalexs_ble.*",
     "pyeconet.*",
     "twilio.*",
     "webview.*",
