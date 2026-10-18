@@ -116,10 +116,10 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
 
 ## Measuring lag
 
-The screen shows how long the last lock/unlock took and which path carried
-it ("Last unlock: 1.2 s via Bluetooth", "Last unlock: 4.8 s via cloud"), with a
-blue radio-waves icon for Bluetooth and a grey cloud icon for the cloud. For a
-per-stage split, read the phone's log from a Mac with the phone connected over
+The screen shows how long the last lock/unlock took ("Last unlock: 1.2 s"),
+after an icon for the path that carried it: blue radio waves for Bluetooth, a
+grey cloud for the cloud. For a per-stage split, read the phone's log from a
+Mac with the phone connected over
 USB. `log stream` reads only the Mac's own log, never the phone's, so collect
 an archive from the phone, then read it:
 

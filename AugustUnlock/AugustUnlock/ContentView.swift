@@ -301,13 +301,12 @@ struct ContentView: View {
 
             if let lastTiming {
                 HStack(spacing: 4) {
-                    Text("\(lastTiming.summary) \(lastTiming.pathLabel)")
-                        .foregroundStyle(.tertiary)
-                        .monospacedDigit()
-                        .accessibilityLabel(lastTiming.summary)
                     Image(systemName: lastTiming.icon)
                         .foregroundStyle(lastTiming.tint)
                         .accessibilityLabel(lastTiming.pathLabel)
+                    Text(lastTiming.summary)
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
                 }
                 .font(.caption)
                 .accessibilityElement(children: .combine)
