@@ -287,9 +287,9 @@ reach 1 s, and the only route left is the Bluetooth port above.
 
 The timings from the entry above, read off the phone's log: `PUT
 /remoteoperate/{id}/unlock -> 200 in 8955 ms` cold, then `PUT .../lock -> 200
-in 4608 ms` eight seconds later, warm. No 401, no extra GET. A warm lock still
-costs ~4.6 s over the cloud, and a bridge-connected lock up to ~60 s (see
-2026-09-22). The cloud cannot get near the official app's ~1 s, so the app now
+in 4608 ms` eight seconds later, warm. No 401, no extra GET. Both are the
+bridge-connected lock, the only one with a loaded offline key: ~4.6 s warm,
+~9 s cold, and up to ~60 s (see 2026-09-22). The cloud cannot get near the official app's ~1 s, so the app now
 talks Bluetooth near the door: `AugustBLEProtocol.swift` (wire format) and
 `AugustBLEOperation.swift` (CoreBluetooth), a minimum port of yalexs-ble.
 
@@ -346,7 +346,22 @@ test plan as good. The one timing line that survived:
 `BLE lock -> ok in 3179 ms (found -, connected 1293, session 1740, written
 1998, done 3179)`. No scan was needed (the remembered peripheral connected),
 the command reached the lock at ~2.0 s, and the bolt finished at ~3.2 s.
-Over the cloud the same kind of command took 4608 ms warm and 8955 ms cold.
+Over the cloud the same lock took 4608 ms warm and 8955 ms cold.
+
+**Second door test, same lock**, with every line kept at `.notice`:
+
+| Path | Line |
+|---|---|
+| Bluetooth, unlock | `BLE unlock -> ok in 2747 ms (found -, connected 1001, session 1302, written 1563, done 2747)` |
+| Bluetooth miss, ~20 ft from the door | `BLE lock failed in 3175 ms: Bluetooth setup timed out while connecting; using the cloud` |
+| Cloud fallback | `PUT /remoteoperate/<id>/lock -> 200 in 24706 ms` |
+
+The screen showed ~28 s for that lock: the 3.2 s Bluetooth miss plus the
+24.7 s PUT. The `GET /locks/{id}` key re-read that followed (276 ms) runs
+after the result, in an unawaited task, and adds nothing to it. So over the
+cloud this lock has taken 4.6 s, 9.0 s and 24.7 s; over Bluetooth 2.7 s and
+3.2 s. Connects that succeeded took 1.0–1.3 s, and the miss failed cleanly at
+the 3 s limit, so the budget stays.
 
 Only one line survived because the timing lines were logged at `.info`, which
 iOS keeps in a shared in-memory buffer that a busy phone overwrites in
