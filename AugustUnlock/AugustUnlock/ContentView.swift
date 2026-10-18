@@ -32,8 +32,9 @@ struct ContentView: View {
     /// `.background -> .active` pairing), so this can't be a same-call
     /// oldPhase/newPhase check — see the Logbook entry for why.
     @State private var wasBackgrounded = false
-    /// Wall time of the last lock/unlock, tap or open to August's reply —
-    /// shown on screen so lag can be read off the phone without Console.
+    /// Wall time of the last lock/unlock, tap or open to the reply, and the
+    /// path that carried it — shown on screen so lag can be read off the
+    /// phone without Console.
     @State private var lastTiming: String?
 
     private enum OperationResult: Equatable {
@@ -383,12 +384,12 @@ struct ContentView: View {
     private func performOperation(unlocking: Bool) async throws {
         operationResult = .inProgress(unlocking: unlocking)
         let start = ContinuousClock.now
-        let state = try await (unlocking ? AugustClient.shared.unlock() : AugustClient.shared.lock())
+        let reply = try await (unlocking ? AugustClient.shared.unlock() : AugustClient.shared.lock())
         try Task.checkCancellation()
         let elapsed = ContinuousClock.now - start
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-        lastTiming = "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s"
-        lockState = state
+        lastTiming = "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s via \(reply.path.rawValue)"
+        lockState = reply.state
         operationResult = .success
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }

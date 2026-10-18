@@ -48,7 +48,8 @@ protocol (`yalexs-ble`, used by Home Assistant for local control) is
 Python-only, with no Swift port, and implements an encrypted offline-key
 handshake — open source, but porting it to CoreBluetooth is out of scope for a
 one-button convenience app. The cloud API round-trip is the practical option.
-*It was never measured at 1-2 s: real use shows ~5 s — see 2026-10-17.*
+*It was never measured at 1-2 s: real use shows ~5 s — see 2026-10-17. Ported
+anyway on 2026-10-17 — see "Bluetooth first, cloud fallback".*
 
 ## 2026-09-22 — Two auth bugs the original build never caught, because it was never run
 
@@ -276,3 +277,67 @@ Rejected, with the evidence:
 
 Next, if the timings show the PUT alone is still ~4 s: the cloud path cannot
 reach 1 s, and the only route left is the Bluetooth port above.
+*Measured, then ported — see the next entry.*
+
+## 2026-10-17 — Bluetooth first, cloud fallback
+
+The timings from the entry above, read off the phone's log: `PUT
+/remoteoperate/{id}/unlock -> 200 in 8955 ms` cold, then `PUT .../lock -> 200
+in 4608 ms` eight seconds later, warm. No 401, no extra GET. A warm lock still
+costs ~4.6 s over the cloud, and a bridge-connected lock up to ~60 s (see
+2026-09-22). The cloud cannot get near the official app's ~1 s, so the app now
+talks Bluetooth near the door: `AugustBLEProtocol.swift` (wire format) and
+`AugustBLEOperation.swift` (CoreBluetooth), a minimum port of yalexs-ble.
+
+**Go/no-go first.** Bluetooth needs an offline key the lock already holds. A
+read-only check of `GET /locks/{id}` on a real two-lock account: one lock had a
+key under `OfflineKeys.loaded` (16 bytes and a slot), the other had one only
+under `OfflineKeys.created` — made by August, never loaded onto the lock.
+yalexs reads only `loaded[0]`; the lock rejects a key it does not hold. So the
+port reads only `loaded`, and a lock without one uses the cloud with no error.
+Expected, not yet seen: the official app loads a created key the next time it
+talks Bluetooth to the lock.
+
+What the port keeps from yalexs-ble, each for a reason found in its source:
+
+1. **One cipher context per direction for the whole connection.** The command
+   channel is AES-CBC with a zero IV, and the chain runs across frames.
+   Re-creating the CommonCrypto context per frame restarts the chain, and every
+   frame after the first decrypts to garbage on the lock.
+2. **Every plain frame goes through the decryptor**, an unsolicited status push
+   included, because the lock's chain advances per frame it sends. A frame that
+   is not 18 bytes is refused *before* the decryptor: a partial block stays
+   buffered and garbles every later frame.
+3. **Secure notify before plain notify**, then the key exchange, then plain
+   notify (yalexs `connect`: "Order matters").
+4. **A 0.25 s cooldown after the last frame before the command.** yalexs: a
+   lock sent commands too fast can crash and need a battery pull.
+5. **A reported jam is final.** Result codes 0x1E-0x23 are motor faults; the
+   app shows them and does not retry through the cloud. Any other failure
+   (no lock in range, link lost, timeout) falls back to the cloud, which is
+   safe because unlock and lock are idempotent.
+
+Skipped from yalexs-ble: the status read before a command (the cloud path
+dropped it too, above), connection retries, status pushes, settings, keypad
+codes, and the activity log.
+
+**Test vectors.** yalexs-ble has frame tests but no crypto vectors, so the
+expected bytes come from `scripts/gen_ble_vectors.py`, which runs yalexs-ble
+6.1.0's own `Session` and `SecureSession` classes (test key 00..0f, slot 4) for
+both handshake commands, the session key, three chained commands, and an ack
+plus op-response encrypted by an independent AES encryptor as the lock would.
+6.1.0, not the newest 7.2.2, because `uv`'s age cutoff refused a release from
+that day; the protocol code (`secure_session.py`, `set_key`, `build_command`,
+the checksums, `_setup_session`) is identical between the two.
+
+**Default MainActor isolation.** The Xcode project sets
+`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so every type is MainActor unless
+marked otherwise. CoreBluetooth calls the delegate on the operation's own
+queue, so the Bluetooth types are `nonisolated`; without that the build warned
+that the delegate conformance "is an error in the Swift 6 language mode".
+
+Untested until it runs at the door: whether the lock answers while its WiFi
+bridge holds a Bluetooth link to it, how long discovery takes (it decides
+whether 3 s is the right budget), and whether a backgrounded app keeps its
+Bluetooth link (no `bluetooth-central` background mode; a lost link falls back
+to the cloud).
