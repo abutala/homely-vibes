@@ -37,6 +37,8 @@ struct ContentView: View {
     /// phone without Console. One value, so the caption and its icon can't
     /// disagree.
     @State private var lastTiming: LastTiming?
+    /// The path icon's side, so it scales with Dynamic Type like the caption.
+    @ScaledMetric(relativeTo: .caption) private var captionIconSize: CGFloat = 12
 
     private struct LastTiming {
         /// "Last unlock: 1.2 s"
@@ -44,7 +46,9 @@ struct ContentView: View {
         let path: OperationReply.Path
 
         var pathLabel: String { "via \(path.rawValue)" }
-        var icon: String { path == .bluetooth ? "dot.radiowaves.left.and.right" : "cloud" }
+        /// The Bluetooth rune is a template vector in Assets.xcassets (SF
+        /// Symbols has none: it is the Bluetooth SIG's mark); the cloud is a symbol.
+        var icon: Image { path == .bluetooth ? Image("bluetooth") : Image(systemName: "cloud") }
         var tint: Color { path == .bluetooth ? .blue : .secondary }
     }
 
@@ -301,7 +305,10 @@ struct ContentView: View {
 
             if let lastTiming {
                 HStack(spacing: 4) {
-                    Image(systemName: lastTiming.icon)
+                    lastTiming.icon
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: captionIconSize, height: captionIconSize)
                         .foregroundStyle(lastTiming.tint)
                         .accessibilityLabel(lastTiming.pathLabel)
                     Text(lastTiming.summary)

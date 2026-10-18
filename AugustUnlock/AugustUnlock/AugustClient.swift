@@ -276,13 +276,13 @@ final class AugustClient {
         else { return }
         guard let credentials = AugustBLECredentials(lockDetail: json) else {
             Self.bluetoothKeychainKeys.forEach { KeychainStore.remove($0) }
-            Self.log.info("No loaded offline key for this lock; opens use the cloud")
+            Self.log.notice("No loaded offline key for this lock; opens use the cloud")
             return
         }
         KeychainStore.set(credentials.hexKey, forKey: "august_ble_key")
         KeychainStore.set(String(credentials.slot), forKey: "august_ble_slot")
         KeychainStore.set(credentials.serial, forKey: "august_ble_serial")
-        Self.log.info("Stored the offline key; the next open tries Bluetooth first")
+        Self.log.notice("Stored the offline key; the next open tries Bluetooth first")
     }
 
     // MARK: - Lock state / lock / unlock
@@ -317,7 +317,7 @@ final class AugustClient {
             let start = ContinuousClock.now
             do {
                 let timing = try await AugustBLEOperation.run(opcode: opcode, credentials: credentials)
-                Self.log.info("BLE \(action, privacy: .public) -> ok in \(Self.ms(since: start)) ms (\(timing.description, privacy: .public))")
+                Self.log.notice("BLE \(action, privacy: .public) -> ok in \(Self.ms(since: start)) ms (\(timing.description, privacy: .public))")
                 return OperationReply(state: success, path: .bluetooth)
             } catch is CancellationError {
                 throw CancellationError()
@@ -325,7 +325,7 @@ final class AugustClient {
                 Self.log.error("BLE \(action, privacy: .public) jammed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public)")
                 throw error
             } catch {
-                Self.log.info("BLE \(action, privacy: .public) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public); using the cloud")
+                Self.log.notice("BLE \(action, privacy: .public) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public); using the cloud")
             }
         }
         let state = try await cloudOperate(lockID: lockID, action: action)
@@ -400,7 +400,7 @@ final class AugustClient {
         do {
             let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-            Self.log.info("\(method, privacy: .public) \(path, privacy: .public) -> \(status) in \(Self.ms(since: start)) ms")
+            Self.log.notice("\(method, privacy: .public) \(path, privacy: .public) -> \(status) in \(Self.ms(since: start)) ms")
             return (data, response)
         } catch {
             Self.log.error("\(method, privacy: .public) \(path, privacy: .public) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public)")
@@ -408,6 +408,8 @@ final class AugustClient {
         }
     }
 
+    /// Lines go out at `.notice` or above: iOS keeps `.info` in memory only,
+    /// and a door test lost all but one timing line that way.
     private static let log = Logger(subsystem: "AugustUnlock", category: "timing")
 
     private static func ms(since start: ContinuousClock.Instant) -> Int {

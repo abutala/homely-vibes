@@ -340,8 +340,20 @@ marked otherwise. CoreBluetooth calls the delegate on the operation's own
 queue, so the Bluetooth types are `nonisolated`; without that the build warned
 that the delegate conformance "is an error in the Swift 6 language mode".
 
-Untested until it runs at the door: whether the lock answers while its WiFi
-bridge holds a Bluetooth link to it, how long discovery takes (it decides
-whether 3 s is the right budget), and whether a backgrounded app keeps its
-Bluetooth link (no `bluetooth-central` background mode; a lost link falls back
-to the cloud).
+**Door test (2026-10-18), bridge-connected lock.** It worked, including
+while its WiFi bridge was in place, and the user reported the rest of the
+test plan as good. The one timing line that survived:
+`BLE lock -> ok in 3179 ms (found -, connected 1293, session 1740, written
+1998, done 3179)`. No scan was needed (the remembered peripheral connected),
+the command reached the lock at ~2.0 s, and the bolt finished at ~3.2 s.
+Over the cloud the same kind of command took 4608 ms warm and 8955 ms cold.
+
+Only one line survived because the timing lines were logged at `.info`, which
+iOS keeps in memory only; they are `.notice` now, which persists. Still
+unmeasured: an open that needs a scan (`found` set). Until one is, the 3 s
+setup budget stays: this run reached its session at 1740 ms without a scan,
+so anything under ~2 s risks sending opens at the door to the cloud.
+
+**The icon** is the Bluetooth rune, drawn here as a template SVG in
+`Assets.xcassets` — SF Symbols has no Bluetooth mark (it is the Bluetooth
+SIG's trademark).

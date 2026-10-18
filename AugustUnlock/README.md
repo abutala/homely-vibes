@@ -117,10 +117,9 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
 ## Measuring lag
 
 The screen shows how long the last lock/unlock took ("Last unlock: 1.2 s"),
-after an icon for the path that carried it: blue radio waves for Bluetooth, a
-grey cloud for the cloud. For a per-stage split, read the phone's log from a
-Mac with the phone connected over
-USB. `log stream` reads only the Mac's own log, never the phone's, so collect
+after an icon for the path that carried it: a blue Bluetooth rune, or a grey
+cloud. For a per-stage split, read the phone's log from a Mac with the phone
+connected over USB. `log stream` reads only the Mac's own log, never the phone's, so collect
 an archive from the phone, then read it:
 
 ```bash
@@ -128,14 +127,15 @@ sudo log collect --device-udid <UDID> --last 30m --output /tmp/phone.logarchive 
 ```
 
 ```bash
-log show /tmp/phone.logarchive --info --predicate 'subsystem == "AugustUnlock"' 2>&1 | tee /tmp/augustunlock-timing.log
+log show /tmp/phone.logarchive --predicate 'subsystem == "AugustUnlock"' 2>&1 | tee /tmp/augustunlock-timing.log
 ```
 
-`<UDID>` is the phone's identifier (`xcrun devicectl list devices`). `.info`
-lines live only in memory, so collect soon after opening the app. Lines look
-like:
+`<UDID>` is the phone's identifier (`xcrun devicectl list devices`). The app
+logs at `.notice`, which the phone keeps on disk; widen `--last` for an older
+test. Lines look like this (the first from a real door test; `found -` means
+the remembered peripheral connected without a scan):
 
-- `BLE unlock -> ok in 1180 ms (found 310, connected 420, session 610, written 860, done 1170)`
+- `BLE lock -> ok in 3179 ms (found -, connected 1293, session 1740, written 1998, done 3179)`
 - `BLE unlock failed in 3004 ms: Bluetooth setup timed out while searching for the lock; using the cloud`
 - `PUT /remoteoperate/<id>/unlock -> 200 in 4612 ms`
 
