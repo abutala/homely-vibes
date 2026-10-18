@@ -141,7 +141,9 @@ the remembered peripheral connected without a scan):
 
 ## Tests
 
-The Bluetooth protocol has unit tests against bytes produced by yalexs-ble's
+The app quits itself after 5 minutes in the background (`BackgroundExitPolicy.swift`).
+
+The Bluetooth protocol and the exit policy have unit tests against bytes produced by yalexs-ble's
 own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
 AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 
@@ -150,7 +152,7 @@ cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 ```
 
 `Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`
-alone. The app builds from `AugustUnlock.xcodeproj`.
+and `BackgroundExitPolicy.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
 
 ## Security notes
 

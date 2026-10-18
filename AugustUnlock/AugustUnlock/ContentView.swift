@@ -32,6 +32,12 @@ struct ContentView: View {
     /// `.background -> .active` pairing), so this can't be a same-call
     /// oldPhase/newPhase check — see the Logbook entry for why.
     @State private var wasBackgrounded = false
+    /// Quits the app after `BackgroundExitPolicy.defaultTimeout` in the
+    /// background. Checked on a timer (runs only while iOS keeps the process
+    /// awake) and again on return to the foreground (the case that matters,
+    /// since a suspended process runs no timers) — see the Logbook.
+    @State private var exitPolicy = BackgroundExitPolicy()
+    @State private var exitTimer: Task<Void, Never>?
     /// Wall time of the last lock/unlock, tap or open to the reply, and the
     /// path that carried it — shown on screen so lag can be read off the
     /// phone without Console. One value, so the caption and its icon can't
@@ -99,8 +105,14 @@ struct ContentView: View {
             switch newPhase {
             case .background:
                 wasBackgrounded = true
+                exitPolicy.didBackground(at: Date())
+                armExitTimer()
             case .active where wasBackgrounded:
                 wasBackgrounded = false
+                exitTimer?.cancel()
+                let expired = exitPolicy.shouldExit(at: Date(), operationInFlight: isOperating)
+                exitPolicy.didForeground()
+                if expired { exit(0) }
                 // An operation still in flight kept running in the
                 // background (see `run(_:)`): let it report, don't replace it.
                 if !isOperating { openUnlock() }
@@ -108,6 +120,22 @@ struct ContentView: View {
                 break
             }
         }
+    }
+
+    /// Quits once the background deadline passes. An operation still in
+    /// flight postpones it; `run(_:)` calls this again when the operation ends.
+    private func armExitTimer() {
+        exitTimer?.cancel()
+        guard let remaining = exitPolicy.remaining(at: Date()) else { return }
+        exitTimer = Task {
+            try? await Task.sleep(for: .seconds(remaining))
+            guard !Task.isCancelled else { return }
+            exitIfExpired()
+        }
+    }
+
+    private func exitIfExpired() {
+        if exitPolicy.shouldExit(at: Date(), operationInFlight: isOperating) { exit(0) }
     }
 
     /// Opening the app — cold launch, finishing setup, or returning from the
@@ -443,6 +471,7 @@ struct ContentView: View {
             }
             keepAlive.end()
             guard !Task.isCancelled else { return }
+            exitIfExpired()
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
             switch operationResult {
