@@ -256,15 +256,15 @@ tesla:
       pct_gradient_per_hr: -35
       pct_thresh: 40
       iff_higher: true
-      # Floor for the dump: stop discharging at 45%, not 20%. pct_min is the
+      # Floor for the dump: stop discharging at 40%, not 20%. pct_min is the
       # lever that binds the ending charge; pct_thresh only gates whether the
       # rule acts. See Tesla/Logbook.md "pct_min binds, pct_thresh only gates".
-      pct_min: 45
+      pct_min: 40
       pct_min_trail_stop: 0
       op_mode: autonomous
       # Bar decays 110% -> 40% at an assumed 35%/hr peak draw. Above it there
       # is more charge than is needed to reach 21:00, so hand control to
-      # autonomous and let it export the excess -- down to the 45% floor.
+      # autonomous and let it export the excess -- down to the 40% floor.
       reason: "Dump surplus before end of peak.."
       always_notify: false
 

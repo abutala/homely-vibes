@@ -84,27 +84,22 @@ battery is allowed to fall. To change the charge you end a window with, move
 `pct_min`. Moving `pct_thresh` instead changes how often the floor gets
 installed at all, which is usually the opposite of the intent.
 
-**Accepted edge (2026-09-05).** With `pct_min` above `pct_thresh`, the rule can
-fire at a charge below its own floor and write a reserve above the current
-charge — and a reserve above charge tells the Powerwall to charge up to it.
-Grid charging is always on here (`get_powerwall_data()` raises
-`Invalid powerwall config` when `can_grid_charge` is false), so that is a grid
-pull at peak rates. On `Dump surplus before end of peak` the exposed band is
-narrow: charge between 40 and 45 in the closing minutes before 21:00, worth a
-few percent. Raising `pct_thresh` to match would close it, but would also make
-the rule fire less often and so install the 45% floor less often. The band was
-judged the smaller cost.
+**Floor equals target (2026-10-18).** The `Dump surplus before end of peak` floor was 45%
+while its bar targets 40%, so the battery stopped 5 points short of the intended
+21:00 charge. The floor is now 40%. With `pct_min` no higher than `pct_thresh`, the
+rule cannot write a reserve above current charge, so it cannot pull from the grid
+at peak rates. `test_surplus_dump_floor_is_not_above_its_target` guards this.
 
-### The 45% floor holds only on the surplus path
+### The 40% floor holds only on the surplus path
 
 `Dump surplus before end of peak` installs the floor only when it fires, and it
 is not the only rule live in its window. `In Peak. Discharge..` runs until 19:00
 with `pct_thresh: 0` and `iff_higher: true`, so it fires at any charge and
 leaves the reserve at 20% when the evening window opens. From there:
 
-| Charge at 19:00–21:00 | Rule that matches | Reserve | Ends above 45%? |
+| Charge at 19:00–21:00 | Rule that matches | Reserve | Ends above 40%? |
 | --- | --- | --- | --- |
-| high | `Dump surplus before end of peak` | 45% | yes |
+| high | `Dump surplus before end of peak` | 40% | yes |
 | moderate | none — falls between both bars | 20%, unchanged | no |
 | low | `Reserve for rest of shoulder..` (listed first, wins) | 20% | no |
 
