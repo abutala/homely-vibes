@@ -310,5 +310,19 @@ class TestStalenessAlert(unittest.TestCase):
         self.pushover.send_message.assert_not_called()
 
 
+class TestShippedDecisionPoints(unittest.TestCase):
+    """The shipped rules must let a dump reach the target the bar names."""
+
+    def test_surplus_dump_floor_is_not_above_its_target(self) -> None:
+        import yaml
+
+        with open("config/default.yaml") as f:
+            rules = yaml.safe_load(f)["tesla"]["decision_points"]
+        dumps = [r for r in rules if r["iff_higher"] and r["pct_thresh"] > 0]
+        self.assertTrue(dumps)
+        for rule in dumps:
+            self.assertLessEqual(rule["pct_min"], rule["pct_thresh"], rule["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()
