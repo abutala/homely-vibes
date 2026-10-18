@@ -78,11 +78,11 @@ nonisolated final class AugustBLEOperation: NSObject, CBCentralManagerDelegate, 
     private var retainSelf: AugustBLEOperation?
 
     /// `setupBudget` covers scan through key exchange — past it, the caller
-    /// falls back to the cloud. `operationBudget` runs from the command write
-    /// to the op-response (yalexs allows 8 s for the ack, 12 s in all).
+    /// falls back to the cloud. `operationBudget` runs from the session to the
+    /// op-response (yalexs allows 12 s from the write).
     static func run(
         opcode: UInt8, credentials: AugustBLECredentials,
-        setupBudget: TimeInterval = 3, operationBudget: TimeInterval = 8
+        setupBudget: TimeInterval = 3, operationBudget: TimeInterval = 12
     ) async throws -> AugustBLETiming {
         var nonce = [UInt8](repeating: 0, count: 16)
         guard SecRandomCopyBytes(kSecRandomDefault, nonce.count, &nonce) == errSecSuccess else {
@@ -222,10 +222,10 @@ nonisolated final class AugustBLEOperation: NSObject, CBCentralManagerDelegate, 
     ) {
         if let error { return finish(.failure(AugustBLEError.link("notify: \(error.localizedDescription)"))) }
         switch characteristic.uuid {
-        case CBUUID(string: AugustBLE.secureReadUUID):
+        case CBUUID(string: AugustBLE.secureReadUUID) where stage == .discovering:
             stage = .keyExchange
             write(handshake.keyExchangeCommand(), to: AugustBLE.secureWriteUUID)
-        case CBUUID(string: AugustBLE.readUUID):
+        case CBUUID(string: AugustBLE.readUUID) where stage == .opening:
             sendCommandAfterCooldown()
         default:
             break
@@ -263,6 +263,7 @@ nonisolated final class AugustBLEOperation: NSObject, CBCentralManagerDelegate, 
             channel = try handshake.plainChannel(reply: frame)
             timing.session = elapsedMS()
             stage = .opening
+            armOperationDeadline()
             if let read = characteristic(AugustBLE.readUUID) { peripheral?.setNotifyValue(true, for: read) }
         default:
             break  // e.g. the reply to the shutdown command
@@ -296,6 +297,11 @@ nonisolated final class AugustBLEOperation: NSObject, CBCentralManagerDelegate, 
         stage = .operating
         write(channel.command(opcode: opcode), to: AugustBLE.writeUUID)
         timing.written = elapsedMS()
+    }
+
+    /// Armed when the session opens, so it also bounds the plain-notify
+    /// confirmation and the cooldown before the write, not just the result.
+    private func armOperationDeadline() {
         Self.queue.asyncAfter(deadline: .now() + operationBudget) { [weak self] in
             guard let self else { return }
             finish(.failure(AugustBLEError.operationTimedOut(acknowledged: acknowledged)))

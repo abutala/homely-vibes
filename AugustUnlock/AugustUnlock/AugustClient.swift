@@ -110,6 +110,7 @@ final class AugustClient {
         ] + Self.bluetoothKeychainKeys {
             KeychainStore.remove(key)
         }
+        refreshedKeys.withLock { $0.removeAll() }
         // install_id is deliberately kept: reusing it on the next login
         // avoids tripping 2FA again for a device August already trusts.
     }
@@ -238,6 +239,8 @@ final class AugustClient {
         KeychainStore.set(lock.id, forKey: "august_lock_id")
         KeychainStore.set(lock.name, forKey: "august_lock_name")
         Self.bluetoothKeychainKeys.forEach { KeychainStore.remove($0) }
+        // The key was just deleted, so re-read it even if this launch already did.
+        _ = refreshedKeys.withLock { $0.remove(lock.id) }
         refreshBluetoothKeyOnce(lockID: lock.id)
     }
 

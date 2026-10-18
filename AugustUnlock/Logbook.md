@@ -217,7 +217,9 @@ screen shows the `status` from August's reply (what yalexs'
 `async_unlock` returns), re-fetching if that is a value we don't recognize.
 *Since 2026-10-12, a return from the background no longer cancels an
 operation that is still running — see that entry. Since 2026-10-17, an open
-no longer fetches the state first — it unlocks at once.*
+no longer fetches the state first — it unlocks at once — and over Bluetooth
+the state shown is the one requested, on the lock's success code (see
+"Bluetooth first, cloud fallback").*
 Cancellation alone doesn't stop a late reply from landing, so every state
 write after an await is guarded by a cancellation check. The screen resets to
 "State unknown" when an open starts, so a failed open never leaves the
@@ -258,11 +260,13 @@ Reviewed adversarially (prosecution, defense, refute) before any code. Shipped:
 
 1. **Unlock first.** The open path sends the unlock at once; the GET is gone.
    Unlocking an unlocked door is a no-op, and the reply's `status` is the real
-   state. Trade-off, accepted: opening the app to *lock* an unlocked door now
+   state (cloud only; over Bluetooth the lock sends a success code, see
+   "Bluetooth first, cloud fallback"). Trade-off, accepted: opening the app to *lock* an unlocked door now
    waits for a redundant unlock before the button works.
 2. **Timing.** Every request logs its wall time (`os.Logger`, subsystem
    `AugustUnlock`); the screen shows the last command's total. Nothing had
-   been measured before — the BLE entry's "1-2 seconds" was a guess.
+   been measured before — the original "1-2 seconds" estimate (#21) was a
+   guess.
 
 Rejected, with the evidence:
 
@@ -326,8 +330,8 @@ expected bytes come from `scripts/gen_ble_vectors.py`, which runs yalexs-ble
 6.1.0's own `Session` and `SecureSession` classes (test key 00..0f, slot 4) for
 both handshake commands, the session key, three chained commands, and an ack
 plus op-response encrypted by an independent AES encryptor as the lock would.
-6.1.0, not the newest 7.2.2, because `uv`'s age cutoff refused a release from
-that day; the protocol code (`secure_session.py`, `set_key`, `build_command`,
+6.1.0, not the newest 7.2.2, because the repo's `uv` setting refuses releases
+newer than a week; the protocol code (`secure_session.py`, `set_key`, `build_command`,
 the checksums, `_setup_session`) is identical between the two.
 
 **Default MainActor isolation.** The Xcode project sets

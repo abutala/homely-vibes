@@ -46,8 +46,9 @@ protocol Home Assistant uses) to CoreBluetooth. See
    lock, you'll get a one-time picker — see [How it works](#how-it-works).
    The moment setup finishes, the app unlocks (see
    [Security notes](#security-notes)) — that's expected, not a bug.
-7. On the first open, iOS asks for Bluetooth access. Allow it, or every open
-   uses the cloud.
+7. On the first open after the app has read a lock's offline key (see
+   below), iOS asks for Bluetooth access. Allow it, or every open uses the
+   cloud. A lock with no offline key never asks.
 
 ## Bluetooth needs an offline key
 
@@ -88,14 +89,16 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
 - `AugustBLEOperation.swift` — one lock/unlock over CoreBluetooth: find the
   lock by its advertised name (the serial's first 2 and last 5 characters),
   connect, run the key exchange, send the command, wait for the lock's
-  result, disconnect. It has 3 s to reach a session and 8 s more for the
-  result. If either runs out, the app uses the cloud instead (unlock and lock
-  are idempotent, so a double send is harmless). A jam the lock reports is
-  shown, not retried. Later opens also connect straight to the peripheral
-  remembered from the last success, while the scan runs.
+  result, disconnect. It has 3 s to reach a session and 12 s from there for
+  the result (yalexs-ble's own operation timeout). On any failure but a jam the lock reports — no lock in range,
+  Bluetooth off or not allowed, a lost link, a rejected key, a timeout — the
+  app uses the cloud instead (unlock and lock are idempotent, so a double
+  send is harmless). A reported jam is shown, not retried. Later opens also
+  connect straight to the peripheral remembered from the last connection,
+  while the scan runs.
 - `KeychainStore.swift` — thin wrapper over `SecItem*` for on-device storage
-  of the August email/password, install ID, access token, selected lock ID,
-  and that lock's offline key, slot and serial. Standard practice for a
+  of the August email/password, install ID, access token, selected lock ID
+  and name, and that lock's offline key, slot and serial. Standard practice for a
   personal-use app — this is the same trust model the official August app
   uses.
 - `ContentView.swift` — the whole UI: sign-in form → one-time verification
@@ -105,10 +108,11 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
   launch or back from the background — sends the unlock at once, with no
   status check first (an already-unlocked door just stays unlocked). A
   lock/unlock still running when the app is backgrounded keeps running and
-  reports its own result instead. The
-  state shown after each command is what the lock reported back, not what was
-  requested, so a door that auto-locked or was operated elsewhere is picked
-  up the next time the app opens.
+  reports its own result instead. After a cloud command the state shown is
+  what the lock reported back, not what was requested; over Bluetooth the
+  lock answers with a success code, so the state shown is the one requested.
+  Either way, a door that auto-locked or was operated elsewhere is picked up
+  the next time the app opens.
 
 ## Measuring lag
 
@@ -155,9 +159,10 @@ alone. The app builds from `AugustUnlock.xcodeproj`.
   button to lock back up.
 - Your August email and password live in this device's Keychain only. They
   are sent to `api-production.august.com` over HTTPS and nowhere else.
-- The lock's offline key also lives in the Keychain. Anyone with it can
-  operate that lock from Bluetooth range, so treat it like the password; it
-  never leaves the phone except as AES-encrypted traffic to the lock itself.
+- The lock's offline key, read from August's API over HTTPS, also lives in
+  the Keychain. Anyone with it can operate that lock from Bluetooth range, so
+  treat it like the password. It is never sent anywhere: it only encrypts the
+  first step of the key exchange with the lock.
 - If you ever want to revoke access, change your August account password —
   every cached session (this app's included) stops working immediately. That
   does not touch the offline key already on the phone: a lost phone keeps
