@@ -349,7 +349,10 @@ the command reached the lock at ~2.0 s, and the bolt finished at ~3.2 s.
 Over the cloud the same kind of command took 4608 ms warm and 8955 ms cold.
 
 Only one line survived because the timing lines were logged at `.info`, which
-iOS keeps in memory only; they are `.notice` now, which persists. Still
+iOS keeps in a shared in-memory buffer that a busy phone overwrites in
+seconds: one run of four Bluetooth unlocks and four locks left a single
+`AugustUnlock` line in an archive that covered the whole run. They are
+`.notice` now, which persists. Still
 unmeasured: an open that needs a scan (`found` set). Until one is, the 3 s
 setup budget stays: this run reached its session at 1740 ms without a scan,
 so anything under ~2 s risks sending opens at the door to the cloud.
