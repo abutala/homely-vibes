@@ -34,8 +34,19 @@ struct ContentView: View {
     @State private var wasBackgrounded = false
     /// Wall time of the last lock/unlock, tap or open to the reply, and the
     /// path that carried it — shown on screen so lag can be read off the
-    /// phone without Console.
-    @State private var lastTiming: String?
+    /// phone without Console. One value, so the caption and its icon can't
+    /// disagree.
+    @State private var lastTiming: LastTiming?
+
+    private struct LastTiming {
+        /// "Last unlock: 1.2 s"
+        let summary: String
+        let path: OperationReply.Path
+
+        var pathLabel: String { "via \(path.rawValue)" }
+        var icon: String { path == .bluetooth ? "dot.radiowaves.left.and.right" : "cloud" }
+        var tint: Color { path == .bluetooth ? .blue : .secondary }
+    }
 
     private enum OperationResult: Equatable {
         case idle
@@ -289,10 +300,17 @@ struct ContentView: View {
             statusText
 
             if let lastTiming {
-                Text(lastTiming)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
+                HStack(spacing: 4) {
+                    Text("\(lastTiming.summary) \(lastTiming.pathLabel)")
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                        .accessibilityLabel(lastTiming.summary)
+                    Image(systemName: lastTiming.icon)
+                        .foregroundStyle(lastTiming.tint)
+                        .accessibilityLabel(lastTiming.pathLabel)
+                }
+                .font(.caption)
+                .accessibilityElement(children: .combine)
             }
 
             HStack(spacing: 24) {
@@ -388,7 +406,8 @@ struct ContentView: View {
         try Task.checkCancellation()
         let elapsed = ContinuousClock.now - start
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-        lastTiming = "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s via \(reply.path.rawValue)"
+        lastTiming = LastTiming(
+            summary: "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s", path: reply.path)
         lockState = reply.state
         operationResult = .success
         UINotificationFeedbackGenerator().notificationOccurred(.success)
