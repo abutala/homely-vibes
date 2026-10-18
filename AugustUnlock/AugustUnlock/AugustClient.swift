@@ -21,6 +21,17 @@ enum AugustError: LocalizedError {
     }
 }
 
+/// The lock's state after a command, and which path carried it.
+struct OperationReply {
+    enum Path: String {
+        case bluetooth = "Bluetooth"
+        case cloud
+    }
+
+    let state: LockState
+    let path: Path
+}
+
 struct AugustLock: Identifiable, Equatable {
     let id: String
     let name: String
@@ -48,7 +59,8 @@ enum LockState: Equatable {
 }
 
 /// Talks to August's cloud API directly from the device — no home server in
-/// the loop. Mirrors the request shapes in August/august_client.py (this
+/// the loop — and tries the lock over Bluetooth first when it has a loaded
+/// offline key (`AugustBLEOperation`). Mirrors the request shapes in August/august_client.py (this
 /// repo's Python client, built on the `yalexs` library) since there is no
 /// official or third-party Swift SDK for August/Yale locks.
 final class AugustClient {
@@ -95,9 +107,10 @@ final class AugustClient {
         for key in [
             "august_email", "august_password", "august_access_token",
             "august_lock_id", "august_lock_name",
-        ] {
+        ] + Self.bluetoothKeychainKeys {
             KeychainStore.remove(key)
         }
+        refreshedKeys.withLock { $0.removeAll() }
         // install_id is deliberately kept: reusing it on the next login
         // avoids tripping 2FA again for a device August already trusts.
     }
@@ -225,6 +238,51 @@ final class AugustClient {
     func selectLock(_ lock: AugustLock) {
         KeychainStore.set(lock.id, forKey: "august_lock_id")
         KeychainStore.set(lock.name, forKey: "august_lock_name")
+        Self.bluetoothKeychainKeys.forEach { KeychainStore.remove($0) }
+        // The key was just deleted, so re-read it even if this launch already did.
+        _ = refreshedKeys.withLock { $0.remove(lock.id) }
+        refreshBluetoothKeyOnce(lockID: lock.id)
+    }
+
+    // MARK: - Bluetooth offline key
+
+    private static let bluetoothKeychainKeys = ["august_ble_key", "august_ble_slot", "august_ble_serial"]
+
+    /// Lock IDs whose offline key was already re-read from August this launch.
+    private let refreshedKeys = OSAllocatedUnfairLock(initialState: Set<String>())
+
+    private var bluetoothCredentials: AugustBLECredentials? {
+        guard let key = KeychainStore.get("august_ble_key"),
+            let slot = KeychainStore.get("august_ble_slot").flatMap(Int.init),
+            let serial = KeychainStore.get("august_ble_serial")
+        else { return nil }
+        return AugustBLECredentials(hexKey: key, slot: slot, serial: serial)
+    }
+
+    /// Re-reads the lock's offline key from GET /locks/{id} in the
+    /// background, at most once per launch per lock: at lock selection, and
+    /// after any open that had to use the cloud. That picks up a key the
+    /// official app loads later, or a rotated one, without delaying an open.
+    private func refreshBluetoothKeyOnce(lockID: String) {
+        let isFirst = refreshedKeys.withLock { $0.insert(lockID).inserted }
+        guard isFirst else { return }
+        Task { await refreshBluetoothKey(lockID: lockID) }
+    }
+
+    private func refreshBluetoothKey(lockID: String) async {
+        guard let data = try? await sendLockRequest(method: "GET", path: "/locks/\(lockID)"),
+            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            KeychainStore.get("august_lock_id") == lockID
+        else { return }
+        guard let credentials = AugustBLECredentials(lockDetail: json) else {
+            Self.bluetoothKeychainKeys.forEach { KeychainStore.remove($0) }
+            Self.log.notice("No loaded offline key for this lock; opens use the cloud")
+            return
+        }
+        KeychainStore.set(credentials.hexKey, forKey: "august_ble_key")
+        KeychainStore.set(String(credentials.slot), forKey: "august_ble_slot")
+        KeychainStore.set(credentials.serial, forKey: "august_ble_serial")
+        Self.log.notice("Stored the offline key; the next open tries Bluetooth first")
     }
 
     // MARK: - Lock state / lock / unlock
@@ -241,18 +299,42 @@ final class AugustClient {
         return LockState(augustStatus: lockStatus?["status"] as? String)
     }
 
-    /// Returns the state the lock reported back, not the state requested.
-    func unlock() async throws -> LockState {
-        try await operate(action: "unlock")
+    func unlock() async throws -> OperationReply {
+        try await operate(action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked)
     }
 
-    /// Returns the state the lock reported back, not the state requested.
-    func lock() async throws -> LockState {
-        try await operate(action: "lock")
+    func lock() async throws -> OperationReply {
+        try await operate(action: "lock", opcode: AugustBLE.lockOpcode, success: .locked)
     }
 
-    private func operate(action: String) async throws -> LockState {
+    /// Bluetooth first when this lock has a loaded offline key, the cloud
+    /// otherwise or if Bluetooth fails — unlock and lock are idempotent, so a
+    /// cloud retry after a Bluetooth command that did land is harmless. A jam
+    /// the lock reports over Bluetooth is final and is not retried.
+    private func operate(action: String, opcode: UInt8, success: LockState) async throws -> OperationReply {
         guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
+        if let credentials = bluetoothCredentials {
+            let start = ContinuousClock.now
+            do {
+                let timing = try await AugustBLEOperation.run(opcode: opcode, credentials: credentials)
+                Self.log.notice("BLE \(action, privacy: .public) -> ok in \(Self.ms(since: start)) ms (\(timing.description, privacy: .public))")
+                return OperationReply(state: success, path: .bluetooth)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch let error as AugustBLEProtocolError where error.isMechanical {
+                Self.log.error("BLE \(action, privacy: .public) jammed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public)")
+                throw error
+            } catch {
+                Self.log.notice("BLE \(action, privacy: .public) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public); using the cloud")
+            }
+        }
+        let state = try await cloudOperate(lockID: lockID, action: action)
+        refreshBluetoothKeyOnce(lockID: lockID)
+        return OperationReply(state: state, path: .cloud)
+    }
+
+    /// Returns the state the lock reported back, not the state requested.
+    private func cloudOperate(lockID: String, action: String) async throws -> LockState {
         let data = try await sendLockRequest(method: "PUT", path: "/remoteoperate/\(lockID)/\(action)")
         // The synchronous remoteoperate reply carries the lock's resulting
         // state in `status` — yalexs' async_lock/async_unlock read it the
@@ -318,7 +400,7 @@ final class AugustClient {
         do {
             let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-            Self.log.info("\(method, privacy: .public) \(path, privacy: .public) -> \(status) in \(Self.ms(since: start)) ms")
+            Self.log.notice("\(method, privacy: .public) \(path, privacy: .public) -> \(status) in \(Self.ms(since: start)) ms")
             return (data, response)
         } catch {
             Self.log.error("\(method, privacy: .public) \(path, privacy: .public) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public)")
@@ -326,6 +408,8 @@ final class AugustClient {
         }
     }
 
+    /// Lines go out at `.notice` or above: iOS keeps `.info` in memory only,
+    /// and a door test lost all but one timing line that way.
     private static let log = Logger(subsystem: "AugustUnlock", category: "timing")
 
     private static func ms(since start: ContinuousClock.Instant) -> Int {

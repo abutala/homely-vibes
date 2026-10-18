@@ -4,10 +4,10 @@ Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
 
 A one-button iOS app: open it, your August door unlocks — no tap needed, opening
 the app *is* the confirmation. Tap the button again to lock back up. No home
-server, no VPN — the app talks to August's cloud API directly, the same API the
-official August app uses when it is out of Bluetooth range, so it works from
-anywhere with a network connection (WiFi or cellular), not just at home. Near
-the door the official app is faster (~1 s vs ~5 s) because it uses Bluetooth.
+server, no VPN. Near the door the app talks to the lock over Bluetooth, as the
+official August app does; anywhere else, or for a lock with no offline key, it
+uses August's cloud API directly, so it works from anywhere with a network
+connection (WiFi or cellular), not just at home.
 
 ## Why no server
 
@@ -19,11 +19,11 @@ you're standing at the door), `AugustClient.swift` talks to
 the request shapes already proven out in [`August/august_client.py`](../August/august_client.py)
 (this repo's Python August integration, built on the `yalexs` library).
 
-Real BLE (Bluetooth) control was considered too, since it avoids the cloud
-round-trip. It's not worth it for a personal project yet: August has never
-published a public BLE SDK, and the community reverse-engineered protocol
-(`yalexs-ble`, used by Home Assistant) is Python-only with no Swift port —
-porting its encrypted offline-key handshake to CoreBluetooth is a large job.
+Bluetooth needs no server either: `AugustBLEProtocol.swift` and
+`AugustBLEOperation.swift` port the minimum of
+[`yalexs-ble`](https://github.com/Yale-Libs/yalexs-ble) (the community
+protocol Home Assistant uses) to CoreBluetooth. See
+[How it works](#how-it-works).
 
 ## Setup
 
@@ -46,6 +46,20 @@ porting its encrypted offline-key handshake to CoreBluetooth is a large job.
    lock, you'll get a one-time picker — see [How it works](#how-it-works).
    The moment setup finishes, the app unlocks (see
    [Security notes](#security-notes)) — that's expected, not a bug.
+7. On the first open after the app has read a lock's offline key (see
+   below), iOS asks for Bluetooth access. Allow it, or every open uses the
+   cloud. A lock with no offline key never asks.
+
+## Bluetooth needs an offline key
+
+The Bluetooth path works only for a lock that holds an *offline key* for your
+account. August lists it on `GET /locks/{id}` under `OfflineKeys.loaded`; the
+app reads it when you pick the lock and again after any open that used the
+cloud, at most once per launch. A key that August shows under
+`OfflineKeys.created` is not on the lock yet. To load it (expected, not yet
+verified), stand at the door, turn off WiFi and cellular so the official August
+app has to use Bluetooth, and lock or unlock once with it. Until then that lock uses the cloud, with no
+error shown.
 
 ## Building an IPA (for Sideloadly)
 
@@ -66,10 +80,27 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
   connected through a WiFi bridge (e.g. a detached garage) can take up to
   ~60s to respond if the bridge is slow to relay the command — this is
   August's own client behavior, not a bug here.
+- `AugustBLEProtocol.swift` — the Bluetooth wire format, with no
+  CoreBluetooth: 18-byte frames, both checksums, the AES-128 ciphers, and the
+  two-step key exchange. Step 1 is AES-ECB under the offline key; the session
+  key is 8 random bytes of ours plus 8 from the lock; the command channel is
+  AES-CBC with a zero IV whose chain runs across frames, so each direction
+  keeps one CommonCrypto context for the whole connection.
+- `AugustBLEOperation.swift` — one lock/unlock over CoreBluetooth: find the
+  lock by its advertised name (the serial's first 2 and last 5 characters),
+  connect, run the key exchange, send the command, wait for the lock's
+  result, disconnect. It has 3 s to reach a session and 12 s from there for
+  the result (yalexs-ble's own operation timeout). On any failure but a jam the lock reports — no lock in range,
+  Bluetooth off or not allowed, a lost link, a rejected key, a timeout — the
+  app uses the cloud instead (unlock and lock are idempotent, so a double
+  send is harmless). A reported jam is shown, not retried. Later opens also
+  connect straight to the peripheral remembered from the last connection,
+  while the scan runs.
 - `KeychainStore.swift` — thin wrapper over `SecItem*` for on-device storage
-  of the August email/password, install ID, access token, and selected lock
-  ID. Standard practice for a personal-use app — this is the same trust model
-  the official August app uses.
+  of the August email/password, install ID, access token, selected lock ID
+  and name, and that lock's offline key, slot and serial. Standard practice for a
+  personal-use app — this is the same trust model the official August app
+  uses.
 - `ContentView.swift` — the whole UI: sign-in form → one-time verification
   code entry → the unlock screen. A single-lock account skips straight to the
   button; a multi-lock account gets a one-time picker on first sign-in (and a
@@ -77,22 +108,49 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
   launch or back from the background — sends the unlock at once, with no
   status check first (an already-unlocked door just stays unlocked). A
   lock/unlock still running when the app is backgrounded keeps running and
-  reports its own result instead. The
-  state shown after each command is what the lock reported back, not what was
-  requested, so a door that auto-locked or was operated elsewhere is picked
-  up the next time the app opens.
+  reports its own result instead. After a cloud command the state shown is
+  what the lock reported back, not what was requested; over Bluetooth the
+  lock answers with a success code, so the state shown is the one requested.
+  Either way, a door that auto-locked or was operated elsewhere is picked up
+  the next time the app opens.
 
 ## Measuring lag
 
-The screen shows how long the last lock/unlock took ("Last unlock: 4.8 s"),
-from the command to August's reply. For a per-request split, stream the
-device log from the Mac while the phone is connected:
+The screen shows how long the last lock/unlock took ("Last unlock: 1.2 s"),
+after an icon for the path that carried it: a blue Bluetooth rune, or a grey
+cloud. For a per-stage split, read the phone's log from a Mac with the phone
+connected over USB. `log stream` reads only the Mac's own log, never the phone's, so collect
+an archive from the phone, then read it:
 
 ```bash
-log stream --level info --predicate 'subsystem == "AugustUnlock"' 2>&1 | tee /tmp/augustunlock-timing.log
+sudo log collect --device-udid <UDID> --last 30m --output /tmp/phone.logarchive 2>&1 | tee /tmp/augustunlock-log-collect.log
 ```
 
-Each request logs a line like `PUT /remoteoperate/<id>/unlock -> 200 in 4612 ms`.
+```bash
+log show /tmp/phone.logarchive --predicate 'subsystem == "AugustUnlock"' 2>&1 | tee /tmp/augustunlock-timing.log
+```
+
+`<UDID>` is the phone's identifier (`xcrun devicectl list devices`). The app
+logs at `.notice`, which the phone keeps on disk; widen `--last` for an older
+test. Lines look like this (the first from a real door test; `found -` means
+the remembered peripheral connected without a scan):
+
+- `BLE lock -> ok in 3179 ms (found -, connected 1293, session 1740, written 1998, done 3179)`
+- `BLE unlock failed in 3004 ms: Bluetooth setup timed out while searching for the lock; using the cloud`
+- `PUT /remoteoperate/<id>/unlock -> 200 in 4612 ms`
+
+## Tests
+
+The Bluetooth protocol has unit tests against bytes produced by yalexs-ble's
+own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
+AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
+
+```bash
+cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
+```
+
+`Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`
+alone. The app builds from `AugustUnlock.xcodeproj`.
 
 ## Security notes
 
@@ -102,5 +160,13 @@ Each request logs a line like `PUT /remoteoperate/<id>/unlock -> 200 in 4612 ms`
   button to lock back up.
 - Your August email and password live in this device's Keychain only. They
   are sent to `api-production.august.com` over HTTPS and nowhere else.
+- The lock's offline key, read from August's API over HTTPS, also lives in
+  the Keychain. Anyone with it can operate that lock from Bluetooth range, so
+  treat it like the password. It is never sent anywhere: it only encrypts the
+  first step of the key exchange with the lock.
 - If you ever want to revoke access, change your August account password —
-  every cached session (this app's included) stops working immediately.
+  every cached session (this app's included) stops working immediately. That
+  does not touch the offline key already on the phone: a lost phone keeps
+  Bluetooth access until that key is replaced on the lock. Removing the
+  account from the lock in the official August app should do that; it is
+  not tested here.

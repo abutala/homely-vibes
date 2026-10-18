@@ -32,9 +32,25 @@ struct ContentView: View {
     /// `.background -> .active` pairing), so this can't be a same-call
     /// oldPhase/newPhase check — see the Logbook entry for why.
     @State private var wasBackgrounded = false
-    /// Wall time of the last lock/unlock, tap or open to August's reply —
-    /// shown on screen so lag can be read off the phone without Console.
-    @State private var lastTiming: String?
+    /// Wall time of the last lock/unlock, tap or open to the reply, and the
+    /// path that carried it — shown on screen so lag can be read off the
+    /// phone without Console. One value, so the caption and its icon can't
+    /// disagree.
+    @State private var lastTiming: LastTiming?
+    /// The path icon's side, so it scales with Dynamic Type like the caption.
+    @ScaledMetric(relativeTo: .caption) private var captionIconSize: CGFloat = 12
+
+    private struct LastTiming {
+        /// "Last unlock: 1.2 s"
+        let summary: String
+        let path: OperationReply.Path
+
+        var pathLabel: String { "via \(path.rawValue)" }
+        /// The Bluetooth rune is a template vector in Assets.xcassets (SF
+        /// Symbols has none: it is the Bluetooth SIG's mark); the cloud is a symbol.
+        var icon: Image { path == .bluetooth ? Image("bluetooth") : Image(systemName: "cloud") }
+        var tint: Color { path == .bluetooth ? .blue : .secondary }
+    }
 
     private enum OperationResult: Equatable {
         case idle
@@ -288,10 +304,19 @@ struct ContentView: View {
             statusText
 
             if let lastTiming {
-                Text(lastTiming)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .monospacedDigit()
+                HStack(spacing: 4) {
+                    lastTiming.icon
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: captionIconSize, height: captionIconSize)
+                        .foregroundStyle(lastTiming.tint)
+                        .accessibilityLabel(lastTiming.pathLabel)
+                    Text(lastTiming.summary)
+                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                }
+                .font(.caption)
+                .accessibilityElement(children: .combine)
             }
 
             HStack(spacing: 24) {
@@ -383,12 +408,13 @@ struct ContentView: View {
     private func performOperation(unlocking: Bool) async throws {
         operationResult = .inProgress(unlocking: unlocking)
         let start = ContinuousClock.now
-        let state = try await (unlocking ? AugustClient.shared.unlock() : AugustClient.shared.lock())
+        let reply = try await (unlocking ? AugustClient.shared.unlock() : AugustClient.shared.lock())
         try Task.checkCancellation()
         let elapsed = ContinuousClock.now - start
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-        lastTiming = "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s"
-        lockState = state
+        lastTiming = LastTiming(
+            summary: "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s", path: reply.path)
+        lockState = reply.state
         operationResult = .success
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
