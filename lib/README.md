@@ -44,7 +44,7 @@ from lib.MyPushover import Pushover
 pushover = Pushover(cfg.pushover.user, cfg.pushover.tokens["YourModule"])
 pushover.send_message("msg", title="Title", priority=1)
 ```
-Priority convention (`P{N}` = Pushover `priority=N`): **P-1** silent, **P0** normal/recovery, **P1** high (bypasses quiet hours), **P2** emergency (retries until acked). Auth failures land at P0.
+Priority convention (`P{N}` = Pushover `priority=N`): **P-2** inbox only (daily heartbeats), **P-1** silent, **P0** normal/recovery, **P1** high (bypasses quiet hours), **P2** emergency (retries until acked). Auth failures land at P0.
 
 ### `Mailer.py` — Gmail SMTP
 ```python

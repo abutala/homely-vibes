@@ -11,6 +11,8 @@ P1 alert: offline -- commStatus not "ok", lastCommTime too old, or acStatus
 P1 alert: tamperStatus == "tamper", on any device, wired ones included.
 P1 alert: zero devices returned, or a partial sidecar failure.
 P0 alert: sidecar auth failure (needs re-auth).
+P-2 ping: one quiet summary when every check passes, so a day with no ping
+          means the job did not run.
 
 The battery threshold skips wired devices (batteryLevel null, or a wired
 batteryStatus). `faulted: true` on contact sensors just means "door open
@@ -273,6 +275,7 @@ def notify(
     pushover: Notifier,
     found: Findings,
     errors: list[str],
+    device_count: int,
     logger: logging.Logger,
 ) -> None:
     if found.offline:
@@ -294,6 +297,11 @@ def notify(
         pushover.send_message(body, title="Ring: Partial Sidecar Failure", priority=1)
     if not (found.offline or found.low or found.tamper or errors):
         logger.info("All Ring Beams/Alarm sensors healthy.")
+        pushover.send_message(
+            f"Devices {device_count} · Health ok · Tamper ok · Locations ok",
+            title="Ring Sensors: healthy",
+            priority=-2,
+        )
 
 
 def main() -> None:
@@ -322,7 +330,7 @@ def main() -> None:
             cfg.ring_beams.offline_after_hours,
             now_ms=int(time.time() * 1000),
         )
-        notify(pushover, found, errors, logger)
+        notify(pushover, found, errors, len(devices), logger)
     except LockTimeoutError as e:
         logger.error(f"Ring token lock timeout: {e}")
         pushover.send_message(str(e), title="Ring: Token Lock Timeout", priority=1)

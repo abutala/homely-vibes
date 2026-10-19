@@ -3,6 +3,7 @@
 
 P1 alert when any device battery is below the threshold.
 P1 alert when any device is offline / unreachable, or the account lists none.
+P-2 ping when every check passes, so a day with no ping means the job did not run.
 Designed for a single daily cron invocation — no polling loop, no state file.
 """
 
@@ -79,8 +80,8 @@ async def check_devices(
     cfg: RingConfig,
     logger: logging.Logger,
     ring_factory: RingFactory = _default_ring_factory,
-) -> tuple[list[str], list[str]]:
-    """Return (low_battery_lines, offline_names)."""
+) -> tuple[list[str], list[str], int]:
+    """Return (low_battery_lines, offline_names, device_count)."""
     token = _load_token(cfg.token_file)
     if not token:
         raise RingAuthError(
@@ -127,10 +128,16 @@ async def check_devices(
                 logger.warning(f"Health fetch failed for {dev.name}: {e}")
                 offline.append(dev.name)
 
-    return low, offline
+    return low, offline, len(all_devices)
 
 
-def notify(pushover: Notifier, low: list[str], offline: list[str], logger: logging.Logger) -> None:
+def notify(
+    pushover: Notifier,
+    low: list[str],
+    offline: list[str],
+    device_count: int,
+    logger: logging.Logger,
+) -> None:
     if low:
         body = "\n".join(low)
         logger.info(f"Low battery alert: {body}")
@@ -141,6 +148,11 @@ def notify(pushover: Notifier, low: list[str], offline: list[str], logger: loggi
         pushover.send_message(body, title="Ring: Device Offline", priority=1)
     if not low and not offline:
         logger.info("All Ring devices healthy.")
+        pushover.send_message(
+            f"Devices {device_count} · Health ok",
+            title="Ring Cameras: healthy",
+            priority=-2,
+        )
 
 
 def main() -> None:
@@ -167,8 +179,8 @@ def main() -> None:
         # on every use. Held for the whole ring session (refresh happens
         # inside ring-doorbell, not at a call site we control).
         with acquire_lock(cfg.ring.token_file):
-            low, offline = asyncio.run(check_devices(cfg.ring, logger))
-        notify(pushover, low, offline, logger)
+            low, offline, count = asyncio.run(check_devices(cfg.ring, logger))
+        notify(pushover, low, offline, count, logger)
     except LockTimeoutError as e:
         logger.error(f"Ring token lock timeout: {e}")
         pushover.send_message(str(e), title="Ring: Token Lock Timeout", priority=1)

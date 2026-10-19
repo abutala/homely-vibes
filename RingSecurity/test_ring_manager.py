@@ -79,16 +79,17 @@ async def test_low_battery_and_offline_detected(cfg: RingConfig, logger: logging
         FakeDevice("Chime", battery=None, wifi="good"),  # wired (None), ignore
         FakeDevice("Floodlight", battery=0, wifi="good"),  # wired (0), ignore
     ]
-    low, offline = await check_devices(cfg, logger, ring_factory=_factory(devs))
+    low, offline, _ = await check_devices(cfg, logger, ring_factory=_factory(devs))
     assert low == ["Front Door: 15%"]
     assert offline == ["Backyard"]
 
 
 async def test_all_healthy_no_alerts(cfg: RingConfig, logger: logging.Logger) -> None:
     devs = [FakeDevice("Front Door", battery=90, wifi="good")]
-    low, offline = await check_devices(cfg, logger, ring_factory=_factory(devs))
+    low, offline, count = await check_devices(cfg, logger, ring_factory=_factory(devs))
     assert low == []
     assert offline == []
+    assert count == 1
 
 
 async def test_string_battery_value_coerced(cfg: RingConfig, logger: logging.Logger) -> None:
@@ -98,7 +99,7 @@ async def test_string_battery_value_coerced(cfg: RingConfig, logger: logging.Log
         FakeDevice("StringHigh", battery="90", wifi="good"),  # type: ignore[arg-type]
         FakeDevice("Garbage", battery="n/a", wifi="good"),  # type: ignore[arg-type]
     ]
-    low, offline = await check_devices(cfg, logger, ring_factory=_factory(devs))
+    low, offline, _ = await check_devices(cfg, logger, ring_factory=_factory(devs))
     assert low == ["StringLow: 15%", "StringDecimalLow: 15%"]
     assert offline == []
 
@@ -111,7 +112,7 @@ async def test_health_call_exception_treated_as_offline(
             raise RuntimeError("boom")
 
     devs = [ExplodingDevice("Front Door", battery=90, wifi="good")]
-    _, offline = await check_devices(cfg, logger, ring_factory=_factory(devs))
+    _, offline, _ = await check_devices(cfg, logger, ring_factory=_factory(devs))
     assert offline == ["Front Door"]
 
 
@@ -122,7 +123,7 @@ async def test_connection_offline_wins_over_stale_signal(
         FakeDevice("Stale", battery=90, wifi="good", connection="offline"),
         FakeDevice("Live", battery=90, wifi="good", connection="online"),
     ]
-    _, offline = await check_devices(cfg, logger, ring_factory=_factory(devs))
+    _, offline, _ = await check_devices(cfg, logger, ring_factory=_factory(devs))
     assert offline == ["Stale"]
 
 
@@ -139,18 +140,21 @@ async def test_missing_token_raises(tmp_path: Path, logger: logging.Logger) -> N
 
 def test_notify_priorities(logger: logging.Logger) -> None:
     p = RecordingPushover()
-    notify(p, ["A: 10%"], ["B"], logger)
-    assert len(p.calls) == 2
+    notify(p, ["A: 10%"], ["B"], 2, logger)
+    assert len(p.calls) == 2  # the two alerts, no healthy ping
     battery_call = next(c for c in p.calls if "Battery" in (c["title"] or ""))
     offline_call = next(c for c in p.calls if "Offline" in (c["title"] or ""))
     assert battery_call["priority"] == 1
     assert offline_call["priority"] == 1
 
 
-def test_notify_no_alerts_no_pushover(logger: logging.Logger) -> None:
+def test_notify_all_healthy_sends_one_quiet_ping(logger: logging.Logger) -> None:
+    """A day with no ping must mean the job did not run."""
     p = RecordingPushover()
-    notify(p, [], [], logger)
-    assert p.calls == []
+    notify(p, [], [], 3, logger)
+    assert p.calls == [
+        {"message": "Devices 3 · Health ok", "title": "Ring Cameras: healthy", "priority": -2}
+    ]
 
 
 def test_save_token_chmods_0600(tmp_path: Path) -> None:
