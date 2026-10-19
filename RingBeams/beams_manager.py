@@ -5,13 +5,16 @@ Spawns a Node.js sidecar (fetch_status.js) that uses ring-client-api to
 pull device state via Ring's socket.io channel — the only way to get
 battery for Beams motion sensors and Alarm contact/motion sensors.
 
-P1 alert: any device below the battery threshold, OR batteryStatus == "warn".
-P0 alert: any device with tamperStatus == "tamper".
+P1 alert: battery below the threshold, OR batteryStatus "low" / "warn".
+P1 alert: offline -- commStatus not "ok", lastCommTime too old, or acStatus
+          "error" (base station lost mains power).
+P1 alert: tamperStatus == "tamper", on any device, wired ones included.
+P1 alert: zero devices returned, or a partial sidecar failure.
 P0 alert: sidecar auth failure (needs re-auth).
 
-Skips devices with batteryLevel == null (wired base stations, adapters,
-hubs). `faulted: true` on contact sensors just means "door open now" —
-ignored.
+The battery threshold skips wired devices (batteryLevel null, or a wired
+batteryStatus). `faulted: true` on contact sensors just means "door open
+now" -- ignored.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -36,6 +40,9 @@ from lib.notifications import Notifier
 
 PUSHOVER_KEY = "Ring Security"
 WIRED_BATTERY_STATUSES = {"none", "charging", "charged"}
+# ring-client-api types batteryStatus as full|charged|ok|low|none|charging;
+# "warn" is kept because earlier payloads sent it.
+LOW_BATTERY_STATUSES = {"low", "warn"}
 SIDECAR_PACKAGE = "ring-client-api"
 ALERT_MAX_CHARS = 200
 
@@ -52,6 +59,16 @@ class DeviceRecord:
     battery: Optional[int]
     battery_status: Optional[str]
     tamper: Optional[str]
+    comm_status: Optional[str]
+    last_comm_ms: Optional[int]
+    ac_status: Optional[str]
+
+
+@dataclass
+class Findings:
+    low: list[str]
+    tamper: list[str]
+    offline: list[str]
 
 
 def _resolve_node() -> str:
@@ -148,8 +165,8 @@ def run_sidecar(
         #   1  uncaught Node crash / module-load (reserved for Node itself)
         #   2  missing env var
         #   3  token file unreadable          → auth class
-        #   4  post-auth unhandled exception
-        #   5  auth/list-locations failure    → auth class
+        #   4  any other failure, or watchdog timeout
+        #   5  Ring rejected the token / 2FA  → auth class
         # Only 3 and 5 are auth. Exit 1 is a Node crash (e.g. undici requiring
         # global `File` on Node <20) and MUST NOT route to "Auth Required".
         if proc.returncode in (3, 5):
@@ -183,58 +200,99 @@ def run_sidecar(
                 battery=d.get("batteryLevel"),
                 battery_status=d.get("batteryStatus"),
                 tamper=d.get("tamperStatus"),
+                comm_status=d.get("commStatus"),
+                last_comm_ms=d.get("lastCommTime"),
+                ac_status=d.get("acStatus"),
             )
         )
     errors = list(payload.get("errors", []) or [])
+    if not out and not errors:
+        # Zero devices is never a healthy house -- it is a broken fetch.
+        raise RuntimeError("sidecar returned no devices and no errors")
     return out, errors
 
 
-def classify(devices: list[DeviceRecord], threshold_pct: int) -> tuple[list[str], list[str]]:
-    """Split devices into (low_battery_msgs, tamper_msgs)."""
-    low: list[str] = []
-    tamper: list[str] = []
+def _offline_reason(d: DeviceRecord, offline_after_hours: int, now_ms: int) -> Optional[str]:
+    """Why a device is not talking to its hub, or None when it is.
+
+    A sensor that lost its link keeps its last battery reading, so battery and
+    tamper alone call it healthy. Hubs and adapters report lastCommTime 0.
+    """
+    reasons = []
+    if d.ac_status == "error":
+        reasons.append("mains power lost")
+    if d.comm_status is not None and d.comm_status != "ok":
+        reasons.append(f"comm {d.comm_status}")
+    # lastCommTime is epoch ms but untyped in ring-client-api; a value that
+    # does not parse must not crash the run and hide every other finding.
+    # Hubs and adapters send 0, which means "no time", not 1970.
+    if isinstance(d.last_comm_ms, (int, float)) and d.last_comm_ms > 0:
+        silent_h = (now_ms - d.last_comm_ms) / 3_600_000
+        if silent_h > offline_after_hours:
+            age = f"{silent_h:.0f}h" if silent_h < 48 else f"{silent_h / 24:.0f}d"
+            reasons.append(f"last seen {age} ago")
+    return f"{d.name}: {', '.join(reasons)}" if reasons else None
+
+
+def _low_battery(d: DeviceRecord, threshold_pct: int) -> Optional[str]:
+    try:
+        batt_int: Optional[int] = int(float(d.battery)) if d.battery is not None else None
+    except (TypeError, ValueError):
+        batt_int = None
+    level = f"{batt_int}%" if batt_int is not None else "battery low"
+    # Ring's own low signal wins, even with no level or a wired status.
+    if d.battery_status in LOW_BATTERY_STATUSES:
+        return f"{d.name}: {level}"
+    if batt_int is None or d.battery_status in WIRED_BATTERY_STATUSES:
+        return None
+    return f"{d.name}: {level}" if batt_int < threshold_pct else None
+
+
+def classify(
+    devices: list[DeviceRecord], threshold_pct: int, offline_after_hours: int, now_ms: int
+) -> Findings:
+    """Sort devices into low-battery, tamper and offline alert lines.
+
+    Tamper and offline apply to wired devices too, so neither may sit behind
+    the battery skip.
+    """
+    found = Findings(low=[], tamper=[], offline=[])
     for d in devices:
-        # Skip mains-powered / recharging: batteryLevel is None or status is wired.
-        if d.battery is None:
-            continue
-        if d.battery_status in WIRED_BATTERY_STATUSES:
-            continue
-
-        # Low battery: Ring's own "warn" signal OR our threshold. Coerce str→int.
-        try:
-            batt_int = int(float(d.battery))
-        except (TypeError, ValueError):
-            batt_int = None
-        if d.battery_status == "warn" or (batt_int is not None and batt_int < threshold_pct):
-            batt_display = batt_int if batt_int is not None else d.battery
-            low.append(f"{d.name}: {batt_display}%")
-
         if d.tamper == "tamper":
-            tamper.append(f"{d.name} (tampered)")
-    return low, tamper
+            found.tamper.append(f"{d.name} (tampered)")
+        offline = _offline_reason(d, offline_after_hours, now_ms)
+        if offline:
+            found.offline.append(offline)
+        low = _low_battery(d, threshold_pct)
+        if low:
+            found.low.append(low)
+    return found
 
 
 def notify(
     pushover: Notifier,
-    low: list[str],
-    tamper: list[str],
+    found: Findings,
     errors: list[str],
     logger: logging.Logger,
 ) -> None:
-    if low:
-        body = "\n".join(low)
+    if found.offline:
+        body = "\n".join(found.offline)
+        logger.info(f"Offline alert: {body}")
+        pushover.send_message(body, title="Ring: Device Offline", priority=1)
+    if found.low:
+        body = "\n".join(found.low)
         logger.info(f"Low battery alert: {body}")
         pushover.send_message(body, title="Ring: Low Battery", priority=1)
-    if tamper:
-        body = "\n".join(tamper)
+    if found.tamper:
+        body = "\n".join(found.tamper)
         logger.info(f"Tamper alert: {body}")
-        pushover.send_message(body, title="Ring: Tamper", priority=0)
+        pushover.send_message(body, title="Ring: Tamper", priority=1)
     if errors:
         # Partial-location failure — coverage was incomplete, mustn't look healthy.
         body = "\n".join(errors)
         logger.error(f"Sidecar partial failure: {body}")
         pushover.send_message(body, title="Ring: Partial Sidecar Failure", priority=1)
-    if not low and not tamper and not errors:
+    if not (found.offline or found.low or found.tamper or errors):
         logger.info("All Ring Beams/Alarm sensors healthy.")
 
 
@@ -258,8 +316,13 @@ def main() -> None:
         with acquire_lock(cfg.ring_beams.token_file) as lock_fd:
             devices, errors = run_sidecar(cfg.ring_beams, logger, lock_fd=lock_fd)
         logger.info(f"Fetched {len(devices)} devices from sidecar ({len(errors)} location errors)")
-        low, tamper = classify(devices, cfg.ring_beams.battery_threshold_pct)
-        notify(pushover, low, tamper, errors, logger)
+        found = classify(
+            devices,
+            cfg.ring_beams.battery_threshold_pct,
+            cfg.ring_beams.offline_after_hours,
+            now_ms=int(time.time() * 1000),
+        )
+        notify(pushover, found, errors, logger)
     except LockTimeoutError as e:
         logger.error(f"Ring token lock timeout: {e}")
         pushover.send_message(str(e), title="Ring: Token Lock Timeout", priority=1)

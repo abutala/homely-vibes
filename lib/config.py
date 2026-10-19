@@ -215,6 +215,7 @@ class RingBeamsConfig:
     token_file: str
     battery_threshold_pct: int
     sidecar_timeout_seconds: int
+    offline_after_hours: int  # contact sensors poll every 12 h; 3 missed polls
 
 
 @dataclass

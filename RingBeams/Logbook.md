@@ -34,9 +34,38 @@ enforce `sidecar_timeout_seconds`, the sidecar now arms `watchdog.js` and exits 
 the same budget. A hung orphan therefore ends in at most that long, not a permanent
 "Ring: Token Lock Timeout" P1 on every run.
 
+### 2026-10-19 — A dead sensor read "healthy" for 15 days
+
+A Beams motion sensor stopped talking to its bridge around 2026-10-04. Ring kept serving
+its last battery reading (58%, `ok`), and the monitor read only battery and tamper, so
+every daily run said "all healthy". The live payload showed `commStatus: "error"` and a
+`lastCommTime` 356 h old. Fields the sidecar does not copy are invisible to Python.
+
+Fix: the sidecar now copies `commStatus`, `lastCommTime` and `acStatus`, and `notify`
+sends a P1 for any of them. The same review found two more silent paths: tamper on a wired
+device sat behind the battery skip, and an empty device list read as healthy. Both fixed.
+
 ---
 
 ## Landmines
+
+### Ring keeps a dead sensor's last battery reading
+
+An offline sensor stays in the device list with its last `batteryLevel` and
+`batteryStatus`. Battery fields alone never show that a sensor went away; only
+`commStatus` and `lastCommTime` do. Hubs and adapters send `lastCommTime: 0`, which
+means "no time": read as epoch ms it is 1970, and every hub reads as silent for 56 years.
+
+### Exit 5 is only for ring-client-api's own auth messages
+
+`getLocations()` can fail for reasons other than a bad token. The sidecar exits 5 only
+when the message matches the strings `rest-client.js` throws for a rejected token or
+2FA; anything else is exit 4, so it pages "Ring: Error", not "Auth Required". One
+exception: a 5xx from the token endpoint makes the library retry without the token and
+throw "Refresh token is not valid", so it still pages "Auth Required". Network
+errors never reach that catch: `requestWithRetry` retries them until the watchdog fires.
+If a ring-client-api upgrade changes those strings, auth failures would page as
+"Ring: Error" -- loud, but the wrong title.
 
 ### The lock must be released with `close()`, never `LOCK_UN`
 

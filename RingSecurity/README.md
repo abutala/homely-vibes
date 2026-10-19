@@ -5,7 +5,9 @@ Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
 Daily health check for Ring devices (doorbells, cameras, chimes).
 
 - **P1 alert** — any device battery below `battery_threshold_pct` (default 25%)
-- **P0 alert** — any device offline / unreachable
+- **P1 alert** — any device offline / unreachable: no wifi signal category, or either the
+  signal category or Ring's `connection_status` reads `offline`
+- **P1 alert** — the account lists zero devices (a broken fetch, never a healthy house)
 - **P0 alert** — Ring auth rejected / re-auth needed
 - **P1 alert** — Ring check failed (unexpected error)
 

@@ -19,10 +19,13 @@ from RingSecurity.ring_manager import RingAuthError, _save_token, check_devices,
 
 
 class FakeDevice:
-    def __init__(self, name: str, battery: int | None, wifi: str | None):
+    def __init__(
+        self, name: str, battery: int | None, wifi: str | None, connection: str | None = None
+    ):
         self.name = name
         self.battery_life = battery
         self.wifi_signal_category = wifi
+        self.connection_status = connection
 
     async def async_update_health_data(self) -> None:
         return None
@@ -112,6 +115,22 @@ async def test_health_call_exception_treated_as_offline(
     assert offline == ["Front Door"]
 
 
+async def test_connection_offline_wins_over_stale_signal(
+    cfg: RingConfig, logger: logging.Logger
+) -> None:
+    devs = [
+        FakeDevice("Stale", battery=90, wifi="good", connection="offline"),
+        FakeDevice("Live", battery=90, wifi="good", connection="online"),
+    ]
+    _, offline = await check_devices(cfg, logger, ring_factory=_factory(devs))
+    assert offline == ["Stale"]
+
+
+async def test_empty_account_raises(cfg: RingConfig, logger: logging.Logger) -> None:
+    with pytest.raises(RuntimeError, match="no devices"):
+        await check_devices(cfg, logger, ring_factory=_factory([]))
+
+
 async def test_missing_token_raises(tmp_path: Path, logger: logging.Logger) -> None:
     cfg = RingConfig("u", "p", str(tmp_path / "missing.json"), 25)
     with pytest.raises(RingAuthError, match="No Ring token"):
@@ -125,7 +144,7 @@ def test_notify_priorities(logger: logging.Logger) -> None:
     battery_call = next(c for c in p.calls if "Battery" in (c["title"] or ""))
     offline_call = next(c for c in p.calls if "Offline" in (c["title"] or ""))
     assert battery_call["priority"] == 1
-    assert offline_call["priority"] == 0
+    assert offline_call["priority"] == 1
 
 
 def test_notify_no_alerts_no_pushover(logger: logging.Logger) -> None:
