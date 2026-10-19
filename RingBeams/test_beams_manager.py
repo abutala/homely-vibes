@@ -253,6 +253,7 @@ def test_notify_any_finding_sends_no_healthy_ping(logger: logging.Logger) -> Non
     ]:
         p = RecordingPushover()
         notify(p, found, errors, 34, logger)
+        assert p.calls, (found, errors)
         assert all(c["priority"] == 1 for c in p.calls), (found, errors)
 
 

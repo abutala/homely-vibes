@@ -148,6 +148,14 @@ def test_notify_priorities(logger: logging.Logger) -> None:
     assert offline_call["priority"] == 1
 
 
+def test_notify_any_finding_sends_no_healthy_ping(logger: logging.Logger) -> None:
+    for low, offline in [(["A: 10%"], []), ([], ["B"])]:
+        p = RecordingPushover()
+        notify(p, low, offline, 2, logger)
+        assert p.calls, (low, offline)
+        assert all(c["priority"] == 1 for c in p.calls), (low, offline)
+
+
 def test_notify_all_healthy_sends_one_quiet_ping(logger: logging.Logger) -> None:
     """A day with no ping must mean the job did not run."""
     p = RecordingPushover()
