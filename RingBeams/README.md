@@ -6,12 +6,13 @@ Daily health check for **Ring Beams** motion sensors and **Ring Alarm** contact/
 
 Complements `RingSecurity/`, which covers Ring's cameras and doorbells via REST. Beams + Alarm state is only available on Ring's socket.io real-time channel, which no maintained Python library speaks — so this module shells out to a small Node.js sidecar (`fetch_status.js`) built on `ring-client-api` (dgreif/ring).
 
-- **P1 alert** — battery below `battery_threshold_pct` (default 25%) OR Ring's own `batteryStatus == "warn"`
-- **P0 alert** — `tamperStatus == "tamper"`
+- **P1 alert** — battery below `battery_threshold_pct` (default 25%) OR Ring's own `batteryStatus` of `low` / `warn`
+- **P1 alert** — sensor offline: `commStatus` other than `ok`, `lastCommTime` older than `offline_after_hours` (default 36: contact sensors poll every 12 h), or `acStatus == "error"` (base station on backup battery)
+- **P1 alert** — `tamperStatus == "tamper"`, on any device
+- **P1 alert** — partial sidecar failure (some locations returned errors), zero devices returned, or generic sidecar error
 - **P0 alert** — sidecar auth failure (needs re-auth)
-- **P1 alert** — partial sidecar failure (some locations returned errors) or generic sidecar error
 
-Wired devices (base stations, adapters, keypads, range extenders on mains) are skipped: `batteryLevel: null` or `batteryStatus in {"none", "charging", "charged"}`. Contact sensors reporting `faulted: true` (a door currently open) are ignored — that's user state, not sensor health.
+The battery threshold skips wired devices (base stations, adapters, keypads, range extenders on mains): `batteryLevel: null` or `batteryStatus in {"none", "charging", "charged"}`. Ring's own `low` status still alerts on them. Offline and tamper apply to every device. Hubs and adapters report no `lastCommTime`, so only `commStatus` covers them. Contact sensors reporting `faulted: true` (a door currently open) are ignored — that's user state, not sensor health.
 
 ## Setup
 

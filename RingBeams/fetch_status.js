@@ -1,6 +1,6 @@
 // Ring Beams / Alarm status fetcher (ESM).
 // One-shot: connects via socket.io, dumps all sensor devices with battery /
-// tamper / faulted state to stdout as JSON, exits.
+// tamper / faulted / comm state to stdout as JSON, exits.
 //
 // Env vars (required):
 //   RING_BEAMS_TOKEN_FILE  path to refresh-token file. Two formats accepted:
@@ -10,15 +10,16 @@
 //   RING_BEAMS_TIMEOUT_S   self-timeout in seconds (see watchdog.js)
 //
 // stdout: {"devices": [{zid, name, deviceType, categoryId, batteryLevel,
-//                       batteryStatus, tamperStatus, faulted, locationName}, ...]}
+//                       batteryStatus, tamperStatus, faulted, commStatus,
+//                       lastCommTime, acStatus, locationName}, ...]}
 // Exit-code contract (stderr carries a JSON {"error": "..."} on 2/3/4/5; on
 // exit 1 stderr is a raw Node stack trace with no JSON envelope):
 //   0  success
 //   1  uncaught Node crash / module-load failure (reserved for Node itself)
 //   2  missing RING_BEAMS_TOKEN_FILE env var
 //   3  token file unreadable / malformed         → auth-class
-//   4  post-auth unhandled JS exception, or watchdog timeout
-//   5  auth / list-locations failure (bad token) → auth-class
+//   4  any other failure, or watchdog timeout
+//   5  Ring rejected the token / wants 2FA     → auth-class
 // Python (beams_manager.run_sidecar) maps 3 and 5 to BeamsAuthError; every
 // other non-zero code is a generic RuntimeError so a Node-version drift (e.g.
 // undici requiring global File on Node <20) does NOT get misclassified as
@@ -28,6 +29,11 @@ import fs from 'node:fs';
 import { armWatchdog } from './watchdog.js';
 
 armWatchdog();
+
+// The messages ring-client-api's rest-client.js throws when Ring rejects the
+// refresh token or wants 2FA. Network errors never reach here: its
+// requestWithRetry retries them until the watchdog fires (exit 4).
+const AUTH_ERROR = /Refresh token is not valid|Failed to fetch oauth token|2-factor authentication/;
 
 const tokenFile = process.env.RING_BEAMS_TOKEN_FILE;
 if (!tokenFile) {
@@ -120,8 +126,11 @@ async function main() {
     try {
         locations = await ring.getLocations();
     } catch (e) {
-        console.error(JSON.stringify({ error: `auth/list-locations failed: ${e.message}` }));
-        process.exit(5);
+        // Exit 5 pages "Auth Required", so only ring-client-api's own auth
+        // failures may use it; anything else (a 5xx, a parse error) is exit 4.
+        const isAuth = AUTH_ERROR.test(e.message);
+        console.error(JSON.stringify({ error: `list-locations failed: ${e.message}` }));
+        process.exit(isAuth ? 5 : 4);
     }
 
     const devices = [];
@@ -148,6 +157,9 @@ async function main() {
                     batteryStatus: x.batteryStatus ?? null,
                     tamperStatus: x.tamperStatus ?? null,
                     faulted: x.faulted ?? null,
+                    commStatus: x.commStatus ?? null,
+                    lastCommTime: x.lastCommTime ?? null,
+                    acStatus: x.acStatus ?? null,
                     locationName: loc.name,
                 });
             } catch (e) {
@@ -167,8 +179,8 @@ async function main() {
 
 main().catch((err) => {
     // Exit 4: post-auth unhandled failure (e.g. TypeError iterating a
-    // malformed device). Python maps 1/3 → BeamsAuthError; using 4 avoids a
-    // misleading "Auth Required" P2 when the real problem is a parsing bug.
+    // malformed device). Python maps only 3/5 to BeamsAuthError, so 4 avoids
+    // a misleading "Auth Required" when the real problem is a parsing bug.
     console.error(JSON.stringify({ error: `unhandled: ${err && err.message ? err.message : String(err)}` }));
     process.exit(4);
 });

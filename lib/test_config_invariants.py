@@ -24,6 +24,7 @@ def _cfg(ring_path: str, beams_path: str):
             token_file=beams_path,
             battery_threshold_pct=25,
             sidecar_timeout_seconds=45,
+            offline_after_hours=36,
         )
 
     return _Stub()

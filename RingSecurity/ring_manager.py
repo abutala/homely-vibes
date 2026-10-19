@@ -2,7 +2,7 @@
 """Ring device daily health check.
 
 P1 alert when any device battery is below the threshold.
-P2 (normal priority) alert when any device is offline / unreachable.
+P1 alert when any device is offline / unreachable, or the account lists none.
 Designed for a single daily cron invocation — no polling loop, no state file.
 """
 
@@ -96,7 +96,11 @@ async def check_devices(
             ring = await ring_factory(session, token, cfg.token_file)
         except AuthenticationError as e:
             raise RingAuthError(f"Ring auth rejected: {e}") from e
-        for dev in ring.devices().all_devices:
+        all_devices = ring.devices().all_devices
+        if not all_devices:
+            # Zero devices is never a healthy house -- it is a broken fetch.
+            raise RuntimeError("Ring returned no devices")
+        for dev in all_devices:
             batt_raw = dev.battery_life
             # Ring occasionally returns battery_life as a string on certain
             # device types; coerce defensively. Wired devices report None or 0
@@ -114,7 +118,10 @@ async def check_devices(
             try:
                 await dev.async_update_health_data()
                 sig = getattr(dev, "wifi_signal_category", None)
-                if sig is None or str(sig).lower() == "offline":
+                # alerts.connection is Ring's own link state; the signal
+                # category can hold a stale value for a device that went away.
+                conn = getattr(dev, "connection_status", None)
+                if sig is None or "offline" in (str(sig).lower(), str(conn).lower()):
                     offline.append(dev.name)
             except Exception as e:
                 logger.warning(f"Health fetch failed for {dev.name}: {e}")
@@ -131,7 +138,7 @@ def notify(pushover: Notifier, low: list[str], offline: list[str], logger: loggi
     if offline:
         body = "\n".join(offline)
         logger.info(f"Offline alert: {body}")
-        pushover.send_message(body, title="Ring: Device Offline", priority=0)
+        pushover.send_message(body, title="Ring: Device Offline", priority=1)
     if not low and not offline:
         logger.info("All Ring devices healthy.")
 
