@@ -11,6 +11,7 @@ Complements `RingSecurity/`, which covers Ring's cameras and doorbells via REST.
 - **P1 alert** — `tamperStatus == "tamper"`, on any device
 - **P1 alert** — partial sidecar failure (some locations returned errors), zero devices returned, or generic sidecar error
 - **P0 alert** — sidecar auth failure (needs re-auth)
+- **P-2 ping** — `Ring Sensors: healthy` / `Devices N · Health ok · Tamper ok · Locations ok` when every check passes. Health covers battery, comm and mains power. Any finding sends only its alert, no ping, so a morning with neither means the job did not run
 
 The battery threshold skips wired devices (base stations, adapters, keypads, range extenders on mains): `batteryLevel: null` or `batteryStatus in {"none", "charging", "charged"}`. Ring's own `low` / `warn` status still alerts on them. Offline and tamper apply to every device. Hubs and adapters send `lastCommTime: 0` (no time), so `commStatus` (and `acStatus` on the base station) covers them. Contact sensors reporting `faulted: true` (a door currently open) are ignored — that's user state, not sensor health.
 

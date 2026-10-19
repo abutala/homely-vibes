@@ -10,6 +10,7 @@ Daily health check for Ring devices (doorbells, cameras, chimes).
 - **P1 alert** — the account lists zero devices (a broken fetch, never a healthy house)
 - **P0 alert** — Ring auth rejected / re-auth needed
 - **P1 alert** — Ring check failed (unexpected error)
+- **P-2 ping** — `Ring Cameras: healthy` / `Devices N · Health ok` when every check passes (health = battery and online). Any finding sends only its alert, no ping
 
 One-shot invocation designed for a daily cron. No polling loop, no state file.
 

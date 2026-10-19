@@ -36,7 +36,8 @@ commit as the fix. `Tesla/Logbook.md` is the reference for tone and structure.
 ## Alert priority discipline (Pushover)
 Convention: `P{N}` maps 1:1 to Pushover `priority=N`. Every module README uses this scheme — the number IS the priority value, not a semantic tier.
 
-- **P-1 (`priority=-1`)** — silent (no sound/vibration). Zone-end reports, informational clears, "act when convenient." Default for anything that doesn't need to interrupt.
+- **P-2 (`priority=-2`)** — no notification at all; it only lands in the Pushover inbox. Daily "all healthy" heartbeats and routine zone-end reports, where only a missing message means something.
+- **P-1 (`priority=-1`)** — silent (no sound/vibration). Informational clears, "act when convenient." Default for anything that doesn't need to interrupt.
 - **P0 (`priority=0`)** — normal (default sound). Recovery/"cleared" transitions after a fire, non-urgent status change.
 - **P1 (`priority=1`)** — high (bypasses quiet hours). Actionable within hours: low battery, service unreachable, hardware failure, partial sidecar failure, degraded network link.
 - **P2 (`priority=2`)** — emergency (retries until acked). Reserve for water leaks, break-ins, sustained-flow rules firing — things where seconds matter. Don't cry wolf.

@@ -210,7 +210,7 @@ def test_base_station_on_backup_battery_alerts() -> None:
 def test_notify_priorities(logger: logging.Logger) -> None:
     p = RecordingPushover()
     found = Findings(low=["A: 10%"], tamper=["B (tampered)"], offline=["C: comm error"])
-    notify(p, found, [], logger)
+    notify(p, found, [], 34, logger)
     by_title = {c["title"]: c["priority"] for c in p.calls}
     assert by_title == {
         "Ring: Low Battery": 1,
@@ -224,17 +224,37 @@ def test_notify_partial_failure_alerts_p1(logger: logging.Logger) -> None:
     look healthy — otherwise the user sees false 'all healthy' with missing
     devices."""
     p = RecordingPushover()
-    notify(p, Findings([], [], []), ["getDevices(Home): connection reset"], logger)
+    notify(p, Findings([], [], []), ["getDevices(Home): connection reset"], 34, logger)
     assert len(p.calls) == 1
     assert "Partial" in (p.calls[0]["title"] or "")
     assert p.calls[0]["priority"] == 1
     assert "connection reset" in p.calls[0]["message"]
 
 
-def test_notify_no_alerts_silent(logger: logging.Logger) -> None:
+def test_notify_all_healthy_sends_one_quiet_ping(logger: logging.Logger) -> None:
+    """A day with no ping must mean the job did not run."""
     p = RecordingPushover()
-    notify(p, Findings([], [], []), [], logger)
-    assert p.calls == []
+    notify(p, Findings([], [], []), [], 34, logger)
+    assert p.calls == [
+        {
+            "message": "Devices 34 · Health ok · Tamper ok · Locations ok",
+            "title": "Ring Sensors: healthy",
+            "priority": -2,
+        }
+    ]
+
+
+def test_notify_any_finding_sends_no_healthy_ping(logger: logging.Logger) -> None:
+    for found, errors in [
+        (Findings(["A: 10%"], [], []), []),
+        (Findings([], ["B (tampered)"], []), []),
+        (Findings([], [], ["C: comm error"]), []),
+        (Findings([], [], []), ["getDevices(Home): oops"]),
+    ]:
+        p = RecordingPushover()
+        notify(p, found, errors, 34, logger)
+        assert p.calls, (found, errors)
+        assert all(c["priority"] == 1 for c in p.calls), (found, errors)
 
 
 def test_missing_token_raises_auth_error(tmp_path: Path, logger: logging.Logger) -> None:
