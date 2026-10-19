@@ -127,7 +127,10 @@ async function main() {
         locations = await ring.getLocations();
     } catch (e) {
         // Exit 5 pages "Auth Required", so only ring-client-api's own auth
-        // failures may use it; anything else (a 5xx, a parse error) is exit 4.
+        // messages may use it; a 5xx on the locations call or a parse error
+        // is exit 4. A 5xx during the token refresh still reads as auth: the
+        // library retries without the token and throws "Refresh token is not
+        // valid".
         const isAuth = AUTH_ERROR.test(e.message);
         console.error(JSON.stringify({ error: `list-locations failed: ${e.message}` }));
         process.exit(isAuth ? 5 : 4);

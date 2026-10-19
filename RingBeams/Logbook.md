@@ -41,8 +41,8 @@ its last battery reading (58%, `ok`), and the monitor read only battery and tamp
 every daily run said "all healthy". The live payload showed `commStatus: "error"` and a
 `lastCommTime` 356 h old. Fields the sidecar does not copy are invisible to Python.
 
-Fix: the sidecar now copies `commStatus`, `lastCommTime` and `acStatus`, and `classify`
-alerts P1 on any of them. The same review found two more silent paths: tamper on a wired
+Fix: the sidecar now copies `commStatus`, `lastCommTime` and `acStatus`, and `notify`
+sends a P1 for any of them. The same review found two more silent paths: tamper on a wired
 device sat behind the battery skip, and an empty device list read as healthy. Both fixed.
 
 ---
@@ -59,7 +59,9 @@ An offline sensor stays in the device list with its last `batteryLevel` and
 
 `getLocations()` can fail for reasons other than a bad token. The sidecar exits 5 only
 when the message matches the strings `rest-client.js` throws for a rejected token or
-2FA; anything else is exit 4, so it pages "Ring: Error", not "Auth Required". Network
+2FA; anything else is exit 4, so it pages "Ring: Error", not "Auth Required". One
+exception: a 5xx from the token endpoint makes the library retry without the token and
+throw "Refresh token is not valid", so it still pages "Auth Required". Network
 errors never reach that catch: `requestWithRetry` retries them until the watchdog fires.
 If a ring-client-api upgrade changes those strings, auth failures would page as
 "Ring: Error" -- loud, but the wrong title.

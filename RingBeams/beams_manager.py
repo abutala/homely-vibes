@@ -165,8 +165,8 @@ def run_sidecar(
         #   1  uncaught Node crash / module-load (reserved for Node itself)
         #   2  missing env var
         #   3  token file unreadable          → auth class
-        #   4  post-auth unhandled exception
-        #   5  auth/list-locations failure    → auth class
+        #   4  any other failure, or watchdog timeout
+        #   5  Ring rejected the token / 2FA  → auth class
         # Only 3 and 5 are auth. Exit 1 is a Node crash (e.g. undici requiring
         # global `File` on Node <20) and MUST NOT route to "Auth Required".
         if proc.returncode in (3, 5):
@@ -223,7 +223,9 @@ def _offline_reason(d: DeviceRecord, offline_after_hours: int, now_ms: int) -> O
         reasons.append("mains power lost")
     if d.comm_status is not None and d.comm_status != "ok":
         reasons.append(f"comm {d.comm_status}")
-    if d.last_comm_ms is not None:
+    # lastCommTime is epoch ms but untyped in ring-client-api; a value that
+    # does not parse must not crash the run and hide every other finding.
+    if isinstance(d.last_comm_ms, (int, float)):
         silent_h = (now_ms - d.last_comm_ms) / 3_600_000
         if silent_h > offline_after_hours:
             age = f"{silent_h:.0f}h" if silent_h < 48 else f"{silent_h / 24:.0f}d"
@@ -275,7 +277,7 @@ def notify(
     if found.offline:
         body = "\n".join(found.offline)
         logger.info(f"Offline alert: {body}")
-        pushover.send_message(body, title="Ring: Sensor Offline", priority=1)
+        pushover.send_message(body, title="Ring: Device Offline", priority=1)
     if found.low:
         body = "\n".join(found.low)
         logger.info(f"Low battery alert: {body}")

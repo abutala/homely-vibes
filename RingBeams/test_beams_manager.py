@@ -130,7 +130,7 @@ def test_tamper_on_wired_device_still_alerts() -> None:
 
 
 def test_comm_error_alerts_offline_despite_ok_battery() -> None:
-    """2026-10-19: a Beams sensor read 58% "ok" with commStatus "error" for 15 days."""
+    """Ring keeps a lost sensor's last battery reading, so battery alone reads healthy."""
     dead = _rec(
         "MS 55",
         battery=58,
@@ -165,6 +165,11 @@ def test_missing_comm_fields_are_not_offline() -> None:
     """Hubs and adapters report no lastCommTime; an absent field is not a fault."""
     hub = _rec("Hub", battery=None, battery_status="none", comm_status=None, last_comm_ms=None)
     assert _classify([hub]).offline == []
+
+
+def test_non_numeric_last_comm_is_ignored() -> None:
+    odd = _rec("Odd", battery=99, battery_status="full", last_comm_ms="soon")  # type: ignore[arg-type]
+    assert _classify([odd]).offline == []
 
 
 def test_string_battery_coerced_and_unparseable_ignored() -> None:
@@ -204,7 +209,7 @@ def test_notify_priorities(logger: logging.Logger) -> None:
     assert by_title == {
         "Ring: Low Battery": 1,
         "Ring: Tamper": 1,
-        "Ring: Sensor Offline": 1,
+        "Ring: Device Offline": 1,
     }
 
 

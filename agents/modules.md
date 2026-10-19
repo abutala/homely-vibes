@@ -50,7 +50,7 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 - **Usage**: `rfmanager.py` CLI with collect/status/report commands
 
 ## RingBeams Module (`RingBeams/`)
-- **Purpose**: Daily battery + tamper health check for Ring Beams motion sensors and Ring Alarm sensors via Node sidecar (ring-client-api over socket.io).
+- **Purpose**: Daily battery, offline and tamper health check for Ring Beams motion sensors and Ring Alarm sensors via Node sidecar (ring-client-api over socket.io).
 - **Sidecar**: `fetch_status.js` — exit-code contract documented at top of file (0/1/2/3/4/5). Python parent maps 3 and 5 to `BeamsAuthError`; other non-zero codes raise `RuntimeError` (so a Node module-load crash never gets misclassified as "auth required").
 - **Token sharing**: reads/writes the same `config/tokens/ring_auth_token.json` as RingSecurity; a POSIX flock (`lib.file_lock`) serializes the two runs so overlapping refreshes don't produce `invalid_grant`.
 
