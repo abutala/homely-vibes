@@ -162,8 +162,14 @@ def test_last_comm_within_window_is_healthy() -> None:
 
 
 def test_missing_comm_fields_are_not_offline() -> None:
-    """Hubs and adapters report no lastCommTime; an absent field is not a fault."""
+    """An absent field is not a fault."""
     hub = _rec("Hub", battery=None, battery_status="none", comm_status=None, last_comm_ms=None)
+    assert _classify([hub]).offline == []
+
+
+def test_zero_last_comm_is_no_time_not_1970() -> None:
+    """Hubs and adapters send lastCommTime 0 with commStatus "ok"."""
+    hub = _rec("RingNet Adapter", battery=None, battery_status="none", last_comm_ms=0)
     assert _classify([hub]).offline == []
 
 

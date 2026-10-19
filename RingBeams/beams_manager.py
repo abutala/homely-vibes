@@ -216,7 +216,7 @@ def _offline_reason(d: DeviceRecord, offline_after_hours: int, now_ms: int) -> O
     """Why a device is not talking to its hub, or None when it is.
 
     A sensor that lost its link keeps its last battery reading, so battery and
-    tamper alone call it healthy. Hubs and adapters report no lastCommTime.
+    tamper alone call it healthy. Hubs and adapters report lastCommTime 0.
     """
     reasons = []
     if d.ac_status == "error":
@@ -225,7 +225,8 @@ def _offline_reason(d: DeviceRecord, offline_after_hours: int, now_ms: int) -> O
         reasons.append(f"comm {d.comm_status}")
     # lastCommTime is epoch ms but untyped in ring-client-api; a value that
     # does not parse must not crash the run and hide every other finding.
-    if isinstance(d.last_comm_ms, (int, float)):
+    # Hubs and adapters send 0, which means "no time", not 1970.
+    if isinstance(d.last_comm_ms, (int, float)) and d.last_comm_ms > 0:
         silent_h = (now_ms - d.last_comm_ms) / 3_600_000
         if silent_h > offline_after_hours:
             age = f"{silent_h:.0f}h" if silent_h < 48 else f"{silent_h / 24:.0f}d"

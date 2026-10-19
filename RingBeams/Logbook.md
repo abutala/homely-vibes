@@ -53,7 +53,8 @@ device sat behind the battery skip, and an empty device list read as healthy. Bo
 
 An offline sensor stays in the device list with its last `batteryLevel` and
 `batteryStatus`. Battery fields alone never show that a sensor went away; only
-`commStatus` and `lastCommTime` do. Hubs and adapters have no `lastCommTime`.
+`commStatus` and `lastCommTime` do. Hubs and adapters send `lastCommTime: 0`, which
+means "no time": read as epoch ms it is 1970, and every hub reads as silent for 56 years.
 
 ### Exit 5 is only for ring-client-api's own auth messages
 

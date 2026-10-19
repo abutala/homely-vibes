@@ -12,7 +12,7 @@ Complements `RingSecurity/`, which covers Ring's cameras and doorbells via REST.
 - **P1 alert** — partial sidecar failure (some locations returned errors), zero devices returned, or generic sidecar error
 - **P0 alert** — sidecar auth failure (needs re-auth)
 
-The battery threshold skips wired devices (base stations, adapters, keypads, range extenders on mains): `batteryLevel: null` or `batteryStatus in {"none", "charging", "charged"}`. Ring's own `low` / `warn` status still alerts on them. Offline and tamper apply to every device. Hubs and adapters report no `lastCommTime`, so `commStatus` (and `acStatus` on the base station) covers them. Contact sensors reporting `faulted: true` (a door currently open) are ignored — that's user state, not sensor health.
+The battery threshold skips wired devices (base stations, adapters, keypads, range extenders on mains): `batteryLevel: null` or `batteryStatus in {"none", "charging", "charged"}`. Ring's own `low` / `warn` status still alerts on them. Offline and tamper apply to every device. Hubs and adapters send `lastCommTime: 0` (no time), so `commStatus` (and `acStatus` on the base station) covers them. Contact sensors reporting `faulted: true` (a door currently open) are ignored — that's user state, not sensor health.
 
 ## Setup
 
