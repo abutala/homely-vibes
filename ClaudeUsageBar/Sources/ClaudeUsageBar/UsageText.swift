@@ -37,7 +37,7 @@ enum UsageText {
         return result
     }
 
-    /// `5-hour session: 42% — resets 11:20 PM (in 1h 43m)`, with the pace icon
+    /// `5-hour: 42% — resets 11:20 PM (in 1h 43m)`, with the pace icon
     /// appended when there is one.
     static func row(
         label: String, window: UsageWindow, length: TimeInterval,
@@ -55,8 +55,8 @@ enum UsageText {
     }
 
     /// Second line under a window row: where the window ends up at the average
-    /// rate so far, and the rate that spends the rest exactly by the reset, next
-    /// to even spend. `At this pace: 6% at reset · room 21%/h (even 20%/h)`.
+    /// rate so far, and the rate that spends the rest exactly by the reset.
+    /// `At this pace: 6% at reset · room 21%/h`.
     static func forecastRow(
         window: UsageWindow, length: TimeInterval,
         font: NSFont = .menuFont(ofSize: 0), now: Date = Date()
@@ -69,7 +69,7 @@ enum UsageText {
         guard let forecast = Forecast.make(window, length: length, unit: unit, now: now) else {
             return window.utilization.rounded() >= 100 ? "Spent until reset" : "Resetting now"
         }
-        let rates = "room \(rate(forecast.roomRate, unitLabel)) (even \(rate(forecast.evenRate, unitLabel)))"
+        let rates = "room \(rate(forecast.roomRate, unitLabel))"
         if let runsOutAt = forecast.runsOutAt {
             return "At this pace: out ~\(ResetFormatter.description(for: runsOutAt, now: now)) \u{00B7} \(rates)"
         }

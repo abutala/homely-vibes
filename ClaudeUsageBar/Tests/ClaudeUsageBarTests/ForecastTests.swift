@@ -21,7 +21,6 @@ final class ForecastTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(f.atReset), 50, accuracy: 1e-9)
         XCTAssertNil(f.runsOutAt)
         XCTAssertEqual(f.roomRate, 30, accuracy: 1e-9)
-        XCTAssertEqual(f.evenRate, 20, accuracy: 1e-9)
     }
 
     /// 75% in 2.5h is 30%/h: 100% lands 3h20m in, 50m from now, 1h40m early.
@@ -49,17 +48,17 @@ final class ForecastTests: XCTestCase {
     }
 
     func testTextOnTrack() {
-        XCTAssertEqual(text(used: 25, secondsLeft: 9000), "At this pace: 50% at reset \u{00B7} room 30%/h (even 20%/h)")
+        XCTAssertEqual(text(used: 25, secondsLeft: 9000), "At this pace: 50% at reset \u{00B7} room 30%/h")
     }
 
     func testTextRunsOutNamesTheTime() {
         let row = text(used: 75, secondsLeft: 9000)
         XCTAssertTrue(row.hasPrefix("At this pace: out ~"), row)
-        XCTAssertTrue(row.hasSuffix("(in 50m) \u{00B7} room 10%/h (even 20%/h)"), row)
+        XCTAssertTrue(row.hasSuffix("(in 50m) \u{00B7} room 10%/h"), row)
     }
 
     func testTextTooEarly() {
-        XCTAssertEqual(text(used: 0, secondsLeft: length), "Too early to project \u{00B7} room 20%/h (even 20%/h)")
+        XCTAssertEqual(text(used: 0, secondsLeft: length), "Too early to project \u{00B7} room 20%/h")
     }
 
     func testTextSpent() {
@@ -69,7 +68,7 @@ final class ForecastTests: XCTestCase {
     func testSevenDayWindowUsesPerDayRates() {
         XCTAssertEqual(
             text(used: 25, secondsLeft: 3.5 * 86400, length: PaceAlert.sevenDayLength),
-            "At this pace: 50% at reset \u{00B7} room 21%/day (even 14%/day)"
+            "At this pace: 50% at reset \u{00B7} room 21%/day"
         )
     }
 }

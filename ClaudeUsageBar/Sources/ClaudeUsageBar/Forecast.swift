@@ -13,8 +13,6 @@ struct Forecast: Equatable {
     let runsOutAt: Date?
     /// Rate that spends exactly the rest of the budget by the reset.
     let roomRate: Double
-    /// Rate that spends 100% evenly over the whole window.
-    let evenRate: Double
 
     /// Below this share of the window elapsed, a projection is mostly noise.
     static let minElapsedShare = 0.05
@@ -27,9 +25,8 @@ struct Forecast: Equatable {
 
         let elapsed = length - timeLeft
         let roomRate = (100 - used) / timeLeft * unit
-        let evenRate = 100 / length * unit
         guard elapsed >= minElapsedShare * length else {
-            return Forecast(atReset: nil, runsOutAt: nil, roomRate: roomRate, evenRate: evenRate)
+            return Forecast(atReset: nil, runsOutAt: nil, roomRate: roomRate)
         }
 
         let averageRate = used / elapsed
@@ -37,6 +34,6 @@ struct Forecast: Equatable {
         let runsOutAt = atReset > 100
             ? window.resetsAt.addingTimeInterval(-length + 100 / averageRate)
             : nil
-        return Forecast(atReset: atReset, runsOutAt: runsOutAt, roomRate: roomRate, evenRate: evenRate)
+        return Forecast(atReset: atReset, runsOutAt: runsOutAt, roomRate: roomRate)
     }
 }

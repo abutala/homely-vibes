@@ -168,10 +168,10 @@ final class StatusItemController {
 
     private func appendWindowItems(to menu: NSMenu, snapshot: UsageSnapshot) {
         let rows: [(String, UsageWindow?, TimeInterval)] = [
-            ("5-hour session", snapshot.fiveHour, PaceAlert.fiveHourLength),
-            ("7-day (all models)", snapshot.sevenDay, PaceAlert.sevenDayLength),
-            ("7-day (Opus)", snapshot.sevenDayOpus, PaceAlert.sevenDayLength),
-            ("7-day (Sonnet)", snapshot.sevenDaySonnet, PaceAlert.sevenDayLength),
+            ("5-hour", snapshot.fiveHour, PaceAlert.fiveHourLength),
+            ("7-day", snapshot.sevenDay, PaceAlert.sevenDayLength),
+            ("7-day Opus", snapshot.sevenDayOpus, PaceAlert.sevenDayLength),
+            ("7-day Sonnet", snapshot.sevenDaySonnet, PaceAlert.sevenDayLength),
         ]
         for (label, window, length) in rows {
             guard let window else { continue }
