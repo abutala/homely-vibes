@@ -10,6 +10,10 @@ Not sandboxed, no Dock icon (`LSUIElement`), no Xcode project — it's a plain
 Swift Package Manager executable wrapped into a minimal `.app` bundle so it
 can be launched from Finder/Spotlight/login items like a normal app.
 
+![Menu bar title with pace icons](docs/menubar.png)
+
+![Dropdown with forecast lines](docs/dropdown.png)
+
 ## How it works
 
 - **Auth**: reads the token the **Claude desktop app** keeps for itself — not
