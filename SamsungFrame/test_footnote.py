@@ -136,6 +136,12 @@ class TestFootnoteJob:
         assert files == [job.footnoted_dir / "a.jpg", job.jpg_dir / "b.jpg"]
         assert not (job.footnoted_dir / "b.jpg").exists()
 
+    def test_a_copy_over_the_size_limit_is_sent_plain(self, tmp_path: Path) -> None:
+        job, manifest = make_job(tmp_path, {"a.jpg": BANFF})
+        files = footnote_job(job, manifest, ["a.jpg"], Places(), max_bytes=100)
+        assert files == [job.jpg_dir / "a.jpg"]
+        assert list(job.footnoted_dir.iterdir()) == [], "no copy and no temp file is left"
+
     def test_a_failed_place_lookup_still_footnotes(self, tmp_path: Path) -> None:
         job, manifest = make_job(tmp_path, {"a.jpg": BANFF})
         files = footnote_job(job, manifest, ["a.jpg"], Places(fail=True), NO_LIMIT)

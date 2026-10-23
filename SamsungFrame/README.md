@@ -8,7 +8,7 @@ A Python client for managing art mode on Samsung Frame TVs. Upload images, confi
 
 - **One-command pipeline**: `frame_run.py` ingests, dedups, uploads, removes the old catalog, starts and verifies the slideshow, and sends one Pushover
 - **Ingest + Photo Dedup**: `ingest.py` turns a local or network folder (HEIC, JPG, PNG; recursive) into checkpointed <=4K JPGs; `dedup_photos.py` drops out-of-focus and grainy photos, near-duplicates and reference shots (signs, plates, receipts), keeping the best-scored frame of each cluster
-- **Footnote**: every uploaded photo carries a small caption in its bottom-left corner: file name, capture date and place, camera and exposure
+- **Footnote**: each uploaded photo carries a small caption in its bottom-left corner: file name, capture date and place, camera and exposure
 - **Checkpointed upload**: every image is recorded the moment the TV has it, filenames are capped to 50 characters, and a rerun uploads only what is missing
 - **Safe cleanup**: deletes exactly the photos that were on the TV before the batch, never below a minimum photo count, and only once the whole batch is on the TV
 - **Verified slideshow**: reads the slideshow back from the TV (art mode, category, interval, shuffle, playlist) and fails if it is not really playing
@@ -151,8 +151,8 @@ uv run python -m SamsungFrame.dedup_photos /tmp/frame-jobs/Trip-ab12cd --max-dis
 
 **Dedup** (`dedup_photos.py`), working only on the local JPGs and the manifest:
 
-1. Photos out of focus (the sharpest part of the frame is soft: `--min-focus`, default 1.3) or grainy (noise in the smooth areas: `--max-grain`, default 2.5) are dropped first; a shallow depth of field with a sharp subject passes
-2. Apple Vision gives each photo a feature print (similarity: ~0 identical, ~0.4 near-identical, ~0.5 same scene, >0.8 unrelated), an aesthetics score and a "utility" flag; utility photos (signs, plates, receipts, screenshots) are dropped first
+1. Apple Vision gives each photo a feature print (similarity: ~0 identical, ~0.4 near-identical, ~0.5 same scene, >0.8 unrelated), an aesthetics score and a "utility" flag; utility photos (signs, plates, receipts, screenshots) are dropped first
+2. Then photos out of focus (the sharpest part of the frame is soft: `--min-focus`, default 1.3) or grainy (noise in the smooth areas: `--max-grain`, default 2.5), measured at ingest; a shallow depth of field with a sharp subject passes. Both drops happen before clustering, so a dropped photo never ties two scenes together
 3. Average-linkage clustering merges the closest pairs until none is within `--max-distance` (default 0.4); photos more than `--window` seconds apart never merge. There is no target fraction: how much is dropped depends on how many near-duplicates the folder has
 4. Per cluster, the frame with the best aesthetics score is kept (a landscape frame gets a small bonus, since the TV is landscape; sharpness only breaks ties), and the manifest records why every other photo was dropped
 5. With `--max-photos N`, the survivors are cut into N runs in capture order and the best-scored photo of each run is kept, so the selection still spans the whole album; the rest are recorded as "over the limit"
@@ -341,7 +341,7 @@ This command:
 - **`ingest.py`**: Stage 1, name/size filtering, single read per original, local <=4K JPGs, manifest saved per batch
 
 - **`dedup_photos.py`** + **`vision_features.swift`**: Stage 2, photo dedup (macOS only)
-  - Drops out-of-focus and grainy photos, scores the rest with Apple Vision, clusters near-duplicates, keeps the best-scored frame of each, drops utility shots
+  - Scores the ingested JPGs with Apple Vision, drops utility, out-of-focus and grainy shots, clusters near-duplicates, keeps the best-scored frame of each, drops utility shots
 
 - **`photo_quality.py`**: the focus and grain measures, taken at ingest
 

@@ -6,6 +6,7 @@ and exposure. A line with nothing to say is left out. Place names come from an o
 towns (GeoNames, via `reverse_geocoder`), so no coordinate leaves the machine.
 """
 
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -118,12 +119,17 @@ def footnote_job(
         record = manifest.photos[name]
         lines = footnote_lines(record.source, record.shot, place_of.get(name))
         target = job.footnoted_dir / name
+        tmp = job.footnoted_dir / f".{name}.tmp"  # the copy appears whole or not at all
         try:
             with Image.open(job.jpg_dir / name) as img:
-                save_within_limit(stamp(img, lines), target, max_bytes)
+                save_within_limit(stamp(img, lines), tmp, max_bytes)
+            if tmp.stat().st_size > max_bytes:
+                raise ValueError(f"footnoted copy is over {max_bytes} bytes")
+            os.replace(tmp, target)
         except Exception as e:
-            target.unlink(missing_ok=True)
             logger.warning(f"Uploading {name} without a footnote: {e}")
+        finally:
+            tmp.unlink(missing_ok=True)
     return [
         job.footnoted_dir / n if (job.footnoted_dir / n).exists() else job.jpg_dir / n
         for n in names

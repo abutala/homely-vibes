@@ -121,6 +121,7 @@ Calibrated on 115 photos from three albums (a 2008 DSLR, a 2019 phone with scann
 - **Whole-image edge measures punish shallow depth of field.** The edge ratio (curvature per unit slope on the strongest edges, about 1 / edge width) at the 99.5th percentile ranked a crisp-eyed child with a blurred background (0.99) below a motion-blurred train (1.06). Judging only the sharpest of a 6x6 grid of tiles fixes it: originals scored 1.34 and up, synthetic blur 1.23 and down.
 - **Grain looks like texture to a plain noise estimate.** Immerkaer's estimator over the low-gradient 30% ranked clean ISO-32 foliage and rock above real grain. Measured only in the smoothest 10% (local variance over 9 px), at the full ingested size: originals reached 1.25, except two halftone-printed scanned postcards (5.9 and above, rightly dropped), and synthetic grain started at 5.2.
 - **Mild real blur still passes.** A digitally zoomed bear scored 1.30, right on the line. The thresholds favour keeping a soft photo over dropping a good one; tune with `--min-focus` / `--max-grain` on `dedup_photos.py`.
+- **First live run** (a 2003 album, 154 photos from a 3 MP compact): 16 dropped as out of focus. At 100%, 15 were genuinely soft zoo shots through mesh or glass; one sunset (1.05) was a judgment call, since a sunset has few edges to be sharp.
 - **Curated paths skip it.** Labelled albums and picks CSVs run with `--no-dedup`, so nothing a person chose is dropped. Jobs ingested before this change have no measurements and are not judged.
 
 ### The Footnote (2026-10-23)
@@ -128,7 +129,8 @@ Calibrated on 115 photos from three albums (a 2008 DSLR, a 2019 phone with scann
 - **Burned in at upload, never at ingest.** Dedup's Vision scores and feature prints read the ingested JPGs, so text there would steer which frame wins. The upload stage writes footnoted copies into `<job>/footnoted/` and sends those; a rerun reuses them.
 - **The EXIF is read at ingest.** The ingested JPG is saved without EXIF, so the camera, exposure, GPS and capture time are kept in the manifest (`PhotoRecord.shot`). A job ingested before this change gets a footnote with just the file name.
 - **Places come from an offline table** (`reverse_geocoder`, GeoNames towns with 1000+ people), so no coordinate leaves the machine and there is no rate limit. It names the nearest town, not the landmark: Johnston Canyon reads "Banff, Alberta".
-- **A footnote is never a reason to skip a photo.** A copy that fails is uploaded plain with a warning; a failed place lookup leaves the place out.
+- **A footnote is never a reason to skip a photo.** A copy that fails, or comes out over `max_image_size_mb`, is uploaded plain with a warning; a failed place lookup leaves the place out. The copy is written to a temp file and renamed, because a rerun trusts any copy it finds.
+- **A count-1 EXIF tag is a bare value, not a tuple.** A GPS coordinate stored as one rational made `len()` raise inside ingest's catch-all, which records the photo as unreadable and retries it forever. Anything read for the footnote must fail soft.
 - **The matte shrinks it.** With `shadowbox_black` the photo fills about 80% of the screen height, and the footnote with it: about 1 cm per line on a 55" TV (accepted 2026-10-23).
 
 ### Dedup Scaling

@@ -184,6 +184,12 @@ class TestReadShot:
         shot = self.shot(tmp_path, exif)
         assert shot.f_number is None and shot.where is None and shot.camera == "iPhone 13 Pro"
 
+    def test_a_single_value_gps_tag_is_no_gps(self, tmp_path: Path) -> None:
+        exif = camera_exif()
+        exif.get_ifd(0x8825)[2] = IFDRational(51, 1)  # count 1: Pillow returns a bare rational
+        shot = self.shot(tmp_path, exif)
+        assert shot.where is None and shot.camera == "iPhone 13 Pro"
+
     def test_ingest_records_the_shot(self, tmp_path: Path) -> None:
         pattern(1).save(tmp_path / "c.jpg", exif=camera_exif())
         (tmp_path / "out").mkdir()

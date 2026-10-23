@@ -143,7 +143,7 @@ def positive(value: object) -> float | None:
 
 def gps_degrees(gps: dict, ref_tag: int, value_tag: int) -> float | None:
     parts = gps.get(value_tag)
-    if not parts or len(parts) != 3:
+    if not isinstance(parts, tuple) or len(parts) != 3:  # a count-1 tag is a bare rational
         return None
     deg = sum((positive(p) or 0.0) / 60.0**i for i, p in enumerate(parts))
     if not deg:
@@ -158,6 +158,8 @@ def read_shot(img: Image.Image) -> Shot:
     gps = exif.get_ifd(GPS_IFD)
     lat, lon = gps_degrees(gps, GPS_LAT_REF, GPS_LAT), gps_degrees(gps, GPS_LON_REF, GPS_LON)
     taken = sub.get(EXIF_DATETIME_ORIGINAL) or exif.get(EXIF_DATETIME)
+    if isinstance(taken, bytes):
+        taken = taken.decode(errors="replace")
     camera = str(exif.get(EXIF_MODEL) or "").strip("\x00 ")
     iso = positive(sub.get(EXIF_ISO))
     return Shot(
