@@ -8,7 +8,7 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ### 2026-10 — CLI signed out; token source moved to the desktop app
 
-The bar showed `⚠︎` stale numbers for over a day. The unified log had
+The bar showed stale numbers, marked `⚠︎` (now `↻`), for over a day. The unified log had
 `FAILED reason=credentials expired` on every tick and `still failing after CLI
 nudge` every 12 minutes. The real state: `claude auth status` said
 `"loggedIn": false`. The CLI had rewritten its `Claude Code-credentials` item
@@ -117,8 +117,16 @@ stderr fallback — a dead arm hides behind a test that only proves the fallback
 `GET https://api.anthropic.com/api/oauth/usage` was reverse-engineered from the
 installed `claude` binary via `strings`; it is not publicly documented, so the
 schema can move without notice — a payload that no longer parses surfaces as
-`credentials unreadable` in the dropdown. The response also carries further
+`unexpected response` in the dropdown
+(`Unavailable (…)` on a cold start, `Stale data (…)` after a good fetch). The response also carries further
 fields (per-channel overage, codenamed feature flags) not surfaced yet.
+
+### `utilization` above 100 is unconfirmed
+
+`!` fires at 100% used, not only above it. No captured response, doc or bug
+report shows `utilization` above 100 (TRIAL, 2026-10-23), so a strict `> 100`
+might never fire. If a capture (`CLAUDE_USAGE_DEBUG=1 … --probe-usage`) ever
+shows a value above 100, the title clamps percent left at `0%` with the `!`.
 
 ### Known limitations
 
@@ -149,5 +157,5 @@ desktop app:
 | `credentials unreadable` | Decrypt or parse failed | The desktop's cache format likely moved; see "Desktop token cache" |
 
 A working display is never blanked by a failed refresh: the last good numbers
-stay with a `⚠︎` and the reason. So "Claude: —" means it has *never* succeeded
+stay with a `↻` and the reason. So "Claude: —" means it has *never* succeeded
 since launch. Check each step with `.build/debug/ClaudeUsageBar --probe-token`.
