@@ -62,11 +62,13 @@ can be launched from Finder/Spotlight/login items like a normal app.
   32.5% used, with 10% left above 92.5%. The rule runs on the displayed
   (rounded) percent, and a window past its reset gets no icon. Logic and table:
   `PaceAlert.swift`. `⚠︎` means pace only; a failed refresh uses `↻` (below).
-- **Forecast**: under each dropdown row, an indented line projects the window
-  at its average rate so far — `At this pace: 80% at reset`, or, when 100%
+- **Forecast**: under each dropdown row, an indented line projects the margin
+  left at reset at the window's average rate so far — `At this pace: 20% left
+  at reset` (percent left, like the title), or, when 100%
   lands before the reset, only when it runs out:
-  `At this pace: runs out Sun 4:20 AM (in 1d 13h)`. The first 5% of a window
-  shows `Too early to project`; a spent window shows `Spent until reset`.
+  `At this pace: runs out Sun 4:24 AM (in 1d 13h)`. The first 5% of a window
+  shows `Too early to project`; a spent window shows `Spent until reset`; a
+  stale snapshot past its reset shows `Resetting now`.
   Logic: `Forecast.swift`.
 - **Dropdown contrast**: info rows stay enabled (`autoenablesItems = false`) so
   they render at full contrast; AppKit greys out disabled rows. A click on one

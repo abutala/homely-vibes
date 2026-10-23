@@ -45,6 +45,11 @@ final class ForecastTests: XCTestCase {
         XCTAssertNil(forecast(used: 40, secondsLeft: 0))
     }
 
+    /// A reset further out than the window length clamps to a full window.
+    func testResetBeyondWindowLengthIsTooEarly() {
+        XCTAssertEqual(forecast(used: 30, secondsLeft: 1.2 * length), .tooEarly)
+    }
+
     // MARK: - row text
 
     private func text(used: Double, secondsLeft: TimeInterval, length: TimeInterval? = nil) -> String {
@@ -52,14 +57,20 @@ final class ForecastTests: XCTestCase {
     }
 
     func testTextOnTrack() {
-        XCTAssertEqual(text(used: 25, secondsLeft: 9000), "At this pace: 50% at reset")
+        XCTAssertEqual(text(used: 25, secondsLeft: 9000), "At this pace: 50% left at reset")
     }
 
     func testTextRunsOutNamesOnlyTheTime() {
         let row = text(used: 75, secondsLeft: 9000)
         XCTAssertTrue(row.hasPrefix("At this pace: runs out "), row)
         XCTAssertTrue(row.hasSuffix("(in 50m)"), row)
-        XCTAssertFalse(row.contains("% at reset"), row)
+        XCTAssertFalse(row.contains("left at reset"), row)
+    }
+
+    /// Margin, not use: 80% used at reset reads as 20% left. 7-day, 42% used
+    /// with 3.675 of 7 days gone projects 80%.
+    func testTextShowsMarginLeftAtReset() {
+        XCTAssertEqual(text(used: 42, secondsLeft: 3.325 * 86400, length: PaceAlert.sevenDayLength), "At this pace: 20% left at reset")
     }
 
     func testTextTooEarly() {
@@ -70,7 +81,13 @@ final class ForecastTests: XCTestCase {
         XCTAssertEqual(text(used: 100, secondsLeft: 9000), "Spent until reset")
     }
 
+    /// A stale snapshot past its reset says so, even if it was spent.
+    func testTextPastResetSaysResetting() {
+        XCTAssertEqual(text(used: 100, secondsLeft: -60), "Resetting now")
+        XCTAssertEqual(text(used: 40, secondsLeft: 0), "Resetting now")
+    }
+
     func testSevenDayWindow() {
-        XCTAssertEqual(text(used: 25, secondsLeft: 3.5 * 86400, length: PaceAlert.sevenDayLength), "At this pace: 50% at reset")
+        XCTAssertEqual(text(used: 25, secondsLeft: 3.5 * 86400, length: PaceAlert.sevenDayLength), "At this pace: 50% left at reset")
     }
 }
