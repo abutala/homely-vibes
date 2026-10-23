@@ -82,16 +82,16 @@ final class UsageTextTests: XCTestCase {
         XCTAssertEqual(UsageText.title(for: snap, now: now), "58% 2.4h \u{00B7} 82% 3.1d")
     }
 
-    /// The icon prefixes the window it judges; left% clamps at 0 when spent.
-    func testTitlePrefixesEachWindowWithItsIcon() {
+    /// The icon sits tight after the window it judges; left% clamps at 0 when spent.
+    func testTitleSuffixesEachWindowWithItsIcon() {
         let snap = snapshot(fiveHour: window(used: 90, secondsLeft: 2.5 * 3600), sevenDay: window(used: 103, secondsLeft: 3 * 86400))
-        XCTAssertEqual(UsageText.title(for: snap, now: now), "\u{26A0}\u{FE0E}10% 2.5h \u{00B7} !0% 3.0d")
+        XCTAssertEqual(UsageText.title(for: snap, now: now), "10% 2.5h\u{26A0}\u{FE0E} \u{00B7} 0% 3.0d!")
     }
 
-    /// 99.5% used rounds to 100: `!0%`, never `!1%`.
+    /// 99.5% used rounds to 100: `0% 2.5h!`, never `1% 2.5h!`.
     func testTitlePercentLeftAgreesWithTheIconAtHalfPercent() {
         let snap = snapshot(fiveHour: window(used: 99.5, secondsLeft: 2.5 * 3600), sevenDay: nil)
-        XCTAssertEqual(UsageText.title(for: snap, now: now), "!0% 2.5h")
+        XCTAssertEqual(UsageText.title(for: snap, now: now), "0% 2.5h!")
     }
 
     func testAbsentFiveHourWindowGetsNoIcon() {

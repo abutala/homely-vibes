@@ -40,6 +40,6 @@ enum UsageText {
         let icon = PaceAlert.evaluate(window, length: length, now: now).icon
         // From the rounded used percent, so it agrees with the icon and the dropdown row.
         let left = max(0, 100 - Int(window.utilization.rounded()))
-        return "\(icon)\(left)% \(ResetFormatter.compactTimeLeft(window.resetsAt, now: now))"
+        return "\(left)% \(ResetFormatter.compactTimeLeft(window.resetsAt, now: now))\(icon)"
     }
 }
