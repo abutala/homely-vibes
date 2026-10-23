@@ -7,7 +7,6 @@ final class StatusItemController {
     private var refreshTimer: Timer?
     private var lastGoodSnapshot: UsageSnapshot?
     private let spendSettingsURL = URL(string: "https://claude.ai/new#settings/usage")!
-    private static let fullFiveHourWindow = "5.0h"
 
     // Diagnostics for the "stuck on a stale error for hours" failure mode
     // (seen 2026-08, fixed by a restart, root cause unconfirmed — could be
@@ -113,33 +112,13 @@ final class StatusItemController {
         case .loading:
             statusItem.button?.title = "Claude: …"
         case .ok(let snapshot):
-            statusItem.button?.title = titleText(for: snapshot)
+            statusItem.button?.title = UsageText.title(for: snapshot)
         case .stale(let snapshot, _):
-            statusItem.button?.title = titleText(for: snapshot) + " \u{26A0}\u{FE0E}"
+            statusItem.button?.title = UsageText.title(for: snapshot) + " \u{26A0}\u{FE0E}"
         case .tokenUnavailable, .unavailable:
             statusItem.button?.title = "Claude: \u{2014}"
         }
         buildMenu(state: state)
-    }
-
-    // Title reports what is *left* (budget and clock); the dropdown reports what
-    // was consumed. An absent five_hour window means nothing has been spent yet,
-    // so it reads as a full budget on a full clock — but only when the response
-    // is otherwise healthy, hence the guard.
-    private func titleText(for snapshot: UsageSnapshot) -> String {
-        guard snapshot.fiveHour != nil || snapshot.sevenDay != nil else {
-            return "Claude: \u{2014}"
-        }
-        var parts: [String] = []
-        if let fiveHour = snapshot.fiveHour {
-            parts.append("\(remainingPercent(fiveHour))% \(ResetFormatter.compactTimeLeft(fiveHour.resetsAt))")
-        } else {
-            parts.append("100% \(Self.fullFiveHourWindow)")
-        }
-        if let sevenDay = snapshot.sevenDay {
-            parts.append("\(remainingPercent(sevenDay))% \(ResetFormatter.compactTimeLeft(sevenDay.resetsAt))")
-        }
-        return parts.joined(separator: " \u{00B7} ")
     }
 
     private func buildMenu(state: State) {
@@ -183,16 +162,15 @@ final class StatusItemController {
     }
 
     private func appendWindowItems(to menu: NSMenu, snapshot: UsageSnapshot) {
-        let rows: [(String, UsageWindow?)] = [
-            ("5-hour session", snapshot.fiveHour),
-            ("7-day (all models)", snapshot.sevenDay),
-            ("7-day (Opus)", snapshot.sevenDayOpus),
-            ("7-day (Sonnet)", snapshot.sevenDaySonnet),
+        let rows: [(String, UsageWindow?, TimeInterval)] = [
+            ("5-hour session", snapshot.fiveHour, PaceAlert.fiveHourLength),
+            ("7-day (all models)", snapshot.sevenDay, PaceAlert.sevenDayLength),
+            ("7-day (Opus)", snapshot.sevenDayOpus, PaceAlert.sevenDayLength),
+            ("7-day (Sonnet)", snapshot.sevenDaySonnet, PaceAlert.sevenDayLength),
         ]
-        for (label, window) in rows {
+        for (label, window, length) in rows {
             guard let window else { continue }
-            let pct = Int(window.utilization.rounded())
-            let title = "\(label): \(pct)% \u{2014} resets \(ResetFormatter.description(for: window.resetsAt))"
+            let title = UsageText.row(label: label, window: window, length: length)
             menu.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: ""))
         }
 
@@ -217,10 +195,6 @@ final class StatusItemController {
 
     private func retryNote() -> String {
         "Retrying every \(RefreshInterval.label(for: RefreshInterval.current))"
-    }
-
-    private func remainingPercent(_ window: UsageWindow) -> Int {
-        Int((100 - window.utilization).rounded())
     }
 
     private func formatted(_ date: Date) -> String {

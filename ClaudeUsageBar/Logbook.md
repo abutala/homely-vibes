@@ -120,6 +120,13 @@ schema can move without notice — a payload that no longer parses surfaces as
 `credentials unreadable` in the dropdown. The response also carries further
 fields (per-channel overage, codenamed feature flags) not surfaced yet.
 
+### `utilization` above 100 is unconfirmed
+
+`!` fires at 100% used, not only above it. No captured response, doc or bug
+report shows `utilization` above 100 (TRIAL, 2026-10-23), so a strict `> 100`
+might never fire. If a capture (`CLAUDE_USAGE_DEBUG=1 … --probe-usage`) ever
+shows a value above 100, the title clamps percent left at `0%` with the `!`.
+
 ### Known limitations
 
 - This app never runs the OAuth refresh itself, and must not. Anthropic
