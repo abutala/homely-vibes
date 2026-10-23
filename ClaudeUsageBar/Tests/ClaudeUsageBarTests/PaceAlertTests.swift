@@ -125,9 +125,9 @@ final class UsageTextTests: XCTestCase {
     }
 
     func testRowAppendsIconOnlyWhenThereIsOne() {
-        let behind = UsageText.row(label: "5-hour session", window: window(used: 90, secondsLeft: 2.5 * 3600), length: PaceAlert.fiveHourLength, now: now).string
-        let onPace = UsageText.row(label: "5-hour session", window: window(used: 10, secondsLeft: 2.5 * 3600), length: PaceAlert.fiveHourLength, now: now).string
-        XCTAssertTrue(behind.hasPrefix("5-hour session: 90% \u{2014} resets "))
+        let behind = UsageText.row(label: "5-hour", window: window(used: 90, secondsLeft: 2.5 * 3600), length: PaceAlert.fiveHourLength, now: now).string
+        let onPace = UsageText.row(label: "5-hour", window: window(used: 10, secondsLeft: 2.5 * 3600), length: PaceAlert.fiveHourLength, now: now).string
+        XCTAssertTrue(behind.hasPrefix("5-hour: 90% \u{2014} resets "))
         XCTAssertTrue(behind.hasSuffix("(in 2h 30m) \u{26A0}\u{FE0E}"))
         XCTAssertTrue(onPace.hasSuffix("(in 2h 30m)"))
     }

@@ -10,6 +10,10 @@ Not sandboxed, no Dock icon (`LSUIElement`), no Xcode project — it's a plain
 Swift Package Manager executable wrapped into a minimal `.app` bundle so it
 can be launched from Finder/Spotlight/login items like a normal app.
 
+![Menu bar title with pace icons](docs/menubar.png)
+
+![Dropdown with forecast lines](docs/dropdown.png)
+
 ## How it works
 
 - **Auth**: reads the token the **Claude desktop app** keeps for itself — not
@@ -58,6 +62,17 @@ can be launched from Finder/Spotlight/login items like a normal app.
   32.5% used, with 10% left above 92.5%. The rule runs on the displayed
   (rounded) percent, and a window past its reset gets no icon. Logic and table:
   `PaceAlert.swift`. `⚠︎` means pace only; a failed refresh uses `↻` (below).
+- **Forecast**: under each dropdown row, an indented line projects the margin
+  left at reset at the window's average rate so far — `At this pace: 20% left
+  at reset` (percent left, like the title), or, when 100%
+  lands before the reset, only when it runs out:
+  `At this pace: runs out Sun 4:24 AM (in 1d 13h)`. The first 5% of a window
+  shows `Too early to project`; a spent window shows `Spent until reset`; a
+  stale snapshot past its reset shows `Resetting now`.
+  Logic: `Forecast.swift`.
+- **Dropdown contrast**: info rows stay enabled (`autoenablesItems = false`) so
+  they render at full contrast; AppKit greys out disabled rows. A click on one
+  only closes the menu.
 - **Failure states**: a failed refresh never blanks a working display — the last
   good numbers stay, marked with a trailing `↻`, with the reason in the dropdown. "Open the
   Claude app and sign in" appears only when the desktop login is genuinely

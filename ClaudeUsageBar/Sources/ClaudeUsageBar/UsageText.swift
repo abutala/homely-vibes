@@ -37,7 +37,7 @@ enum UsageText {
         return result
     }
 
-    /// `5-hour session: 42% — resets 11:20 PM (in 1h 43m)`, with the pace icon
+    /// `5-hour: 42% — resets 11:20 PM (in 1h 43m)`, with the pace icon
     /// appended when there is one.
     static func row(
         label: String, window: UsageWindow, length: TimeInterval,
@@ -52,6 +52,26 @@ enum UsageText {
             result.append(icon(alert, font: font))
         }
         return result
+    }
+
+    /// Second line under a window row: the margin left at reset at the average
+    /// rate so far — `At this pace: 64% left at reset`, matching the title's
+    /// percent-left convention — or, when 100% comes before the reset, only
+    /// when it runs out.
+    static func forecastRow(
+        window: UsageWindow, length: TimeInterval,
+        font: NSFont = .menuFont(ofSize: 0), now: Date = Date()
+    ) -> NSAttributedString {
+        plain(forecastText(window: window, length: length, now: now), font: font)
+    }
+
+    static func forecastText(window: UsageWindow, length: TimeInterval, now: Date = Date()) -> String {
+        switch Forecast.make(window, length: length, now: now) {
+        case .atReset(let used): return "At this pace: \(100 - Int(used.rounded()))% left at reset"
+        case .runsOut(let date): return "At this pace: runs out \(ResetFormatter.description(for: date, now: now))"
+        case .tooEarly: return "Too early to project"
+        case nil: return window.resetsAt <= now ? "Resetting now" : "Spent until reset"
+        }
     }
 
     static func plain(_ text: String, font: NSFont) -> NSAttributedString {
