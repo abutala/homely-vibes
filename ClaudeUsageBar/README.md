@@ -51,14 +51,14 @@ can be launched from Finder/Spotlight/login items like a normal app.
 - **Pace icons**: each window carries an icon when its spend needs attention —
   tight after its section in the title (`10% 2.5h⚠︎ · 0% 3.0d!`), and at the
   end of the dropdown row.
-  `!` means the window is spent (100% or more used). `⚠︎` means the rest of the
+  Red `!` means the window is spent (100% or more used). Yellow `⚠︎` means the rest of the
   window needs a cut of more than 25% below even spend (100% over the whole
   window): it fires when `left% < 75 × timeLeft / windowLength`. The alarm
   tightens as the window ends — with 90% of the window left it fires above
   32.5% used, with 10% left above 92.5%. The rule runs on the displayed
   (rounded) percent, and a window past its reset gets no icon. Logic and table:
-  `PaceAlert.swift`. The stale marker below is a separate `⚠︎` after a space at
-  the very end of the title, not tight against a section.
+  `PaceAlert.swift`. The stale marker below is a separate, uncolored `⚠︎` after a
+  space at the very end of the title.
 - **Failure states**: a failed refresh never blanks a working display — the last
   good numbers stay, marked `⚠︎`, with the reason in the dropdown. "Open the
   Claude app and sign in" appears only when the desktop login is genuinely

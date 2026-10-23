@@ -112,9 +112,11 @@ final class StatusItemController {
         case .loading:
             statusItem.button?.title = "Claude: …"
         case .ok(let snapshot):
-            statusItem.button?.title = UsageText.title(for: snapshot)
+            statusItem.button?.attributedTitle = UsageText.title(for: snapshot)
         case .stale(let snapshot, _):
-            statusItem.button?.title = UsageText.title(for: snapshot) + " \u{26A0}\u{FE0E}"
+            let title = NSMutableAttributedString(attributedString: UsageText.title(for: snapshot))
+            title.append(UsageText.plain(" \u{26A0}\u{FE0E}", font: .menuBarFont(ofSize: 0)))
+            statusItem.button?.attributedTitle = title
         case .tokenUnavailable, .unavailable:
             statusItem.button?.title = "Claude: \u{2014}"
         }
@@ -170,8 +172,9 @@ final class StatusItemController {
         ]
         for (label, window, length) in rows {
             guard let window else { continue }
-            let title = UsageText.row(label: label, window: window, length: length)
-            menu.addItem(NSMenuItem(title: title, action: nil, keyEquivalent: ""))
+            let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            item.attributedTitle = UsageText.row(label: label, window: window, length: length)
+            menu.addItem(item)
         }
 
         if let spend = snapshot.spend {

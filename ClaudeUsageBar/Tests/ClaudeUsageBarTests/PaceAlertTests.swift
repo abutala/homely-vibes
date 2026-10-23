@@ -79,33 +79,47 @@ final class UsageTextTests: XCTestCase {
 
     func testTitleWithoutIcons() {
         let snap = snapshot(fiveHour: window(used: 42, secondsLeft: 2.4 * 3600), sevenDay: window(used: 18, secondsLeft: 3.1 * 86400))
-        XCTAssertEqual(UsageText.title(for: snap, now: now), "58% 2.4h \u{00B7} 82% 3.1d")
+        XCTAssertEqual(UsageText.title(for: snap, now: now).string, "58% 2.4h \u{00B7} 82% 3.1d")
     }
 
     /// The icon sits tight after the window it judges; left% clamps at 0 when spent.
     func testTitleSuffixesEachWindowWithItsIcon() {
         let snap = snapshot(fiveHour: window(used: 90, secondsLeft: 2.5 * 3600), sevenDay: window(used: 103, secondsLeft: 3 * 86400))
-        XCTAssertEqual(UsageText.title(for: snap, now: now), "10% 2.5h\u{26A0}\u{FE0E} \u{00B7} 0% 3.0d!")
+        XCTAssertEqual(UsageText.title(for: snap, now: now).string, "10% 2.5h\u{26A0}\u{FE0E} \u{00B7} 0% 3.0d!")
     }
 
     /// 99.5% used rounds to 100: `0% 2.5h!`, never `1% 2.5h!`.
     func testTitlePercentLeftAgreesWithTheIconAtHalfPercent() {
         let snap = snapshot(fiveHour: window(used: 99.5, secondsLeft: 2.5 * 3600), sevenDay: nil)
-        XCTAssertEqual(UsageText.title(for: snap, now: now), "0% 2.5h!")
+        XCTAssertEqual(UsageText.title(for: snap, now: now).string, "0% 2.5h!")
+    }
+
+    /// Yellow ⚠︎, red !, and everything else in the adaptive label color.
+    func testIconsCarryTheirColorAndTextStaysLabelColor() {
+        let snap = snapshot(fiveHour: window(used: 90, secondsLeft: 2.5 * 3600), sevenDay: window(used: 103, secondsLeft: 3 * 86400))
+        let title = UsageText.title(for: snap, now: now)
+        let text = title.string as NSString
+        func color(at location: Int) -> NSColor? {
+            title.attribute(.foregroundColor, at: location, effectiveRange: nil) as? NSColor
+        }
+        XCTAssertEqual(color(at: text.range(of: "\u{26A0}", options: .literal).location), .systemYellow)
+        XCTAssertEqual(color(at: text.range(of: "!").location), .systemRed)
+        XCTAssertEqual(color(at: 0), .labelColor)
+        XCTAssertEqual(color(at: text.range(of: "0% 3.0d").location), .labelColor)
     }
 
     func testAbsentFiveHourWindowGetsNoIcon() {
         let snap = snapshot(fiveHour: nil, sevenDay: window(used: 18, secondsLeft: 3.1 * 86400))
-        XCTAssertEqual(UsageText.title(for: snap, now: now), "100% 5.0h \u{00B7} 82% 3.1d")
+        XCTAssertEqual(UsageText.title(for: snap, now: now).string, "100% 5.0h \u{00B7} 82% 3.1d")
     }
 
     func testTitleWithNoWindowsIsADash() {
-        XCTAssertEqual(UsageText.title(for: snapshot(fiveHour: nil, sevenDay: nil), now: now), "Claude: \u{2014}")
+        XCTAssertEqual(UsageText.title(for: snapshot(fiveHour: nil, sevenDay: nil), now: now).string, "Claude: \u{2014}")
     }
 
     func testRowAppendsIconOnlyWhenThereIsOne() {
-        let behind = UsageText.row(label: "5-hour session", window: window(used: 90, secondsLeft: 2.5 * 3600), length: PaceAlert.fiveHourLength, now: now)
-        let onPace = UsageText.row(label: "5-hour session", window: window(used: 10, secondsLeft: 2.5 * 3600), length: PaceAlert.fiveHourLength, now: now)
+        let behind = UsageText.row(label: "5-hour session", window: window(used: 90, secondsLeft: 2.5 * 3600), length: PaceAlert.fiveHourLength, now: now).string
+        let onPace = UsageText.row(label: "5-hour session", window: window(used: 10, secondsLeft: 2.5 * 3600), length: PaceAlert.fiveHourLength, now: now).string
         XCTAssertTrue(behind.hasPrefix("5-hour session: 90% \u{2014} resets "))
         XCTAssertTrue(behind.hasSuffix("(in 2h 30m) \u{26A0}\u{FE0E}"))
         XCTAssertTrue(onPace.hasSuffix("(in 2h 30m)"))

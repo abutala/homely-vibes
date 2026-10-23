@@ -1,9 +1,11 @@
-import Foundation
+import AppKit
 
 /// Menu bar title and dropdown row text for a snapshot.
 ///
-/// Pure and `now`-injectable, like `ResetFormatter`, so the icon placement and
-/// the absent-window cases are testable without AppKit.
+/// Pure and `now`-injectable, like `ResetFormatter`, so the icon placement,
+/// its color and the absent-window cases are testable without a status item.
+/// Setting an attributed title drops AppKit's default font and color, so both
+/// are set here; `labelColor` is dynamic and follows the menu bar appearance.
 enum UsageText {
     private static let fullFiveHourWindow = "5.0h"
 
@@ -11,35 +13,67 @@ enum UsageText {
     /// what was consumed. An absent five_hour window means nothing has been
     /// spent yet, so it reads as a full budget on a full clock — but only when
     /// the response is otherwise healthy, hence the guard.
-    static func title(for snapshot: UsageSnapshot, now: Date = Date()) -> String {
+    static func title(
+        for snapshot: UsageSnapshot, font: NSFont = .menuBarFont(ofSize: 0), now: Date = Date()
+    ) -> NSAttributedString {
+        let result = NSMutableAttributedString()
         guard snapshot.fiveHour != nil || snapshot.sevenDay != nil else {
-            return "Claude: \u{2014}"
+            result.append(plain("Claude: \u{2014}", font: font))
+            return result
         }
-        var parts: [String] = []
         if let fiveHour = snapshot.fiveHour {
-            parts.append(titleSegment(fiveHour, length: PaceAlert.fiveHourLength, now: now))
+            result.append(titleSegment(fiveHour, length: PaceAlert.fiveHourLength, font: font, now: now))
         } else {
-            parts.append("100% \(fullFiveHourWindow)")
+            result.append(plain("100% \(fullFiveHourWindow)", font: font))
         }
         if let sevenDay = snapshot.sevenDay {
-            parts.append(titleSegment(sevenDay, length: PaceAlert.sevenDayLength, now: now))
+            result.append(plain(" \u{00B7} ", font: font))
+            result.append(titleSegment(sevenDay, length: PaceAlert.sevenDayLength, font: font, now: now))
         }
-        return parts.joined(separator: " \u{00B7} ")
+        return result
     }
 
     /// `5-hour session: 42% — resets 11:20 PM (in 1h 43m)`, with the pace icon
     /// appended when there is one.
-    static func row(label: String, window: UsageWindow, length: TimeInterval, now: Date = Date()) -> String {
+    static func row(
+        label: String, window: UsageWindow, length: TimeInterval,
+        font: NSFont = .menuFont(ofSize: 0), now: Date = Date()
+    ) -> NSAttributedString {
         let pct = Int(window.utilization.rounded())
         let text = "\(label): \(pct)% \u{2014} resets \(ResetFormatter.description(for: window.resetsAt, now: now))"
-        let icon = PaceAlert.evaluate(window, length: length, now: now).icon
-        return icon.isEmpty ? text : "\(text) \(icon)"
+        let result = NSMutableAttributedString(attributedString: plain(text, font: font))
+        let alert = PaceAlert.evaluate(window, length: length, now: now)
+        if alert != .none {
+            result.append(plain(" ", font: font))
+            result.append(icon(alert, font: font))
+        }
+        return result
     }
 
-    private static func titleSegment(_ window: UsageWindow, length: TimeInterval, now: Date) -> String {
-        let icon = PaceAlert.evaluate(window, length: length, now: now).icon
+    static func plain(_ text: String, font: NSFont) -> NSAttributedString {
+        NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+    }
+
+    /// Yellow for over pace, red for spent; the stale marker stays `labelColor`,
+    /// so the two `⚠︎` meanings never look alike.
+    static func color(for alert: PaceAlert) -> NSColor {
+        alert == .over ? .systemRed : .systemYellow
+    }
+
+    private static func icon(_ alert: PaceAlert, font: NSFont) -> NSAttributedString {
+        NSAttributedString(string: alert.icon, attributes: [.font: font, .foregroundColor: color(for: alert)])
+    }
+
+    private static func titleSegment(
+        _ window: UsageWindow, length: TimeInterval, font: NSFont, now: Date
+    ) -> NSAttributedString {
         // From the rounded used percent, so it agrees with the icon and the dropdown row.
         let left = max(0, 100 - Int(window.utilization.rounded()))
-        return "\(left)% \(ResetFormatter.compactTimeLeft(window.resetsAt, now: now))\(icon)"
+        let result = NSMutableAttributedString(
+            attributedString: plain("\(left)% \(ResetFormatter.compactTimeLeft(window.resetsAt, now: now))", font: font)
+        )
+        let alert = PaceAlert.evaluate(window, length: length, now: now)
+        if alert != .none { result.append(icon(alert, font: font)) }
+        return result
     }
 }
