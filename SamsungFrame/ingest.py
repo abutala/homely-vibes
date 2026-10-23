@@ -10,6 +10,7 @@ Rerunning resumes: anything already recorded in the manifest is not read again.
 import argparse
 import hashlib
 import io
+import math
 import re
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -24,7 +25,15 @@ from PIL import Image, ImageOps
 
 from lib.config import get_config
 from lib.logger import get_logger
-from SamsungFrame.frame_job import Job, Manifest, PhotoRecord, default_job_dir, reason_counts
+from SamsungFrame import photo_quality
+from SamsungFrame.frame_job import (
+    Job,
+    Manifest,
+    PhotoRecord,
+    Shot,
+    default_job_dir,
+    reason_counts,
+)
 
 pillow_heif.register_heif_opener()
 
@@ -39,9 +48,15 @@ MAX_STEM = 46  # keeps `<stem>.jpg` within 50 characters
 HASH_SUFFIX = 7  # `_` plus 6 hex digits, added on a name collision
 JPEG_QUALITIES = (90, 85, 80, 75, 70)  # tried in order until the file fits the TV's size limit
 EXIF_IFD = 0x8769
+GPS_IFD = 0x8825
 EXIF_DATETIME_ORIGINAL = 0x9003
 EXIF_DATETIME = 0x0132
 EXIF_ORIENTATION = 0x0112
+EXIF_MODEL = 0x0110
+EXIF_EXPOSURE_TIME = 0x829A
+EXIF_F_NUMBER = 0x829D
+EXIF_ISO = 0x8827
+GPS_LAT_REF, GPS_LAT, GPS_LON_REF, GPS_LON = 1, 2, 3, 4
 TRANSPOSING_ORIENTATIONS = {5, 6, 7, 8}  # EXIF values that rotate the image a quarter turn
 NAME_SIZE_REASONS = {"video", "sidecar", "not an image", "thumbnail", "small"}  # recomputed
 REREAD_REASONS = {"unreadable"}  # content skips retried on every run; "portrait" is cached
@@ -117,6 +132,45 @@ def capture_time(img: Image.Image, fallback: float) -> float:
     return fallback
 
 
+def positive(value: object) -> float | None:
+    """A usable EXIF number; None for a missing, zero or 0/0 (NaN) rational."""
+    try:
+        number: float = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def gps_degrees(gps: dict, ref_tag: int, value_tag: int) -> float | None:
+    parts = gps.get(value_tag)
+    if not parts or len(parts) != 3:
+        return None
+    deg = sum((positive(p) or 0.0) / 60.0**i for i, p in enumerate(parts))
+    if not deg:
+        return None
+    return -deg if gps.get(ref_tag) in ("S", "W") else deg
+
+
+def read_shot(img: Image.Image) -> Shot:
+    """The footnote's facts from the original's EXIF; a lat or lon of 0 counts as no GPS."""
+    exif = img.getexif()
+    sub = exif.get_ifd(EXIF_IFD)
+    gps = exif.get_ifd(GPS_IFD)
+    lat, lon = gps_degrees(gps, GPS_LAT_REF, GPS_LAT), gps_degrees(gps, GPS_LON_REF, GPS_LON)
+    taken = sub.get(EXIF_DATETIME_ORIGINAL) or exif.get(EXIF_DATETIME)
+    camera = str(exif.get(EXIF_MODEL) or "").strip("\x00 ")
+    iso = positive(sub.get(EXIF_ISO))
+    return Shot(
+        taken=str(taken)[:19] if taken else None,
+        lat=lat if lat is not None and lon is not None else None,
+        lon=lon if lat is not None and lon is not None else None,
+        camera=camera or None,
+        f_number=positive(sub.get(EXIF_F_NUMBER)),
+        exposure=positive(sub.get(EXIF_EXPOSURE_TIME)),
+        iso=int(iso) if iso else None,
+    )
+
+
 def is_portrait(img: Image.Image) -> bool:
     """Orientation-aware, from header data only (no pixel decode)."""
     width, height = img.size
@@ -144,6 +198,7 @@ def ingest_one(job: IngestJob) -> IngestResult:
             if not include_portraits and is_portrait(raw):
                 return rel, None, "portrait"
             taken = capture_time(raw, mtime)
+            shot = read_shot(raw)
             img = ImageOps.exif_transpose(raw).convert("RGB")
         img.thumbnail(MAX_BOX, Image.Resampling.LANCZOS)
         save_within_limit(img, target, max_bytes)
@@ -154,6 +209,9 @@ def ingest_one(job: IngestJob) -> IngestResult:
             width=img.width,
             height=img.height,
             sharpness=sharpness(img.convert("L")),
+            shot=shot,
+            focus=photo_quality.focus(img),
+            grain=photo_quality.grain(img),
         )
     except Exception as e:
         return rel, None, f"unreadable: {e}"

@@ -7,7 +7,8 @@ A Python client for managing art mode on Samsung Frame TVs. Upload images, confi
 ## Features
 
 - **One-command pipeline**: `frame_run.py` ingests, dedups, uploads, removes the old catalog, starts and verifies the slideshow, and sends one Pushover
-- **Ingest + Photo Dedup**: `ingest.py` turns a local or network folder (HEIC, JPG, PNG; recursive) into checkpointed <=4K JPGs; `dedup_photos.py` drops near-duplicates and reference shots (signs, plates, receipts), keeping the best-scored frame of each cluster
+- **Ingest + Photo Dedup**: `ingest.py` turns a local or network folder (HEIC, JPG, PNG; recursive) into checkpointed <=4K JPGs; `dedup_photos.py` drops out-of-focus and grainy photos, near-duplicates and reference shots (signs, plates, receipts), keeping the best-scored frame of each cluster
+- **Footnote**: every uploaded photo carries a small caption in its bottom-left corner: file name, capture date and place, camera and exposure
 - **Checkpointed upload**: every image is recorded the moment the TV has it, filenames are capped to 50 characters, and a rerun uploads only what is missing
 - **Safe cleanup**: deletes exactly the photos that were on the TV before the batch, never below a minimum photo count, and only once the whole batch is on the TV
 - **Verified slideshow**: reads the slideshow back from the TV (art mode, category, interval, shuffle, playlist) and fails if it is not really playing
@@ -102,9 +103,9 @@ Stages run as separate processes, in this order, and the run stops at the first 
 
 | Stage | Script | What it does | Checkpoint |
 |---|---|---|---|
-| 1 ingest | `ingest.py` | Filters by name and size, reads each original once, drops portraits, writes local <=4K JPGs | Manifest saved per small batch |
-| 2 dedup | `dedup_photos.py` | Drops near-duplicates and utility shots, keeps the best frame of each cluster | Kept and dropped lists |
-| 3 upload | `frame_upload.py` | Records the TV's current user photos, then uploads the kept set | Each image recorded as it lands |
+| 1 ingest | `ingest.py` | Filters by name and size, reads each original once, drops portraits, writes local <=4K JPGs, records EXIF, focus and grain | Manifest saved per small batch |
+| 2 dedup | `dedup_photos.py` | Drops out-of-focus, grainy and utility shots and near-duplicates, keeps the best frame of each cluster | Kept and dropped lists |
+| 3 upload | `frame_upload.py` | Records the TV's current user photos, then uploads footnoted copies of the kept set | Each image recorded as it lands |
 | 4 cleanup | `frame_cleanup.py` | Deletes the recorded old catalog, once every kept photo is on the TV | Idempotent: deletes what is still there |
 | 5 slideshow | `frame_slideshow.py` | Starts the slideshow, reads it back from the TV | Exit code and manifest |
 
@@ -114,7 +115,15 @@ Each stage is also a CLI on a job dir, for example `python -m SamsungFrame.frame
 
 **Notification:** exactly one Pushover per run, built from the manifest so its totals cover every attempt: uploaded of kept, skipped and dropped by reason, upload failures, photos on the TV the batch added but could not name, old photos removed and retained, and whether the slideshow was verified. A clean, verified run is silent (priority -1); a failed stage, an upload failure or an unverified slideshow is high priority.
 
-**Art carries no label or caption**: the uploader sends image bytes and a matte only, so filenames are never shown on the TV.
+**The footnote** is burned into a copy of each photo (`<job>/footnoted/`) just before upload, in the bottom-left corner: white text with a soft dark halo and no background box. Three lines, each left out when the photo lacks the data:
+
+```
+IMG_0802
+8 Aug 2022, 5:22 PM · Banff, Alberta
+iPhone 13 Pro · ƒ/2.2 · 1/117 s · ISO 100
+```
+
+The name is the original's file name without its extension, typed caption included. The place is the nearest town to the photo's GPS, looked up offline. The TV itself shows no label: the uploader sends image bytes and a matte only.
 
 **Supported formats**: HEIC, JPG, JPEG, PNG. Videos, `.AAE` sidecars and other files are ignored.
 
@@ -137,15 +146,16 @@ uv run python -m SamsungFrame.dedup_photos /tmp/frame-jobs/Trip-ab12cd --max-dis
 
 1. Lists the folder recursively and drops, by name and size alone and without reading a byte, videos, `.AAE` sidecars, other non-images, thumbnails and files under `samsung_frame.min_size_mb`
 2. Reads each remaining original once, into memory, and decodes from there; portraits are dropped after that read unless `--include-portraits`
-3. Writes an EXIF-rotated JPG of at most 3840x2160 into the job dir and records it, with capture time and sharpness, in `manifest.json`, saved after every small batch of files
+3. Writes an EXIF-rotated JPG of at most 3840x2160 into the job dir and records it in `manifest.json`, saved after every small batch of files, with capture time, sharpness, focus and grain, and the EXIF the footnote needs (camera, exposure, GPS)
 4. Rerun after any interruption: files already in the manifest are not read again, unreadable ones are retried, and name/size skips are recomputed from the folder each time
 
 **Dedup** (`dedup_photos.py`), working only on the local JPGs and the manifest:
 
-1. Apple Vision gives each photo a feature print (similarity: ~0 identical, ~0.4 near-identical, ~0.5 same scene, >0.8 unrelated), an aesthetics score and a "utility" flag; utility photos (signs, plates, receipts, screenshots) are dropped first
-2. Average-linkage clustering merges the closest pairs until none is within `--max-distance` (default 0.4); photos more than `--window` seconds apart never merge. There is no target fraction: how much is dropped depends on how many near-duplicates the folder has
-3. Per cluster, the frame with the best aesthetics score is kept (a landscape frame gets a small bonus, since the TV is landscape; sharpness only breaks ties), and the manifest records why every other photo was dropped
-4. With `--max-photos N`, the survivors are cut into N runs in capture order and the best-scored photo of each run is kept, so the selection still spans the whole album; the rest are recorded as "over the limit"
+1. Photos out of focus (the sharpest part of the frame is soft: `--min-focus`, default 1.3) or grainy (noise in the smooth areas: `--max-grain`, default 2.5) are dropped first; a shallow depth of field with a sharp subject passes
+2. Apple Vision gives each photo a feature print (similarity: ~0 identical, ~0.4 near-identical, ~0.5 same scene, >0.8 unrelated), an aesthetics score and a "utility" flag; utility photos (signs, plates, receipts, screenshots) are dropped first
+3. Average-linkage clustering merges the closest pairs until none is within `--max-distance` (default 0.4); photos more than `--window` seconds apart never merge. There is no target fraction: how much is dropped depends on how many near-duplicates the folder has
+4. Per cluster, the frame with the best aesthetics score is kept (a landscape frame gets a small bonus, since the TV is landscape; sharpness only breaks ties), and the manifest records why every other photo was dropped
+5. With `--max-photos N`, the survivors are cut into N runs in capture order and the best-scored photo of each run is kept, so the selection still spans the whole album; the rest are recorded as "over the limit"
 
 The job dir lives in `/tmp` because it is scratch: if macOS clears it, the stages redo their work. The next stages (upload, cleanup, slideshow) are described above; the step-by-step routine is in [AGENTS.md](AGENTS.md).
 
@@ -331,12 +341,16 @@ This command:
 - **`ingest.py`**: Stage 1, name/size filtering, single read per original, local <=4K JPGs, manifest saved per batch
 
 - **`dedup_photos.py`** + **`vision_features.swift`**: Stage 2, photo dedup (macOS only)
-  - Scores the ingested JPGs with Apple Vision, clusters near-duplicates, keeps the best-scored frame of each, drops utility shots
+  - Drops out-of-focus and grainy photos, scores the rest with Apple Vision, clusters near-duplicates, keeps the best-scored frame of each, drops utility shots
+
+- **`photo_quality.py`**: the focus and grain measures, taken at ingest
+
+- **`footnote.py`**: the footnote's lines, its rendering, and the footnoted copies the upload stage sends
 
 - **`manage_samsung.py`**: CLI entry point
   - Argparse-based command interface for TV management
 
-- **`test_frame_*.py`**, **`test_ingest.py`**, **`test_dedup_photos.py`**: Manifest, every pipeline stage (against hand-written fake TV clients), the driver and its notification, ingest filtering and resume, clustering and best-pick; real-Vision tests are skipped off macOS
+- **`test_frame_*.py`**, **`test_ingest.py`**, **`test_dedup_photos.py`**, **`test_photo_quality.py`**, **`test_footnote.py`**: Manifest, every pipeline stage (against hand-written fake TV clients), the driver and its notification, ingest filtering and resume, clustering and best-pick; real-Vision tests are skipped off macOS
 
 ### Data Models (Pydantic)
 

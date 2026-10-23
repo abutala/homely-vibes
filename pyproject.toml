@@ -44,6 +44,8 @@ dependencies = [
     "tesla-fleet-api>=1.4.7",
     "ring-doorbell>=0.9.0",
     "pyeconet>=0.2.2",
+    "reverse-geocoder>=1.5.1",
+    "scipy>=1.18.1",
 ]
 
 [project.optional-dependencies]
@@ -235,6 +237,8 @@ module = [
     "webview.*",
     "selenium.*",
     "geopy.*",
+    "reverse_geocoder.*",
+    "scipy.*",
     "tensorflow.*",
     "keras.*",
     "aiy.*",

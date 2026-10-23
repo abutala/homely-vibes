@@ -50,11 +50,12 @@ client.connect_ready()  # Same full bootstrap path
 - `samsung_client.py` — WebSocket client wrapping `samsungtvws` (NickWaterton fork v3.0.5)
 - `manage_samsung.py` — CLI entry point with subcommands
 - `frame_job.py` — job dir (`/tmp/frame-jobs/...`) and the manifest every pipeline stage reads and writes
-- `ingest.py` — stage 1: filter by name/size, read each original once, write local <=4K JPGs, manifest saved after every small batch
+- `ingest.py` — stage 1: filter by name/size, read each original once, write local <=4K JPGs, record EXIF (for the footnote), focus and grain; manifest saved after every small batch
 - `frame_album.py` + `album_queue.py` — the weekly album: a queue of library albums (`index.tsv`), which pictures of an album to show (labelled files, else its picks CSV, else dedup, which writes that CSV into the album folder), skip-if-small, split-if-big, then `frame_run` with cleanup on. Usage and rules: README, "A New Album Every Week"
 - `frame_run.py` — the driver: runs the stages as separate processes, retries the upload stage, sends one Pushover built from the manifest
-- `frame_upload.py` / `frame_cleanup.py` / `frame_slideshow.py` — stages 3 to 5: checkpointed upload, snapshot-based cleanup with the minimum-photo floor, slideshow with read-back verification
-- `dedup_photos.py` + `vision_features.swift` — stage 2: drop near-duplicates and utility shots from an ingested job (macOS Vision: feature prints, aesthetics score, utility flag; average-linkage clustering); output feeds `frame_upload.py`
+- `footnote.py` — the bottom-left footnote (name; date and place; camera and exposure), burned into copies in `<job>/footnoted/` that the upload stage sends; places from an offline town table
+- `frame_upload.py` / `frame_cleanup.py` / `frame_slideshow.py` — stages 3 to 5: checkpointed upload of the footnoted copies, snapshot-based cleanup with the minimum-photo floor, slideshow with read-back verification
+- `dedup_photos.py` + `vision_features.swift` — stage 2: drop out-of-focus and grainy photos (measured at ingest by `photo_quality.py`), near-duplicates and utility shots from an ingested job (macOS Vision: feature prints, aesthetics score, utility flag; average-linkage clustering); output feeds `frame_upload.py`
 - Config keys (read once into `client.cfg`; there is no module-level config): `cfg.samsung_frame.ip`, `.port`, `.mac`, `.token_file`, `.default_matte`, `.min_images`, `.min_size_mb`, `.max_image_size_mb`, `.slideshow_delay_seconds`, `.albums.*` (the album queue), `.wol_password`, `.smartthings_token`, `.smartthings_device_id`
 
 ## TV Art API
@@ -84,7 +85,7 @@ Key for this codebase:
 ## CLI Commands
 - `frame_run.py <source_dir>` — `--job`, `--include-portraits`, `--no-dedup`, `--window`, `--max-distance`, `--max-photos`, `--upload-attempts`, `--no-cleanup`, `--duration`, `--no-notify`
 - `ingest.py <source_dir>` — `--job`, `--include-portraits`, `--workers`
-- `dedup_photos.py <job_dir>` — `--window`, `--max-distance`, `--max-photos`
+- `dedup_photos.py <job_dir>` — `--window`, `--max-distance`, `--max-photos`, `--min-focus`, `--max-grain`
 - `frame_upload.py <job_dir>` — `--matte`, `--timeout`
 - `frame_cleanup.py <job_dir>` — `--dry-run`, `--min-images`, `--timeout`
 - `frame_slideshow.py <job_dir>` — `--duration`, `--no-shuffle`, `--timeout`
@@ -92,5 +93,5 @@ Key for this codebase:
 - `manage_samsung.py status|list-art|list-mattes|delete-all|download-thumbnails|update-mattes|cycle-images|start-slideshow|reboot|purge`
 
 ## Testing
-- Tests in `test_samsung_client.py`, `test_manage_samsung.py`, `test_frame_job.py`, `test_ingest.py`, `test_dedup_photos.py`, `test_frame_upload.py`, `test_frame_cleanup.py`, `test_frame_slideshow.py`, `test_frame_run.py`, `test_album_queue.py` and `test_frame_album.py` (real-Vision tests skip off macOS). Stage tests pass hand-written fake TV clients into the stage functions: no `patch()`
+- Tests in `test_samsung_client.py`, `test_manage_samsung.py`, `test_frame_job.py`, `test_ingest.py`, `test_dedup_photos.py`, `test_photo_quality.py`, `test_footnote.py`, `test_frame_upload.py`, `test_frame_cleanup.py`, `test_frame_slideshow.py`, `test_frame_run.py`, `test_album_queue.py` and `test_frame_album.py` (real-Vision tests skip off macOS). Stage tests pass hand-written fake TV clients into the stage functions: no `patch()`
 - No test uses `patch()`. The client takes its config and a `TvIo` (TV constructor, REST client, HTTP post, UDP socket, sleep) as parameters; `test_samsung_client.py` passes fakes for those and uses the `Scripted` subclass to answer the client's own methods (`connect`, `ensure_art_mode`, ...) from a script. `manage_samsung.run_command` takes a client factory, and the confirm prompts take an `ask` callable

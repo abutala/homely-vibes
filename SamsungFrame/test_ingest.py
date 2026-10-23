@@ -7,7 +7,9 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from SamsungFrame.frame_job import Job, Manifest, PhotoRecord
+from PIL.TiffImagePlugin import IFDRational
+
+from SamsungFrame.frame_job import Job, Manifest, PhotoRecord, Shot
 from SamsungFrame.ingest import (
     IngestJob,
     IngestResult,
@@ -19,6 +21,7 @@ from SamsungFrame.ingest import (
     jpg_name,
     list_source,
     pending,
+    read_shot,
     run_ingest,
     skip_reason,
     summarize,
@@ -138,6 +141,54 @@ class TestImageFacts:
         pattern(1).save(plain)
         with Image.open(plain) as img:
             assert capture_time(img, 7.0) == 7.0
+
+
+def camera_exif() -> Image.Exif:
+    exif = Image.Exif()
+    exif[0x0110] = "iPhone 13 Pro\x00"
+    sub = exif.get_ifd(0x8769)
+    sub[0x9003] = "2022:08:08 17:22:43"
+    sub[0x829D] = IFDRational(11, 5)
+    sub[0x829A] = IFDRational(1, 117)
+    sub[0x8827] = 100
+    gps = exif.get_ifd(0x8825)
+    gps.update({1: "N", 2: (51.0, 15.0, 36.0), 3: "W", 4: (115.0, 49.0, 48.0)})
+    return exif
+
+
+class TestReadShot:
+    def shot(self, tmp_path: Path, exif: Image.Exif | None) -> Shot:
+        path = tmp_path / "s.jpg"
+        pattern(1).save(path, exif=exif or Image.Exif())
+        with Image.open(path) as img:
+            return read_shot(img)
+
+    def test_every_field_from_exif(self, tmp_path: Path) -> None:
+        shot = self.shot(tmp_path, camera_exif())
+        assert shot.model_dump(exclude={"lat", "lon"}) == {
+            "taken": "2022:08:08 17:22:43",
+            "camera": "iPhone 13 Pro",
+            "f_number": 2.2,
+            "exposure": pytest.approx(1 / 117),
+            "iso": 100,
+        }
+        assert shot.where == pytest.approx((51.26, -115.83))
+
+    def test_no_exif_is_an_empty_shot(self, tmp_path: Path) -> None:
+        assert self.shot(tmp_path, None) == Shot()
+
+    def test_zero_rationals_and_null_island_are_missing(self, tmp_path: Path) -> None:
+        exif = camera_exif()
+        exif.get_ifd(0x8769)[0x829D] = IFDRational(0, 0)
+        exif.get_ifd(0x8825).update({2: (0.0, 0.0, 0.0), 4: (0.0, 0.0, 0.0)})
+        shot = self.shot(tmp_path, exif)
+        assert shot.f_number is None and shot.where is None and shot.camera == "iPhone 13 Pro"
+
+    def test_ingest_records_the_shot(self, tmp_path: Path) -> None:
+        pattern(1).save(tmp_path / "c.jpg", exif=camera_exif())
+        (tmp_path / "out").mkdir()
+        _, record, _ = ingest_one((tmp_path, "c.jpg", tmp_path / "out" / "c.jpg", False, NO_LIMIT))
+        assert record is not None and record.shot.camera == "iPhone 13 Pro"
 
 
 class TestIngestOne:

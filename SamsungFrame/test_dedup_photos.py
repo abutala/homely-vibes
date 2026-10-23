@@ -10,12 +10,15 @@ import pytest
 
 from SamsungFrame.dedup_photos import (
     DEFAULT_MAX_DISTANCE,
+    DEFAULT_MAX_GRAIN,
+    DEFAULT_MIN_FOCUS,
     OVER_LIMIT,
     VisionFeatures,
     cluster,
     dedup,
     link_kept,
     pick_best,
+    quality_reason,
     vision_features,
 )
 from SamsungFrame.frame_job import Job, Manifest, PhotoRecord
@@ -28,11 +31,43 @@ def matrix(rows: list[list[float]]) -> np.ndarray:
 
 
 def photo(
-    name: str, sharp: float = 1.0, width: int = 400, height: int = 300, time: float = 0.0
+    name: str,
+    sharp: float = 1.0,
+    width: int = 400,
+    height: int = 300,
+    time: float = 0.0,
+    focus: float | None = None,
+    grain: float | None = None,
 ) -> PhotoRecord:
     return PhotoRecord(
-        name=name, source=name, time=time, width=width, height=height, sharpness=sharp
+        name=name,
+        source=name,
+        time=time,
+        width=width,
+        height=height,
+        sharpness=sharp,
+        focus=focus,
+        grain=grain,
     )
+
+
+class TestQualityReason:
+    @pytest.mark.parametrize(
+        ("focus", "grain", "reason"),
+        [
+            (2.0, 0.5, None),
+            (1.0, 0.5, "out of focus"),
+            (2.0, 4.0, "grainy"),
+            (1.0, 4.0, "out of focus"),
+            (None, None, None),
+            (DEFAULT_MIN_FOCUS, DEFAULT_MAX_GRAIN, None),
+        ],
+    )
+    def test_thresholds(self, focus: float | None, grain: float | None, reason: str | None) -> None:
+        got = quality_reason(
+            photo("a", focus=focus, grain=grain), DEFAULT_MIN_FOCUS, DEFAULT_MAX_GRAIN
+        )
+        assert got == reason
 
 
 class TestCluster:
@@ -115,11 +150,26 @@ class TestDedupFlow:
 
     NAMES = ["a.jpg", "b.jpg", "c.jpg", "d.jpg"]
 
-    def job(self, tmp_path: Path, times: dict[str, float] | None = None) -> Job:
+    def job(
+        self,
+        tmp_path: Path,
+        times: dict[str, float] | None = None,
+        quality: dict[str, tuple[float, float]] | None = None,
+    ) -> Job:
         job = Job(tmp_path / "job")
         job.create()
-        times = times or {}
-        manifest = Manifest(photos={n: photo(n, time=times.get(n, 0.0)) for n in self.NAMES})
+        times, quality = times or {}, quality or {}
+        manifest = Manifest(
+            photos={
+                n: photo(
+                    n,
+                    time=times.get(n, 0.0),
+                    focus=quality.get(n, (None, None))[0],
+                    grain=quality.get(n, (None, None))[1],
+                )
+                for n in self.NAMES
+            }
+        )
         for name in self.NAMES:
             (job.jpg_dir / name).write_bytes(name.encode())
         job.save(manifest)
@@ -191,6 +241,14 @@ class TestDedupFlow:
         kept = self.run(job, labelled)
         assert job.load().captions == {"b.jpg": "Mountain blue sky", "c.jpg": "", "d.jpg": "Lake"}
         assert kept == ["b.jpg", "c.jpg", "d.jpg"]
+
+    def test_blurred_and_grainy_photos_are_dropped_before_clustering(self, tmp_path: Path) -> None:
+        # b would beat its twin a; out of focus, it must not take a down with it
+        job = self.job(
+            tmp_path, quality={"b.jpg": (0.8, 0.5), "c.jpg": (2.0, 6.0), "d.jpg": (2.0, 0.5)}
+        )
+        assert self.run(job, self.features()) == ["a.jpg", "d.jpg"]
+        assert job.load().dropped == {"b.jpg": "out of focus", "c.jpg": "grainy"}
 
     def test_everything_utility_keeps_nothing(self, tmp_path: Path) -> None:
         job = self.job(tmp_path)
