@@ -14,7 +14,7 @@ let package = Package(
                 "Assets.xcassets", "AugustClient.swift", "AugustBLEOperation.swift",
                 "AugustUnlockApp.swift", "ContentView.swift", "KeychainStore.swift",
             ],
-            sources: ["AugustBLEProtocol.swift", "BackgroundExitPolicy.swift"],
+            sources: ["AugustBLEProtocol.swift", "BackgroundExitPolicy.swift", "QueuedToggle.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

@@ -26,6 +26,9 @@ struct ContentView: View {
     /// The status check, lock or unlock in flight, kept so a newer one can
     /// cancel it — see `run(_:)`.
     @State private var operationTask: Task<Void, Never>?
+    /// The opposite command, queued by a tap while one is in flight; `run(_:)`
+    /// starts it the moment the current one ends.
+    @State private var queuedToggle = QueuedToggle()
     /// Set when the scene actually reaches `.background`, consumed on the
     /// next `.active`. A real background resume is `.background ->
     /// .inactive -> .active` (two onChange calls, never one direct
@@ -327,7 +330,6 @@ struct ContentView: View {
                     }
                 }
             }
-            .disabled(isOperating)
 
             statusText
 
@@ -420,7 +422,9 @@ struct ContentView: View {
             Text("\(stateLabel) \u{2014} tap to \(lockState == .unlocked ? "lock" : "unlock")")
                 .foregroundStyle(.secondary)
         case .inProgress(let unlocking):
-            Text(unlocking ? "Unlocking\u{2026}" : "Locking\u{2026}").foregroundStyle(.secondary)
+            let next = queuedToggle.unlocking.map { $0 ? "then unlock" : "then lock" }
+                ?? (unlocking ? "tap to lock" : "tap to unlock")
+            Text("\(unlocking ? "Unlocking" : "Locking")\u{2026} \(next)").foregroundStyle(.secondary)
         case .success: Text(stateLabel).foregroundStyle(lockState == .unlocked ? .green : .secondary)
         case .failure(let message): Text(message).foregroundStyle(.red).font(.footnote)
         }
@@ -428,8 +432,13 @@ struct ContentView: View {
 
     /// Button tap: locks if August last reported unlocked, otherwise
     /// unlocks — including when the state is unknown, since unlocking is
-    /// what this app is for.
+    /// what this app is for. A tap while one is in flight queues the opposite
+    /// instead, and a second tap clears it (see `QueuedToggle`).
     private func performToggle() {
+        if case .inProgress(let unlocking) = operationResult {
+            queuedToggle.tap(inFlightUnlocking: unlocking)
+            return
+        }
         run { try await performOperation(unlocking: lockState != .unlocked) }
     }
 
@@ -452,13 +461,19 @@ struct ContentView: View {
     /// cancelled one's late reply can't overwrite its replacement's. The
     /// operation keeps running if the app is backgrounded mid-flight, and the
     /// app may suspend once it ends. If iOS takes the time back first, the
-    /// operation is dropped and the next open unlocks again.
+    /// operation is dropped and the next open unlocks again. A queued toggle
+    /// starts as soon as the operation ends, success or failure, before this
+    /// one's background task ends, so iOS can't suspend the app between them.
     private func run(_ operation: @escaping () async throws -> Void) {
         operationTask?.cancel()
+        queuedToggle.clear()
         var task: Task<Void, Never>?
         let keepAlive = BackgroundKeepAlive {
             task?.cancel()
-            if task == operationTask { operationResult = .idle }
+            if task == operationTask {
+                operationResult = .idle
+                queuedToggle.clear()
+            }
         }
         task = Task {
             do {
@@ -468,6 +483,11 @@ struct ContentView: View {
                     operationResult = .failure(error.localizedDescription)
                     UINotificationFeedbackGenerator().notificationOccurred(.error)
                 }
+            }
+            if !Task.isCancelled, let next = queuedToggle.take() {
+                run { try await performOperation(unlocking: next) }
+                keepAlive.end()
+                return
             }
             keepAlive.end()
             guard !Task.isCancelled else { return }
