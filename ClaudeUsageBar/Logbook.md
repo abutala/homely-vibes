@@ -117,7 +117,8 @@ stderr fallback — a dead arm hides behind a test that only proves the fallback
 `GET https://api.anthropic.com/api/oauth/usage` was reverse-engineered from the
 installed `claude` binary via `strings`; it is not publicly documented, so the
 schema can move without notice — a payload that no longer parses surfaces as
-`credentials unreadable` in the dropdown. The response also carries further
+`unexpected response` in the dropdown
+(`Unavailable (…)` on a cold start, `Stale data (…)` after a good fetch). The response also carries further
 fields (per-channel overage, codenamed feature flags) not surfaced yet.
 
 ### `utilization` above 100 is unconfirmed

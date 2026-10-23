@@ -38,7 +38,8 @@ enum UsageText {
 
     private static func titleSegment(_ window: UsageWindow, length: TimeInterval, now: Date) -> String {
         let icon = PaceAlert.evaluate(window, length: length, now: now).icon
-        let left = max(0, Int((100 - window.utilization).rounded()))
+        // From the rounded used percent, so it agrees with the icon and the dropdown row.
+        let left = max(0, 100 - Int(window.utilization.rounded()))
         return "\(icon)\(left)% \(ResetFormatter.compactTimeLeft(window.resetsAt, now: now))"
     }
 }

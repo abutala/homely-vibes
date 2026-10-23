@@ -88,6 +88,12 @@ final class UsageTextTests: XCTestCase {
         XCTAssertEqual(UsageText.title(for: snap, now: now), "\u{26A0}\u{FE0E}10% 2.5h \u{00B7} !0% 3.0d")
     }
 
+    /// 99.5% used rounds to 100: `!0%`, never `!1%`.
+    func testTitlePercentLeftAgreesWithTheIconAtHalfPercent() {
+        let snap = snapshot(fiveHour: window(used: 99.5, secondsLeft: 2.5 * 3600), sevenDay: nil)
+        XCTAssertEqual(UsageText.title(for: snap, now: now), "!0% 2.5h")
+    }
+
     func testAbsentFiveHourWindowGetsNoIcon() {
         let snap = snapshot(fiveHour: nil, sevenDay: window(used: 18, secondsLeft: 3.1 * 86400))
         XCTAssertEqual(UsageText.title(for: snap, now: now), "100% 5.0h \u{00B7} 82% 3.1d")
