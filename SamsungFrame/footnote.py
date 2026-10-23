@@ -20,7 +20,8 @@ from SamsungFrame.ingest import save_within_limit
 logger = get_logger(__name__)
 
 FONT_PATHS = ("/System/Library/Fonts/HelveticaNeue.ttc", "/System/Library/Fonts/Helvetica.ttc")
-NAME_SCALE = 0.024  # name line height as a share of image height
+SCREEN_ASPECT = 16 / 9  # the Frame fills its screen by cropping the photo to this, centred
+NAME_SCALE = 0.024  # name line height as a share of the visible height
 DETAIL_SCALE = 0.018
 MARGIN_SCALE = 0.025
 GAP_SCALE = 0.006
@@ -73,18 +74,30 @@ def footnote_lines(source: str, shot: Shot, place: str | None) -> list[str]:
     return [r for r in rows if r]
 
 
+def screen_box(width: int, height: int) -> tuple[int, int, int, int]:
+    """(left, top, right, bottom) of the part of a photo the TV shows once it fills the screen:
+    a 4:3 photo loses its top and bottom, a panorama its sides."""
+    if width / height > SCREEN_ASPECT:
+        shown = round(height * SCREEN_ASPECT)
+        return (width - shown) // 2, 0, (width - shown) // 2 + shown, height
+    shown = round(width / SCREEN_ASPECT)
+    return 0, (height - shown) // 2, width, (height - shown) // 2 + shown
+
+
 def stamp(img: Image.Image, lines: list[str]) -> Image.Image:
-    """A copy of `img` with `lines` in its bottom-left corner, sized to the image height."""
-    h = img.height
+    """A copy of `img` with `lines` in the bottom-left corner of what the TV shows of it,
+    sized to that visible height."""
+    left, top, _, bottom = screen_box(*img.size)
+    h = bottom - top
     fonts = [font(round(h * NAME_SCALE))] + [font(round(h * DETAIL_SCALE))] * (len(lines) - 1)
     margin, gap = round(h * MARGIN_SCALE), round(h * GAP_SCALE)
     heights = [f.getbbox("Ag")[3] for f in fonts]
-    y = h - margin - sum(heights) - gap * (len(lines) - 1)
+    y = bottom - margin - sum(heights) - gap * (len(lines) - 1)
 
     text = Image.new("L", img.size, 0)
     draw = ImageDraw.Draw(text)
     for line, f, line_height in zip(lines, fonts, heights):
-        draw.text((margin, y), line, font=f, fill=255)
+        draw.text((left + margin, y), line, font=f, fill=255)
         y += line_height + gap
 
     halo = text.filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(h * 0.003))
@@ -97,8 +110,10 @@ def stamp(img: Image.Image, lines: list[str]) -> Image.Image:
 def name_places(manifest: Manifest, names: list[str], places: Places) -> dict[str, str | None]:
     """Place of each named photo that has GPS, in one lookup; none if the lookup fails."""
     located = {n: w for n in names if (w := manifest.photos[n].shot.where)}
+    if not located:
+        return {}  # never load the town table for a batch with no GPS
     try:
-        return dict(zip(located, places(list(located.values()))))
+        return dict(zip(located, places(list(located.values())), strict=True))
     except Exception as e:
         logger.warning(f"Footnotes without places: the place lookup failed: {e}")
         return {}

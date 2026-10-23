@@ -131,6 +131,7 @@ Calibrated on 115 photos from three albums (a 2008 DSLR, a 2019 phone with scann
 - **Places come from an offline table** (`reverse_geocoder`, GeoNames towns with 1000+ people), so no coordinate leaves the machine and there is no rate limit. It names the nearest town, not the landmark: Johnston Canyon reads "Banff, Alberta".
 - **A footnote is never a reason to skip a photo.** A copy that fails, or comes out over `max_image_size_mb`, is uploaded plain with a warning; a failed place lookup leaves the place out. The copy is written to a temp file and renamed, because a rerun trusts any copy it finds.
 - **A count-1 EXIF tag is a bare value, not a tuple.** A GPS coordinate stored as one rational made `len()` raise inside ingest's catch-all, which records the photo as unreadable and retries it forever. Anything read for the footnote must fail soft.
+- **The TV crops to 16:9 when it fills the screen.** The first footnote sat at the bottom of a 4:3 photo and was cut off on the TV, because filling the screen crops a 4:3 photo top and bottom by an eighth each (2026-10-23). The footnote is now placed and sized inside the centred 16:9 box (`screen_box`), and a panorama, which loses its sides, gets the same treatment. This assumes a centred crop.
 - **The matte shrinks it.** With `shadowbox_black` the photo fills about 80% of the screen height, and the footnote with it: about 1 cm per line on a 55" TV (accepted 2026-10-23).
 
 ### Dedup Scaling

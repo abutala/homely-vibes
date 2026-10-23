@@ -9,7 +9,9 @@ from PIL import Image
 from SamsungFrame.footnote import (
     footnote_job,
     footnote_lines,
+    name_places,
     offline_places,
+    screen_box,
     shutter,
     stamp,
 )
@@ -77,6 +79,25 @@ class TestStamp:
         assert (out[: int(900 * 0.8)] == np.asarray(img)[: int(900 * 0.8)]).all()
         assert (out[:, 1100:] == np.asarray(img)[:, 1100:]).all()
 
+    @pytest.mark.parametrize(
+        ("size", "screen"),
+        [
+            ((2880, 2160), (0, 270, 2880, 1890)),  # 4:3: the TV crops top and bottom
+            ((4000, 1000), (1111, 0, 2889, 1000)),  # panorama: the TV crops the sides
+            ((3840, 2160), (0, 0, 3840, 2160)),  # 16:9 fills the screen as is
+        ],
+    )
+    def test_stays_inside_what_the_tv_shows(
+        self, size: tuple[int, int], screen: tuple[int, int, int, int]
+    ) -> None:
+        assert screen_box(*size) == screen
+        img = Image.new("RGB", size, (90, 120, 150))
+        changed = np.argwhere((np.asarray(stamp(img, self.LINES)) != np.asarray(img)).any(axis=2))
+        (top, left), (bottom, right) = changed.min(axis=0), changed.max(axis=0)
+        x0, y0, x1, y1 = screen
+        assert x0 < left and right < x1 and y0 < top and bottom < y1
+        assert bottom > y1 - (y1 - y0) * 0.1, "still at the bottom of the screen"
+
     def test_the_original_is_left_untouched(self) -> None:
         img = Image.new("RGB", (800, 450), "white")
         stamp(img, self.LINES)
@@ -127,7 +148,7 @@ class TestFootnoteJob:
         footnote_job(job, manifest, ["a.jpg"], Places(), NO_LIMIT)
         again = Places()
         footnote_job(job, manifest, ["a.jpg"], again, NO_LIMIT)
-        assert again.calls == [[]]
+        assert again.calls == [], "no lookup when every copy exists"
 
     def test_an_unreadable_jpg_is_sent_plain(self, tmp_path: Path) -> None:
         job, manifest = make_job(tmp_path, {"a.jpg": BANFF, "b.jpg": BANFF})
@@ -141,6 +162,10 @@ class TestFootnoteJob:
         files = footnote_job(job, manifest, ["a.jpg"], Places(), max_bytes=100)
         assert files == [job.jpg_dir / "a.jpg"]
         assert list(job.footnoted_dir.iterdir()) == [], "no copy and no temp file is left"
+
+    def test_a_lookup_that_answers_short_leaves_every_place_out(self, tmp_path: Path) -> None:
+        job, manifest = make_job(tmp_path, {"a.jpg": BANFF, "b.jpg": BANFF})
+        assert name_places(manifest, ["a.jpg", "b.jpg"], lambda coords: ["Banff, Alberta"]) == {}
 
     def test_a_failed_place_lookup_still_footnotes(self, tmp_path: Path) -> None:
         job, manifest = make_job(tmp_path, {"a.jpg": BANFF})

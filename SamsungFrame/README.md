@@ -115,7 +115,7 @@ Each stage is also a CLI on a job dir, for example `python -m SamsungFrame.frame
 
 **Notification:** exactly one Pushover per run, built from the manifest so its totals cover every attempt: uploaded of kept, skipped and dropped by reason, upload failures, photos on the TV the batch added but could not name, old photos removed and retained, and whether the slideshow was verified. A clean, verified run is silent (priority -1); a failed stage, an upload failure or an unverified slideshow is high priority.
 
-**The footnote** is burned into a copy of each photo (`<job>/footnoted/`) just before upload, in the bottom-left corner: white text with a soft dark halo and no background box. Three lines, each left out when the photo lacks the data:
+**The footnote** is burned into a copy of each photo (`<job>/footnoted/`) just before upload, in the bottom-left corner of the part the TV shows when it fills its 16:9 screen (a 4:3 photo loses its top and bottom): white text with a soft dark halo and no background box. Three lines, each left out when the photo lacks the data:
 
 ```
 IMG_0802
@@ -341,7 +341,7 @@ This command:
 - **`ingest.py`**: Stage 1, name/size filtering, single read per original, local <=4K JPGs, manifest saved per batch
 
 - **`dedup_photos.py`** + **`vision_features.swift`**: Stage 2, photo dedup (macOS only)
-  - Scores the ingested JPGs with Apple Vision, drops utility, out-of-focus and grainy shots, clusters near-duplicates, keeps the best-scored frame of each, drops utility shots
+  - Scores the ingested JPGs with Apple Vision, drops utility, out-of-focus and grainy shots, clusters near-duplicates, keeps the best-scored frame of each
 
 - **`photo_quality.py`**: the focus and grain measures, taken at ingest
 
