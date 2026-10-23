@@ -327,7 +327,6 @@ struct ContentView: View {
                     }
                 }
             }
-            .disabled(isOperating)
 
             statusText
 
@@ -420,7 +419,8 @@ struct ContentView: View {
             Text("\(stateLabel) \u{2014} tap to \(lockState == .unlocked ? "lock" : "unlock")")
                 .foregroundStyle(.secondary)
         case .inProgress(let unlocking):
-            Text(unlocking ? "Unlocking\u{2026}" : "Locking\u{2026}").foregroundStyle(.secondary)
+            Text(unlocking ? "Unlocking\u{2026} tap to lock" : "Locking\u{2026} tap to unlock")
+                .foregroundStyle(.secondary)
         case .success: Text(stateLabel).foregroundStyle(lockState == .unlocked ? .green : .secondary)
         case .failure(let message): Text(message).foregroundStyle(.red).font(.footnote)
         }
@@ -428,9 +428,21 @@ struct ContentView: View {
 
     /// Button tap: locks if August last reported unlocked, otherwise
     /// unlocks — including when the state is unknown, since unlocking is
-    /// what this app is for.
+    /// what this app is for. A tap while one is in flight cancels it and sends
+    /// the opposite: over Bluetooth a cancel before the command write means
+    /// the first command never reaches the lock. A cloud request August
+    /// already holds can't be recalled — see the Logbook. The new command is
+    /// shown at once, so a fast second tap reads it, not the cancelled one.
     private func performToggle() {
-        run { try await performOperation(unlocking: lockState != .unlocked) }
+        let unlocking: Bool
+        if case .inProgress(let inFlightUnlocking) = operationResult {
+            unlocking = !inFlightUnlocking
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        } else {
+            unlocking = lockState != .unlocked
+        }
+        operationResult = .inProgress(unlocking: unlocking)
+        run { try await performOperation(unlocking: unlocking) }
     }
 
     private func performOperation(unlocking: Bool) async throws {
