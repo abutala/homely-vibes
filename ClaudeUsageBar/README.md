@@ -58,6 +58,16 @@ can be launched from Finder/Spotlight/login items like a normal app.
   32.5% used, with 10% left above 92.5%. The rule runs on the displayed
   (rounded) percent, and a window past its reset gets no icon. Logic and table:
   `PaceAlert.swift`. `⚠︎` means pace only; a failed refresh uses `↻` (below).
+- **Forecast**: under each dropdown row, an indented line projects the window
+  at its average rate so far — `At this pace: 80% at reset · room 17%/day (even
+  14%/day)`, or `out ~Sat 3:10 PM (in 2d 4h)` when 100% lands before the reset.
+  `room` is the rate that spends exactly the rest of the budget by the reset;
+  `even` is 100% spread over the whole window. Rates are per hour for the
+  5-hour window, per day for the 7-day ones. The first 5% of a window shows
+  `Too early to project`. Logic: `Forecast.swift`.
+- **Dropdown contrast**: info rows stay enabled (`autoenablesItems = false`) so
+  they render at full contrast; AppKit greys out disabled rows. A click on one
+  only closes the menu.
 - **Failure states**: a failed refresh never blanks a working display — the last
   good numbers stay, marked with a trailing `↻`, with the reason in the dropdown. "Open the
   Claude app and sign in" appears only when the desktop login is genuinely

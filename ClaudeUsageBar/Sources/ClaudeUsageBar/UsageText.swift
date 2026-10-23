@@ -54,6 +54,35 @@ enum UsageText {
         return result
     }
 
+    /// Second line under a window row: where the window ends up at the average
+    /// rate so far, and the rate that spends the rest exactly by the reset, next
+    /// to even spend. `At this pace: 6% at reset · room 21%/h (even 20%/h)`.
+    static func forecastRow(
+        window: UsageWindow, length: TimeInterval,
+        font: NSFont = .menuFont(ofSize: 0), now: Date = Date()
+    ) -> NSAttributedString {
+        plain(forecastText(window: window, length: length, now: now), font: font)
+    }
+
+    static func forecastText(window: UsageWindow, length: TimeInterval, now: Date = Date()) -> String {
+        let (unit, unitLabel) = length <= PaceAlert.fiveHourLength ? (3600.0, "h") : (86400.0, "day")
+        guard let forecast = Forecast.make(window, length: length, unit: unit, now: now) else {
+            return window.utilization.rounded() >= 100 ? "Spent until reset" : "Resetting now"
+        }
+        let rates = "room \(rate(forecast.roomRate, unitLabel)) (even \(rate(forecast.evenRate, unitLabel)))"
+        if let runsOutAt = forecast.runsOutAt {
+            return "At this pace: out ~\(ResetFormatter.description(for: runsOutAt, now: now)) \u{00B7} \(rates)"
+        }
+        if let atReset = forecast.atReset {
+            return "At this pace: \(Int(atReset.rounded()))% at reset \u{00B7} \(rates)"
+        }
+        return "Too early to project \u{00B7} \(rates)"
+    }
+
+    private static func rate(_ value: Double, _ unitLabel: String) -> String {
+        "\(String(format: value < 10 ? "%.1f" : "%.0f", value))%/\(unitLabel)"
+    }
+
     static func plain(_ text: String, font: NSFont) -> NSAttributedString {
         NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
     }

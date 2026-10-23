@@ -125,6 +125,9 @@ final class StatusItemController {
 
     private func buildMenu(state: State) {
         let menu = NSMenu()
+        // Info rows have no action, so auto-enabling would grey them out to the
+        // point of being hard to read. Kept enabled; a click only closes the menu.
+        menu.autoenablesItems = false
 
         switch state {
         case .loading:
@@ -175,6 +178,10 @@ final class StatusItemController {
             let item = NSMenuItem(title: "", action: nil, keyEquivalent: "")
             item.attributedTitle = UsageText.row(label: label, window: window, length: length)
             menu.addItem(item)
+            let forecast = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            forecast.attributedTitle = UsageText.forecastRow(window: window, length: length)
+            forecast.indentationLevel = 1
+            menu.addItem(forecast)
         }
 
         if let spend = snapshot.spend {
