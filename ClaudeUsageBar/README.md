@@ -59,11 +59,11 @@ can be launched from Finder/Spotlight/login items like a normal app.
   (rounded) percent, and a window past its reset gets no icon. Logic and table:
   `PaceAlert.swift`. `⚠︎` means pace only; a failed refresh uses `↻` (below).
 - **Forecast**: under each dropdown row, an indented line projects the window
-  at its average rate so far — `At this pace: 80% at reset · room 17%/day`, or
-  `out ~Sat 3:10 PM (in 2d 4h)` when 100% lands before the reset. `room` is the
-  rate that spends exactly the rest of the budget by the reset. Rates are per hour for the
-  5-hour window, per day for the 7-day ones. The first 5% of a window shows
-  `Too early to project`. Logic: `Forecast.swift`.
+  at its average rate so far — `At this pace: 80% at reset`, or, when 100%
+  lands before the reset, only when it runs out:
+  `At this pace: runs out Sun 4:20 AM (in 1d 13h)`. The first 5% of a window
+  shows `Too early to project`; a spent window shows `Spent until reset`.
+  Logic: `Forecast.swift`.
 - **Dropdown contrast**: info rows stay enabled (`autoenablesItems = false`) so
   they render at full contrast; AppKit greys out disabled rows. A click on one
   only closes the menu.
