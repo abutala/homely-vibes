@@ -1,7 +1,7 @@
 """Checkpointed state shared by the frame pipeline stages.
 
-A job is a local directory holding the downsized JPGs, the deduped hard links and one
-manifest. Stages (ingest, dedup, upload, cleanup, slideshow) are separate scripts that read and
+A job is a local directory holding the downsized JPGs, the deduped hard links, the footnoted
+upload copies and one manifest. Stages (ingest, dedup, upload, cleanup, slideshow) are separate scripts that read and
 write only this manifest, so any stage can be rerun and resumes from what is already recorded.
 """
 
@@ -17,6 +17,22 @@ from pydantic import BaseModel, Field
 JOBS_ROOT = Path("/tmp/frame-jobs")  # scratch: a lost job just redoes its stages
 
 
+class Shot(BaseModel):
+    """What the camera recorded, for the footnote; any field the EXIF lacks is None."""
+
+    taken: str | None = None  # EXIF "%Y:%m:%d %H:%M:%S", local wall-clock time
+    lat: float | None = None
+    lon: float | None = None
+    camera: str | None = None
+    f_number: float | None = None
+    exposure: float | None = None  # seconds
+    iso: int | None = None
+
+    @property
+    def where(self) -> tuple[float, float] | None:
+        return (self.lat, self.lon) if self.lat is not None and self.lon is not None else None
+
+
 class PhotoRecord(BaseModel):
     name: str  # JPG file name inside the job's jpg dir
     source: str  # original's path relative to the source folder
@@ -24,6 +40,9 @@ class PhotoRecord(BaseModel):
     width: int
     height: int
     sharpness: float
+    shot: Shot = Field(default_factory=Shot)  # empty for photos ingested before the footnote
+    focus: float | None = None  # photo_quality.focus; None: nothing to judge, or not measured
+    grain: float | None = None  # photo_quality.grain; None for photos ingested before it
 
     @property
     def landscape(self) -> bool:
@@ -70,6 +89,7 @@ class Job:
         self.root = root
         self.jpg_dir = root / "jpg"
         self.deduped_dir = root / "deduped"
+        self.footnoted_dir = root / "footnoted"  # upload copies with the footnote burned in
         self.manifest_path = root / "manifest.json"
 
     def create(self) -> None:

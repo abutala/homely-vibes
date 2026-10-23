@@ -193,6 +193,19 @@ class TestRunUpload:
         with pytest.raises(ValueError, match="Nothing to upload"):
             run_upload(job, FakeTv())
 
+    def test_prepared_files_are_sent_and_checkpointed_by_name(self, tmp_path: Path) -> None:
+        job = make_job(tmp_path, ["a.jpg", "b.jpg"])
+        sent: list[str] = []
+
+        def prepare(job: Job, manifest: Manifest, names: list[str]) -> list[Path]:
+            sent.extend(names)
+            return [job.root / "footnoted" / n for n in names]
+
+        tv = FakeTv()
+        assert run_upload(job, tv, prepare=prepare) == []
+        assert sent == ["a.jpg", "b.jpg"] and tv.calls == [["a.jpg", "b.jpg"]]
+        assert set(job.load().uploaded) == {"a.jpg", "b.jpg"}
+
 
 class TestUnattributedIds:
     def test_ids_in_neither_snapshot_nor_uploaded(self) -> None:

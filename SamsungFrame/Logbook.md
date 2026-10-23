@@ -25,7 +25,7 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 - **Uploader sees fewer than you give it**: of the 296, 251 cleared `min_size_mb`, and 174 were landscape. The 45 small files were dropped at debug log level; the 77 portraits with one INFO line.
 - **The folder was 43% portrait** (253 of 593). The Frame is landscape, so the default skip is right, but it makes the real upload count far lower than the file count.
 - **Pace**: about 10s per image, so 174 images take roughly 30 minutes. Watch it with `tail -f <log> | tr '\r' '\n'`; the progress bar redraws with carriage returns.
-- **Art has no label or caption**: the client sends image bytes and a matte only. Unlabeled, camera-named files (`IMG_1234.jpg`) upload fine and the TV never shows a filename.
+- **The TV shows no label of its own**: the client sends image bytes and a matte only, so the TV never shows a filename. Since 2026-10-23 the upload stage burns a footnote into the pixels instead (see "The Footnote" below).
 
 ---
 
@@ -111,6 +111,28 @@ Decisions behind `frame_album.py`, so they are not re-litigated:
 - **The week's album is marked `playing` as soon as it is chosen**, before the upload. A rerun after a failure therefore returns to it even if new albums were shuffled in ahead of it in the meantime.
 - **Parts are cut from the usable list in capture order**, so a later week's part can be recomputed from the CSV and lines up with the first.
 - **Weekly since 2026-10-05.** The scheduler fires every Monday and `run --scheduled` skips other days. The queue key is the ISO week (`2026-W41`), so rows shown under the old `YYYY-MM` keys never collide with a week; a job dir is keyed by album and week.
+
+### Out-of-focus and grainy photos (2026-10-23)
+
+Calibrated on 115 photos from three albums (a 2008 DSLR, a 2019 phone with scanned postcards, a 2022 iPhone 13 Pro), plus 30 of them blurred (Gaussian sigma 3 px at 4K) and 30 with luminance grain (sigma 10 of 255). Thresholds: focus < 1.3 or grain > 2.5 drops the photo.
+
+- **Apple's aesthetics score does not see blur or grain.** Blurred, grainy and original copies all had a median score of 0.59, so it cannot be the filter.
+- **Laplacian variance is not focus.** Its lowest scores were sharp portraits with smooth skin and haze over a valley; texture, not focus, drives it.
+- **Whole-image edge measures punish shallow depth of field.** The edge ratio (curvature per unit slope on the strongest edges, about 1 / edge width) at the 99.5th percentile ranked a crisp-eyed child with a blurred background (0.99) below a motion-blurred train (1.06). Judging only the sharpest of a 6x6 grid of tiles fixes it: originals scored 1.34 and up, synthetic blur 1.23 and down.
+- **Grain looks like texture to a plain noise estimate.** Immerkaer's estimator over the low-gradient 30% ranked clean ISO-32 foliage and rock above real grain. Measured only in the smoothest 10% (local variance over 9 px), at the full ingested size: originals reached 1.25, except two halftone-printed scanned postcards (5.9 and above, rightly dropped), and synthetic grain started at 5.2.
+- **Mild real blur still passes.** A digitally zoomed bear scored 1.30, right on the line. The thresholds favour keeping a soft photo over dropping a good one; tune with `--min-focus` / `--max-grain` on `dedup_photos.py`.
+- **First live run** (a 2003 album, 154 photos from a 3 MP compact): 16 dropped as out of focus. At 100%, 15 were genuinely soft zoo shots through mesh or glass; one sunset (1.05) was a judgment call, since a sunset has few edges to be sharp.
+- **Curated paths skip it.** Labelled albums and picks CSVs run with `--no-dedup`, so nothing a person chose is dropped. Jobs ingested before this change have no measurements and are not judged.
+
+### The Footnote (2026-10-23)
+
+- **Burned in at upload, never at ingest.** Dedup's Vision scores and feature prints read the ingested JPGs, so text there would steer which frame wins. The upload stage writes footnoted copies into `<job>/footnoted/` and sends those; a rerun reuses them.
+- **The EXIF is read at ingest.** The ingested JPG is saved without EXIF, so the camera, exposure, GPS and capture time are kept in the manifest (`PhotoRecord.shot`). A job ingested before this change gets a footnote with just the file name.
+- **Places come from an offline table** (`reverse_geocoder`, GeoNames towns with 1000+ people), so no coordinate leaves the machine and there is no rate limit. It names the nearest town, not the landmark: Johnston Canyon reads "Banff, Alberta".
+- **A footnote is never a reason to skip a photo.** A copy that fails, or comes out over `max_image_size_mb`, is uploaded plain with a warning; a failed place lookup leaves the place out. The copy is written to a temp file and renamed, because a rerun trusts any copy it finds.
+- **A count-1 EXIF tag is a bare value, not a tuple.** A GPS coordinate stored as one rational made `len()` raise inside ingest's catch-all, which records the photo as unreadable and retries it forever. Anything read for the footnote must fail soft.
+- **The TV crops to 16:9 when it fills the screen.** The first footnote sat at the bottom of a 4:3 photo and was cut off on the TV, because filling the screen crops a 4:3 photo top and bottom by an eighth each (2026-10-23). The footnote is now placed and sized inside the centred 16:9 box (`screen_box`), and a panorama, which loses its sides, gets the same treatment. This assumes a centred crop.
+- **The matte shrinks it.** With `shadowbox_black` the photo fills about 80% of the screen height, and the footnote with it: about 1 cm per line on a 55" TV (accepted 2026-10-23).
 
 ### Dedup Scaling
 

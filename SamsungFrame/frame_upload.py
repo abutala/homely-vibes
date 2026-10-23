@@ -3,7 +3,8 @@
 
 Before the first upload it records which user photos are already on the TV (the old catalog
 that stage 4 may later remove). Each image is recorded in the manifest the moment the TV has
-it, so rerunning after any failure uploads only what is still missing.
+it, so rerunning after any failure uploads only what is still missing. What is sent is a copy
+with the footnote burned in (footnote.py); the ingested JPG itself is never changed.
 """
 
 import argparse
@@ -11,11 +12,19 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Optional, Protocol
 
+from lib.config import get_config
 from lib.logger import get_logger
+from SamsungFrame.footnote import footnote_job, offline_places
 from SamsungFrame.frame_job import ArtRecord, Job, Manifest
 from SamsungFrame.samsung_client import ImageUploadSummary, SamsungFrameClient, user_art
 
 logger = get_logger(__name__)
+
+Prepare = Callable[[Job, Manifest, list[str]], list[Path]]  # names -> the files to send
+
+
+def plain_files(job: Job, manifest: Manifest, names: list[str]) -> list[Path]:
+    return [job.jpg_dir / name for name in names]
 
 
 class UploadClient(Protocol):
@@ -38,8 +47,13 @@ def unattributed_ids(art_list: list[dict[str, Any]], manifest: Manifest) -> list
     return sorted({a["content_id"] for a in user_art(art_list)} - known)
 
 
-def run_upload(job: Job, client: UploadClient, matte: Optional[str] = None) -> list[str]:
-    """Upload what is missing; returns the names still not on the TV (empty = stage complete)."""
+def run_upload(
+    job: Job, client: UploadClient, matte: Optional[str] = None, prepare: Prepare = plain_files
+) -> list[str]:
+    """Upload what is missing; returns the names still not on the TV (empty = stage complete).
+
+    `prepare` turns the pending names into the files actually sent, named like the JPGs.
+    """
     manifest = job.load()
     if not manifest.upload_targets():
         raise ValueError(
@@ -76,9 +90,8 @@ def run_upload(job: Job, client: UploadClient, matte: Optional[str] = None) -> l
             f"Uploading {len(pending)} of {len(manifest.upload_targets())} photos "
             f"({len(manifest.uploaded)} already on the TV)"
         )
-        summary = client.upload_images(
-            [str(job.jpg_dir / name) for name in pending], matte=matte, on_uploaded=checkpoint
-        )
+        files = prepare(job, manifest, pending)
+        summary = client.upload_images([str(f) for f in files], matte=matte, on_uploaded=checkpoint)
         for error in summary.errors:
             manifest.failed[error["file"]] = error["error"]
     try:
@@ -97,12 +110,17 @@ def main() -> int:
     args = parser.parse_args()
 
     job = Job(args.job_dir)
+    max_bytes = int(get_config().samsung_frame.max_image_size_mb * 1024 * 1024)
+
+    def footnoted(job: Job, manifest: Manifest, names: list[str]) -> list[Path]:
+        return footnote_job(job, manifest, names, offline_places, max_bytes)
+
     client = SamsungFrameClient(timeout=args.timeout)
     if not client.connect_ready():
         logger.error("Failed to connect to the TV")
         return 1
     try:
-        pending = run_upload(job, client, args.matte)
+        pending = run_upload(job, client, args.matte, footnoted)
     except ValueError as e:
         logger.error(str(e))
         return 1

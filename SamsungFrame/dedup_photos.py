@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Stage 2: drop near-duplicates and reference shots from an ingested job (macOS).
+"""Stage 2: drop near-duplicates, reference shots, and blurred or grainy photos (macOS).
 
 Reads only the local JPGs and the manifest written by ingest.py. Apple Vision supplies a feature
 print per photo (similarity), an aesthetics score (which frame is best) and a utility flag
-(signs, plates, receipts). Time-windowed average-linkage clustering groups near-duplicates; the
+(signs, plates, receipts). Photos whose focus or grain, measured at ingest (photo_quality.py),
+is past its threshold are dropped before clustering. Time-windowed average-linkage clustering groups near-duplicates; the
 best-scored frame of each cluster is kept. Survivors are recorded in the manifest, with a reason
 for every photo dropped, and hard-linked into the job's `deduped/` dir.
 """
@@ -35,6 +36,10 @@ LANDSCAPE_BONUS = 0.15
 DEFAULT_WINDOW = 600.0
 DEFAULT_MAX_DISTANCE = 0.4  # ~0 identical, ~0.4 near-identical frames, ~0.5 same scene
 OVER_LIMIT = "over the limit"  # drop reason for a unique photo cut by --max-photos
+# Calibrated in the Logbook ("Out-of-focus and grainy photos"): every original in the sample
+# passed both, every synthetic blur and grain failed.
+DEFAULT_MIN_FOCUS = 1.3
+DEFAULT_MAX_GRAIN = 2.5
 
 Matrix = npt.NDArray[np.float64]
 
@@ -99,6 +104,15 @@ def rank(score: float, photo: PhotoRecord) -> tuple[float, float]:
     return score + (LANDSCAPE_BONUS if photo.landscape else 0.0), photo.sharpness
 
 
+def quality_reason(photo: PhotoRecord, min_focus: float, max_grain: float) -> str | None:
+    """Why a photo is not worth showing; None when it passes or was not measured."""
+    if photo.focus is not None and photo.focus < min_focus:
+        return "out of focus"
+    if photo.grain is not None and photo.grain > max_grain:
+        return "grainy"
+    return None
+
+
 def pick_best(members: list[int], scores: list[float], photos: list[PhotoRecord]) -> int:
     return max(members, key=lambda i: rank(scores[i], photos[i]))
 
@@ -137,6 +151,8 @@ def dedup(
     cap: float = DEFAULT_MAX_DISTANCE,
     features_of: Callable[[Path, Path], VisionFeatures] = vision_features,
     max_photos: int = 0,
+    min_focus: float = DEFAULT_MIN_FOCUS,
+    max_grain: float = DEFAULT_MAX_GRAIN,
 ) -> list[str]:
     manifest = job.load()
     if not manifest.photos:
@@ -145,6 +161,10 @@ def dedup(
     rows = [i for i, name in enumerate(features.names) if name in manifest.photos]
     dropped = {features.names[i]: "utility" for i in rows if features.utility[i]}
     rows = [i for i in rows if not features.utility[i]]
+    for i in rows:
+        if reason := quality_reason(manifest.photos[features.names[i]], min_focus, max_grain):
+            dropped[features.names[i]] = reason
+    rows = [i for i in rows if features.names[i] not in dropped]
     photos = [manifest.photos[features.names[i]] for i in rows]
     scores = [features.scores[i] for i in rows]
     groups = cluster(
@@ -191,6 +211,18 @@ def main() -> int:
         default=0,
         help="Keep at most this many, the best of each stretch of the album (default: no limit)",
     )
+    parser.add_argument(
+        "--min-focus",
+        type=float,
+        default=DEFAULT_MIN_FOCUS,
+        help="Drop photos whose sharpest part is softer than this (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--max-grain",
+        type=float,
+        default=DEFAULT_MAX_GRAIN,
+        help="Drop photos noisier than this in their smooth areas (default: %(default)s)",
+    )
     args = parser.parse_args()
 
     if platform.system() != "Darwin" or shutil.which("swiftc") is None:
@@ -198,7 +230,14 @@ def main() -> int:
         return 1
     job = Job(args.job_dir)
     try:
-        kept = dedup(job, args.window, args.max_distance, max_photos=args.max_photos)
+        kept = dedup(
+            job,
+            args.window,
+            args.max_distance,
+            max_photos=args.max_photos,
+            min_focus=args.min_focus,
+            max_grain=args.max_grain,
+        )
     except ValueError as e:
         logger.error(str(e))
         return 1
