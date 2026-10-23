@@ -108,6 +108,13 @@ final class UsageTextTests: XCTestCase {
         XCTAssertEqual(color(at: text.range(of: "0% 3.0d").location), .labelColor)
     }
 
+    /// Each glyph has one meaning: the failed-refresh marker is never a pace icon.
+    func testRefreshFailedMarkerIsNotAPaceIcon() {
+        for alert in [PaceAlert.none, .warning, .over] {
+            XCTAssertNotEqual(UsageText.refreshFailedMarker, alert.icon)
+        }
+    }
+
     func testAbsentFiveHourWindowGetsNoIcon() {
         let snap = snapshot(fiveHour: nil, sevenDay: window(used: 18, secondsLeft: 3.1 * 86400))
         XCTAssertEqual(UsageText.title(for: snap, now: now).string, "100% 5.0h \u{00B7} 82% 3.1d")

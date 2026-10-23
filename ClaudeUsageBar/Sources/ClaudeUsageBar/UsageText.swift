@@ -9,6 +9,10 @@ import AppKit
 enum UsageText {
     private static let fullFiveHourWindow = "5.0h"
 
+    /// Marks a failed refresh: stale numbers in the title, the reason in the
+    /// dropdown. Its own glyph, so `⚠︎` only ever means a pace warning.
+    static let refreshFailedMarker = "\u{21BB}"
+
     /// Title reports what is *left* (budget and clock); the dropdown reports
     /// what was consumed. An absent five_hour window means nothing has been
     /// spent yet, so it reads as a full budget on a full clock — but only when
@@ -54,8 +58,7 @@ enum UsageText {
         NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
     }
 
-    /// Yellow for over pace, red for spent; the stale marker stays `labelColor`,
-    /// so the two `⚠︎` meanings never look alike.
+    /// Yellow for over pace, red for spent.
     static func color(for alert: PaceAlert) -> NSColor {
         alert == .over ? .systemRed : .systemYellow
     }

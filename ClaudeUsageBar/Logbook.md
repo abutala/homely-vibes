@@ -8,7 +8,7 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ### 2026-10 — CLI signed out; token source moved to the desktop app
 
-The bar showed `⚠︎` stale numbers for over a day. The unified log had
+The bar showed stale numbers, marked `⚠︎` (now `↻`), for over a day. The unified log had
 `FAILED reason=credentials expired` on every tick and `still failing after CLI
 nudge` every 12 minutes. The real state: `claude auth status` said
 `"loggedIn": false`. The CLI had rewritten its `Claude Code-credentials` item
@@ -157,5 +157,5 @@ desktop app:
 | `credentials unreadable` | Decrypt or parse failed | The desktop's cache format likely moved; see "Desktop token cache" |
 
 A working display is never blanked by a failed refresh: the last good numbers
-stay with a `⚠︎` and the reason. So "Claude: —" means it has *never* succeeded
+stay with a `↻` and the reason. So "Claude: —" means it has *never* succeeded
 since launch. Check each step with `.build/debug/ClaudeUsageBar --probe-token`.

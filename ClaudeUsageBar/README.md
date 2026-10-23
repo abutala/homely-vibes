@@ -57,10 +57,9 @@ can be launched from Finder/Spotlight/login items like a normal app.
   tightens as the window ends — with 90% of the window left it fires above
   32.5% used, with 10% left above 92.5%. The rule runs on the displayed
   (rounded) percent, and a window past its reset gets no icon. Logic and table:
-  `PaceAlert.swift`. The stale marker below is a separate, uncolored `⚠︎` after a
-  space at the very end of the title.
+  `PaceAlert.swift`. `⚠︎` means pace only; a failed refresh uses `↻` (below).
 - **Failure states**: a failed refresh never blanks a working display — the last
-  good numbers stay, marked `⚠︎`, with the reason in the dropdown. "Open the
+  good numbers stay, marked with a trailing `↻`, with the reason in the dropdown. "Open the
   Claude app and sign in" appears only when the desktop login is genuinely
   absent, signed out or expired; a *blocked* Keychain read says so instead and
   notes that it is retrying, because telling you to sign in when you already

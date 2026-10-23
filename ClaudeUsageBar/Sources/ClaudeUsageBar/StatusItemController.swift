@@ -115,7 +115,7 @@ final class StatusItemController {
             statusItem.button?.attributedTitle = UsageText.title(for: snapshot)
         case .stale(let snapshot, _):
             let title = NSMutableAttributedString(attributedString: UsageText.title(for: snapshot))
-            title.append(UsageText.plain(" \u{26A0}\u{FE0E}", font: .menuBarFont(ofSize: 0)))
+            title.append(UsageText.plain(" \(UsageText.refreshFailedMarker)", font: .menuBarFont(ofSize: 0)))
             statusItem.button?.attributedTitle = title
         case .tokenUnavailable, .unavailable:
             statusItem.button?.title = "Claude: \u{2014}"
@@ -130,7 +130,7 @@ final class StatusItemController {
         case .loading:
             menu.addItem(NSMenuItem(title: "Loading…", action: nil, keyEquivalent: ""))
         case .tokenUnavailable(let reason):
-            menu.addItem(NSMenuItem(title: "\u{26A0}\u{FE0E} \(reason.menuDetail)", action: nil, keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "\(UsageText.refreshFailedMarker) \(reason.menuDetail)", action: nil, keyEquivalent: ""))
             // "Open Claude" is only true advice when the desktop login is
             // absent or expired. Offering it for a *blocked* read sends the
             // user chasing a sign-in they have already completed.
@@ -140,12 +140,12 @@ final class StatusItemController {
                 menu.addItem(NSMenuItem(title: retryNote(), action: nil, keyEquivalent: ""))
             }
         case .unavailable(let reason):
-            menu.addItem(NSMenuItem(title: "\u{26A0}\u{FE0E} Unavailable (\(reason))", action: nil, keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "\(UsageText.refreshFailedMarker) Unavailable (\(reason))", action: nil, keyEquivalent: ""))
             menu.addItem(NSMenuItem(title: retryNote(), action: nil, keyEquivalent: ""))
         case .ok(let snapshot):
             appendWindowItems(to: menu, snapshot: snapshot)
         case .stale(let snapshot, let reason):
-            menu.addItem(NSMenuItem(title: "\u{26A0}\u{FE0E} Stale data (\(reason))", action: nil, keyEquivalent: ""))
+            menu.addItem(NSMenuItem(title: "\(UsageText.refreshFailedMarker) Stale data (\(reason))", action: nil, keyEquivalent: ""))
             menu.addItem(NSMenuItem(title: "As of \(formatted(snapshot.fetchedAt))", action: nil, keyEquivalent: ""))
             menu.addItem(.separator())
             appendWindowItems(to: menu, snapshot: snapshot)
