@@ -190,7 +190,8 @@ or reconcile a stale in-flight result — not worth the complexity for a
 personal one-button app; just don't let the race start. *Since 2026-09-30,
 reopening the app does cancel in-flight work (see that entry); the buttons
 stay disabled. Since 2026-10-12, a return from the background lets a running
-operation finish instead.*
+operation finish instead. Since 2026-10-23, the toggle button stays enabled in
+flight and cancels the command for its opposite; the other two stay disabled.*
 
 ## 2026-09-30 — Resuming from the background left the screen lying about the door
 
@@ -394,3 +395,22 @@ An in-flight operation postpones the exit: the timer and `run(_:)` both ask
 again when it ends, so the background task from the 2026-10-12 fix is never
 cut short. The policy is a pure struct that takes `Date` as a parameter; its
 tests run with `swift test` (it is in `Package.swift`).
+
+## 2026-10-23 — A tap while in flight cancels and sends the opposite
+
+Asked for: a tap during "Unlocking…" switches to locking at once (the app had
+auto-unlocked on open when you wanted it locked), and the unlock must not
+happen. So the tap cancels the in-flight command and sends the opposite. It
+does not queue behind it: a queued lock lets the door unlock first.
+
+Non-obvious: cancelling means different things on the two paths.
+
+| Path | What the cancel stops | What can still happen |
+|---|---|---|
+| Bluetooth | Drops the link (`AugustBLEOperation.cancel`). Before the command write (~2 s in), the lock never gets the command | After the write, the lock unlocks and then locks: the next command needs a new link, so the order holds |
+| Cloud | Drops the phone's HTTP request (`URLSession` stops with the task) | August's server may already hold the unlock, and a bridge lock can take ~60 s (2026-09-22 entry). It can reach the lock after the lock command, and the screen shows "Locked" over an open door |
+
+The cloud case is a known gap. A queue closed it, but the door then unlocked
+on every switch. Also, the tap writes the new command to the screen
+at once, before its task starts: a fast second tap reads the command now
+shown, not the cancelled one.

@@ -3,8 +3,9 @@
 Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
 
 A one-button iOS app: open it, your August door unlocks — no tap needed, opening
-the app *is* the confirmation. Tap the button again to lock back up. No home
-server, no VPN. Near the door the app talks to the lock over Bluetooth, as the
+the app *is* the confirmation. Tap the button again to lock back up. A tap
+while it is still unlocking cancels the unlock and locks instead (and the other
+way round while locking). No home server, no VPN. Near the door the app talks to the lock over Bluetooth, as the
 official August app does; anywhere else, or for a lock with no offline key, it
 uses August's cloud API directly, so it works from anywhere with a network
 connection (WiFi or cellular), not just at home.
