@@ -4,9 +4,8 @@ Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
 
 A one-button iOS app: open it, your August door unlocks — no tap needed, opening
 the app *is* the confirmation. Tap the button again to lock back up. A tap
-while it is still unlocking queues a lock that starts the moment the unlock
-ends (tap again to clear it), and the same goes for a tap while locking. No home
-server, no VPN. Near the door the app talks to the lock over Bluetooth, as the
+while it is still unlocking cancels the unlock and locks instead (and the other
+way round while locking). No home server, no VPN. Near the door the app talks to the lock over Bluetooth, as the
 official August app does; anywhere else, or for a lock with no offline key, it
 uses August's cloud API directly, so it works from anywhere with a network
 connection (WiFi or cellular), not just at home.
@@ -145,7 +144,7 @@ the remembered peripheral connected without a scan):
 
 The app quits itself after 5 minutes in the background (`BackgroundExitPolicy.swift`).
 
-The Bluetooth protocol, the exit policy and the queued toggle have unit tests against bytes produced by yalexs-ble's
+The Bluetooth protocol and the exit policy have unit tests against bytes produced by yalexs-ble's
 own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
 AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 
@@ -153,8 +152,8 @@ AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 ```
 
-`Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`,
-`BackgroundExitPolicy.swift` and `QueuedToggle.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
+`Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`
+and `BackgroundExitPolicy.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
 
 ## Security notes
 
