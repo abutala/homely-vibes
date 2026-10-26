@@ -221,9 +221,7 @@ class HoseTimerProcessor:
                             _state_key(valve.id),
                             json.dumps({**cached, "finalized": True}),
                         )
-                        self._send_zone_outcome(
-                            valve, duration_sec, avg_gpm, total_gal, flow_detected
-                        )
+                        self._send_zone_outcome(valve, duration_sec, avg_gpm, total_gal)
                     entry["action"] = "run_completed"
                     entry["duration_seconds"] = duration_sec
                     entry["flow_detected"] = flow_detected
@@ -285,23 +283,18 @@ class HoseTimerProcessor:
         duration_sec: int,
         avg_gpm: float,
         total_gal: float,
-        flow_detected: Optional[bool],
     ) -> None:
         """Hose valve zone-end notification. Delegates to the shared helper
         in alert_rules so the format stays in lockstep with the controller
         path. The trimmed header clusters visually with controller Pushover
-        entries.
+        entries. No flow-sensor line: the valve's flowDetected stays false
+        while Flume measures the water, so the line was noise (it is still
+        stored on the session).
         """
         zt = resolve_hose_threshold(self.thresholds, valve.name, self.logger)
         baseline = zt.avg_gpm if zt else 0.0
         threshold = (
             zt.compute_threshold(self.absolute_gpm, self.percent_above) if zt else self.absolute_gpm
-        )
-
-        sensor_line = (
-            "Flow sensor: detected"
-            if flow_detected
-            else ("Flow sensor: NOT detected" if flow_detected is False else "")
         )
 
         send_zone_outcome_pushover(
@@ -315,5 +308,4 @@ class HoseTimerProcessor:
             baseline=baseline,
             threshold=threshold,
             min_runtime_minutes=self.min_runtime_minutes,
-            extra_lines=[sensor_line] if sensor_line else None,
         )
