@@ -7,7 +7,7 @@ Daily health check for **Ring Beams** motion sensors and **Ring Alarm** contact/
 Complements `RingSecurity/`, which covers Ring's cameras and doorbells via REST. Beams + Alarm state is only available on Ring's socket.io real-time channel, which no maintained Python library speaks — so this module shells out to a small Node.js sidecar (`fetch_status.js`) built on `ring-client-api` (dgreif/ring).
 
 - **P1 alert** — battery below `battery_threshold_pct` (default 25%) OR Ring's own `batteryStatus` of `low` / `warn`
-- **P1 alert** — sensor offline: `commStatus` other than `ok`, `lastCommTime` older than `offline_after_hours` (default 36: contact sensors poll every 12 h), or `acStatus == "error"` (base station on backup battery)
+- **P1 alert** — sensor offline: `commStatus` other than `ok`, `lastCommTime` older than `offline_after_hours` (default 36: contact sensors poll every 12 h), or `acStatus == "error"` (base station on backup battery). A sensor that stopped talking (comm error or last seen too long ago) keeps its last battery report, so a low level is appended to its offline line (`last battery 16%`) instead of a separate low-battery alert. Mains loss alone does not count: the base station still talks, so its level is current
 - **P1 alert** — `tamperStatus == "tamper"`, on any device
 - **P1 alert** — partial sidecar failure (some locations returned errors), zero devices returned, or generic sidecar error
 - **P0 alert** — sidecar auth failure (needs re-auth)

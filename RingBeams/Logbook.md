@@ -45,6 +45,15 @@ Fix: the sidecar now copies `commStatus`, `lastCommTime` and `acStatus`, and `no
 sends a P1 for any of them. The same review found two more silent paths: tamper on a wired
 device sat behind the battery skip, and an empty device list read as healthy. Both fixed.
 
+### 2026-10-25 — Offline mailbox sent a stale low-battery alert every day
+
+The mailbox sensor lost its link (`comm error`, last seen 5d ago) and kept its last
+battery reading, 16%. Each morning sent two P1s for one fault: "Device Offline" and
+"Low Battery". The level is the last report, not a current one, so `classify` now
+appends it to the offline line (`last battery 16%`) and sends no low-battery alert for
+an offline device. A base station on backup power (`acStatus: "error"`) still
+talks, so its level is current and keeps its own alert.
+
 ---
 
 ## Landmines
@@ -53,7 +62,8 @@ device sat behind the battery skip, and an empty device list read as healthy. Bo
 
 An offline sensor stays in the device list with its last `batteryLevel` and
 `batteryStatus`. Battery fields alone never show that a sensor went away; only
-`commStatus` and `lastCommTime` do. Hubs and adapters send `lastCommTime: 0`, which
+`commStatus` and `lastCommTime` do, and the stale level must not raise its own
+low-battery alert. Hubs and adapters send `lastCommTime: 0`, which
 means "no time": read as epoch ms it is 1970, and every hub reads as silent for 56 years.
 
 ### Exit 5 is only for ring-client-api's own auth messages

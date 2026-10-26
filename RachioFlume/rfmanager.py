@@ -3,6 +3,7 @@
 
 import asyncio
 import argparse
+import logging
 import sys
 from time import sleep
 from RachioFlume.alert_engine import AlertEngine
@@ -15,7 +16,7 @@ from RachioFlume.collector import WaterTrackingCollector
 from RachioFlume.data_storage import WaterTrackingDB
 from RachioFlume.flume_client import FlumeClient
 from RachioFlume.hose_timer_processor import HoseTimerProcessor
-from RachioFlume.rachio_client import RachioClient
+from RachioFlume.rachio_client import RachioClient, schedule_zones_from_device
 from RachioFlume.rachio_hose_client import RachioHoseClient
 from RachioFlume.stale_zone_checker import StaleZoneChecker
 from lib.MyPushover import Pushover
@@ -23,6 +24,7 @@ from RachioFlume.reporter import WeeklyReporter
 from lib.logger import get_logger
 from lib.config import get_config
 from datetime import datetime, timedelta
+from typing import Optional
 
 # Load config at module level
 cfg = get_config()
@@ -375,6 +377,18 @@ def show_status(_args: argparse.Namespace) -> int:
         return 1
 
 
+def _schedule_zones(logger: logging.Logger) -> Optional[dict[str, list[int]]]:
+    """Live schedule-to-zones map, so the report can say why a zone did not run.
+
+    None when Rachio is unreachable: the report still sends, with generic reasons.
+    """
+    try:
+        return schedule_zones_from_device(RachioClient().get_device_info())
+    except Exception as e:
+        logger.warning(f"Rachio schedules unavailable; skip reasons will be generic: {e}")
+        return None
+
+
 def generate_report(args: argparse.Namespace) -> int:
     """Generate reports."""
     logger = get_logger(__name__)
@@ -384,7 +398,9 @@ def generate_report(args: argparse.Namespace) -> int:
 
         end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
         start_date = end_date - timedelta(days=args.lookback)
-        report = reporter.generate_period_report_with_dates(start_date, end_date)
+        report = reporter.generate_period_report_with_dates(
+            start_date, end_date, schedule_zones=_schedule_zones(logger)
+        )
         reporter.print_report(report)
 
         if args.email:

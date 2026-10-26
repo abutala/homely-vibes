@@ -6,6 +6,7 @@ pull device state via Ring's socket.io channel — the only way to get
 battery for Beams motion sensors and Alarm contact/motion sensors.
 
 P1 alert: battery below the threshold, OR batteryStatus "low" / "warn".
+          An offline device's level is stale: it joins the offline line.
 P1 alert: offline -- commStatus not "ok", lastCommTime too old, or acStatus
           "error" (base station lost mains power).
 P1 alert: tamperStatus == "tamper", on any device, wired ones included.
@@ -45,6 +46,7 @@ WIRED_BATTERY_STATUSES = {"none", "charging", "charged"}
 # ring-client-api types batteryStatus as full|charged|ok|low|none|charging;
 # "warn" is kept because earlier payloads sent it.
 LOW_BATTERY_STATUSES = {"low", "warn"}
+MAINS_LOST = "mains power lost"
 SIDECAR_PACKAGE = "ring-client-api"
 ALERT_MAX_CHARS = 200
 
@@ -214,15 +216,15 @@ def run_sidecar(
     return out, errors
 
 
-def _offline_reason(d: DeviceRecord, offline_after_hours: int, now_ms: int) -> Optional[str]:
-    """Why a device is not talking to its hub, or None when it is.
+def _offline_reasons(d: DeviceRecord, offline_after_hours: int, now_ms: int) -> list[str]:
+    """Why a device is not talking to its hub; empty when it is.
 
     A sensor that lost its link keeps its last battery reading, so battery and
     tamper alone call it healthy. Hubs and adapters report lastCommTime 0.
     """
     reasons = []
     if d.ac_status == "error":
-        reasons.append("mains power lost")
+        reasons.append(MAINS_LOST)
     if d.comm_status is not None and d.comm_status != "ok":
         reasons.append(f"comm {d.comm_status}")
     # lastCommTime is epoch ms but untyped in ring-client-api; a value that
@@ -233,10 +235,11 @@ def _offline_reason(d: DeviceRecord, offline_after_hours: int, now_ms: int) -> O
         if silent_h > offline_after_hours:
             age = f"{silent_h:.0f}h" if silent_h < 48 else f"{silent_h / 24:.0f}d"
             reasons.append(f"last seen {age} ago")
-    return f"{d.name}: {', '.join(reasons)}" if reasons else None
+    return reasons
 
 
-def _low_battery(d: DeviceRecord, threshold_pct: int) -> Optional[str]:
+def _low_battery_level(d: DeviceRecord, threshold_pct: int) -> Optional[str]:
+    """The level to report ("16%" or "battery low") when the battery is low, else None."""
     try:
         batt_int: Optional[int] = int(float(d.battery)) if d.battery is not None else None
     except (TypeError, ValueError):
@@ -244,10 +247,10 @@ def _low_battery(d: DeviceRecord, threshold_pct: int) -> Optional[str]:
     level = f"{batt_int}%" if batt_int is not None else "battery low"
     # Ring's own low signal wins, even with no level or a wired status.
     if d.battery_status in LOW_BATTERY_STATUSES:
-        return f"{d.name}: {level}"
+        return level
     if batt_int is None or d.battery_status in WIRED_BATTERY_STATUSES:
         return None
-    return f"{d.name}: {level}" if batt_int < threshold_pct else None
+    return level if batt_int < threshold_pct else None
 
 
 def classify(
@@ -256,18 +259,22 @@ def classify(
     """Sort devices into low-battery, tamper and offline alert lines.
 
     Tamper and offline apply to wired devices too, so neither may sit behind
-    the battery skip.
+    the battery skip. A device that stopped talking keeps its last battery
+    reading, so a low level goes on its offline line, not a second alert. A
+    base station on backup power still talks: its level is current.
     """
     found = Findings(low=[], tamper=[], offline=[])
     for d in devices:
         if d.tamper == "tamper":
             found.tamper.append(f"{d.name} (tampered)")
-        offline = _offline_reason(d, offline_after_hours, now_ms)
-        if offline:
-            found.offline.append(offline)
-        low = _low_battery(d, threshold_pct)
-        if low:
-            found.low.append(low)
+        reasons = _offline_reasons(d, offline_after_hours, now_ms)
+        low = _low_battery_level(d, threshold_pct)
+        if low and any(r != MAINS_LOST for r in reasons):
+            reasons.append(f"last battery {low.removeprefix('battery ')}")
+        elif low:
+            found.low.append(f"{d.name}: {low}")
+        if reasons:
+            found.offline.append(f"{d.name}: {', '.join(reasons)}")
     return found
 
 

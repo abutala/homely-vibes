@@ -124,7 +124,7 @@ class TestHoseTimerProcessor:
         assert "thresh 1.00" in msg
         assert "Avg flow:" in msg
         assert "Total:" in msg
-        assert "Flow sensor: detected" in msg
+        assert "Flow sensor" not in msg
         # Session row persisted
         sessions = tmp_db.get_hose_zone_sessions(
             local_start - timedelta(hours=1), local_start + timedelta(hours=1)
@@ -295,9 +295,7 @@ class TestThresholdResolution:
         proc = HoseTimerProcessor(
             client=client, pushover=pushover, db=tmp_db, thresholds=thresholds
         )
-        proc._send_zone_outcome(
-            valve, duration_sec=600, avg_gpm=0.4, total_gal=4.0, flow_detected=False
-        )
+        proc._send_zone_outcome(valve, duration_sec=600, avg_gpm=0.4, total_gal=4.0)
         msg = pushover.send_message.call_args[0][0]
         # baseline 0.5 + max(0.5, 10%*0.5) = 1.00 — threshold resolved via prefix
         assert "thresh 1.00" in msg
@@ -313,9 +311,7 @@ class TestZoneOutcomeDispatch:
         valve = _valve()
         proc, pushover = _make_processor(tmp_db, valve)
         # baseline=0.5, thresh=1.0; avg_gpm=0.4 → below → report
-        proc._send_zone_outcome(
-            valve, duration_sec=600, avg_gpm=0.4, total_gal=4.0, flow_detected=False
-        )
+        proc._send_zone_outcome(valve, duration_sec=600, avg_gpm=0.4, total_gal=4.0)
         call = self._outcome_call(pushover)
         assert call[1]["priority"] == -2
         assert call[1]["title"] == "Rachio Zone Report"
@@ -326,9 +322,7 @@ class TestZoneOutcomeDispatch:
         valve = _valve()
         proc, pushover = _make_processor(tmp_db, valve)
         # baseline=0.5, thresh=1.0; avg_gpm=1.5 with 10-min runtime → anomaly
-        proc._send_zone_outcome(
-            valve, duration_sec=600, avg_gpm=1.5, total_gal=15.0, flow_detected=True
-        )
+        proc._send_zone_outcome(valve, duration_sec=600, avg_gpm=1.5, total_gal=15.0)
         call = self._outcome_call(pushover)
         assert call[1]["priority"] == 2
         assert call[1]["title"] == "Rachio Zone Anomaly"
@@ -341,9 +335,7 @@ class TestZoneOutcomeDispatch:
         valve = _valve()
         proc, pushover = _make_processor(tmp_db, valve)
         # 1-min run, even over threshold → fully silenced by the runtime gate
-        proc._send_zone_outcome(
-            valve, duration_sec=60, avg_gpm=1.5, total_gal=1.5, flow_detected=False
-        )
+        proc._send_zone_outcome(valve, duration_sec=60, avg_gpm=1.5, total_gal=1.5)
         pushover.send_message.assert_not_called()
 
 
