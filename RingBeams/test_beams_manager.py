@@ -143,6 +143,20 @@ def test_comm_error_alerts_offline_despite_ok_battery() -> None:
     assert found.low == []
 
 
+def test_offline_device_low_battery_is_stale_not_a_second_alert() -> None:
+    """An offline sensor's battery is its last report, so it rides on the offline line."""
+    dead = _rec(
+        "Mailbox",
+        battery=16,
+        battery_status="ok",
+        comm_status="error",
+        last_comm_ms=NOW_MS - 5 * 24 * HOUR_MS,
+    )
+    found = _classify([dead])
+    assert found.offline == ["Mailbox: comm error, last seen 5d ago, last battery 16%"]
+    assert found.low == []
+
+
 def test_comm_error_on_wired_device_alerts() -> None:
     hub = _rec(
         "Adapter", battery=None, battery_status="none", comm_status="error", last_comm_ms=None

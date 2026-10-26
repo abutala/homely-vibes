@@ -6,6 +6,7 @@ pull device state via Ring's socket.io channel — the only way to get
 battery for Beams motion sensors and Alarm contact/motion sensors.
 
 P1 alert: battery below the threshold, OR batteryStatus "low" / "warn".
+          An offline device's level is stale: it joins the offline line.
 P1 alert: offline -- commStatus not "ok", lastCommTime too old, or acStatus
           "error" (base station lost mains power).
 P1 alert: tamperStatus == "tamper", on any device, wired ones included.
@@ -236,7 +237,8 @@ def _offline_reason(d: DeviceRecord, offline_after_hours: int, now_ms: int) -> O
     return f"{d.name}: {', '.join(reasons)}" if reasons else None
 
 
-def _low_battery(d: DeviceRecord, threshold_pct: int) -> Optional[str]:
+def _low_battery_level(d: DeviceRecord, threshold_pct: int) -> Optional[str]:
+    """The level to report ("16%" or "battery low") when the battery is low, else None."""
     try:
         batt_int: Optional[int] = int(float(d.battery)) if d.battery is not None else None
     except (TypeError, ValueError):
@@ -244,10 +246,10 @@ def _low_battery(d: DeviceRecord, threshold_pct: int) -> Optional[str]:
     level = f"{batt_int}%" if batt_int is not None else "battery low"
     # Ring's own low signal wins, even with no level or a wired status.
     if d.battery_status in LOW_BATTERY_STATUSES:
-        return f"{d.name}: {level}"
+        return level
     if batt_int is None or d.battery_status in WIRED_BATTERY_STATUSES:
         return None
-    return f"{d.name}: {level}" if batt_int < threshold_pct else None
+    return level if batt_int < threshold_pct else None
 
 
 def classify(
@@ -256,18 +258,19 @@ def classify(
     """Sort devices into low-battery, tamper and offline alert lines.
 
     Tamper and offline apply to wired devices too, so neither may sit behind
-    the battery skip.
+    the battery skip. An offline device's battery is its last report, not a
+    current one, so a low level goes on its offline line, not a second alert.
     """
     found = Findings(low=[], tamper=[], offline=[])
     for d in devices:
         if d.tamper == "tamper":
             found.tamper.append(f"{d.name} (tampered)")
         offline = _offline_reason(d, offline_after_hours, now_ms)
+        low = _low_battery_level(d, threshold_pct)
         if offline:
-            found.offline.append(offline)
-        low = _low_battery(d, threshold_pct)
-        if low:
-            found.low.append(low)
+            found.offline.append(f"{offline}, last battery {low}" if low else offline)
+        elif low:
+            found.low.append(f"{d.name}: {low}")
     return found
 
 

@@ -6,6 +6,14 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ## Incidents
 
+### 2026-10-25 — Offline mailbox sent a stale low-battery alert every day
+
+The mailbox sensor lost its link (`comm error`, last seen 5d ago) and kept its last
+battery reading, 16%. Each morning sent two P1s for one fault: "Device Offline" and
+"Low Battery". The level is the last report, not a current one, so `classify` now
+appends it to the offline line (`last battery 16%`) and sends no low-battery alert for
+an offline device.
+
 ### 2026-08-30 — Missing `node_modules` on the prod host
 
 `node_modules/` is gitignored, so **any fresh clone or re-clone has a working Python
