@@ -28,6 +28,19 @@ class WateringEvent(BaseModel):
     duration_seconds: Optional[int] = None
 
 
+def schedule_zones_from_device(device_info: Dict[str, Any]) -> Dict[str, List[int]]:
+    """Zone numbers per enabled schedule (fixed and flex), keyed by schedule name."""
+    number_by_id = {z["id"]: z["zoneNumber"] for z in device_info.get("zones", [])}
+    rules = device_info.get("scheduleRules", []) + device_info.get("flexScheduleRules", [])
+    return {
+        r["name"]: sorted(
+            number_by_id[z["zoneId"]] for z in r.get("zones", []) if z["zoneId"] in number_by_id
+        )
+        for r in rules
+        if r.get("enabled")
+    }
+
+
 class RachioClient:
     """Client for Rachio irrigation system API."""
 

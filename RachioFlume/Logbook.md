@@ -6,6 +6,21 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ## Incidents
 
+### 2026-10-25 — Skipped zones vanished from the weekly email
+
+The 10/18–10/25 report listed 10 rows and silently left out Z6, Z10 and Z11. The
+report only listed zones with a session in the period, and the collector already stored
+the reason, a `WEATHER_INTELLIGENCE_SKIP` event on 10/21. A skip event names its
+schedule, never its zones ("Back Trees was scheduled for 10/21 at 06:05 AM"), and
+Rachio truncates long names ("Front Beds Sum..."). The schedule-to-zones map lives
+only on the device payload (`scheduleRules[].zones[].zoneId`), so the report fetches it
+live and matches names by prefix. `SCHEDULE_RULE_SKIP_ADDED` ("The season is changing")
+is a seasonal-adjustment notice, not a skipped run: only `*_SKIP` subtypes count.
+
+The same week, the hose valve's zone-end Pushover carried "Flow sensor: NOT detected"
+on every run. The valve's `flowDetected` stays false while Flume measures the water, so
+the line was dropped; the value is still stored on the session.
+
 ### 2026-10-07 / 08 — two real leaks, no Leak alert
 
 Flume saw a steady trickle on both days: 164 min at 0.17 GPM on Oct 7 evening,

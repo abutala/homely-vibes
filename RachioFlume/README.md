@@ -22,7 +22,7 @@ A Python integration that connects Rachio irrigation controllers with Flume wate
   - **Hose-valve battery health check**: P1 when a valve reports `batteryStatus` `LOW` or `REPLACE`. Rachio exposes a four-value enum — `GOOD` / `LOW` / `REPLACE` / `UNKNOWN` — and **no percentage anywhere in the API** ([getValve schema](https://rachio.readme.io/reference/valveservice_getvalve)), so there is no level to threshold and nothing to tune but the repeat cadence (`valve_battery.retrigger_minutes`, default 1440). `UNKNOWN` never fires: that is the valve saying it hasn't reported in, which is the offline check's job, and paging on it would fire on every BLE dropout. An unrecognized value logs a warning rather than paging, so a firmware that adds an enum member can't spontaneously start waking you up. No debounce (unlike `connected`, the status doesn't flap with range); stale roster rows are skipped, same as the offline check. P0 once on recovery.
   - Mute support; P0 "all clear" for sustained-flow rules after `clear_after_minutes` of failing.
 - **Synthetic Simulator** (`simulate_alerts.py`): Replay scenarios through the alert engine without hitting real APIs or Pushover; wired into `test_alert_simulation.py`. See [TESTABILITY.md](TESTABILITY.md).
-- **HTML Email Report**: Daily fixed-width table (via `<pre>` monospace) covering all zones — controllers and hose valves in one unified table. Per-zone anomaly threshold + alert-session count are surfaced alongside runtime / gallons / GPM.
+- **HTML Email Report**: Period fixed-width table (via `<pre>` monospace; prod cron sends it weekly) covering every zone — controllers and hose valves in one unified table. Per-zone anomaly threshold + alert-session count are surfaced alongside runtime / gallons / GPM. A zone or valve with no run in the period still gets a row, with its reason in place of the numbers: `skipped: weather 10/21` (a Rachio `*_SKIP` event on a schedule that holds the zone), `in no active schedule`, or `no run recorded` (plus `valve disconnected` for a hose valve). A `SKIPPED RUNS` list names each skipped schedule, its reason and its zones; disabled controller zones go on one `Disabled:` line.
 - **Continuous Monitoring**: Automated data collection service
 - **SQLite Storage**: Persistent data storage with session tracking
 
@@ -298,6 +298,7 @@ kill <process_id>
    - Generates period reports with customizable date ranges (default 7 days)
    - Unified `ZoneStats` table covers controller zones and hose valves; hose entries sort after controllers via `HOSE_ZONE_SENTINEL=999`
    - Per-zone anomaly `threshold_gpm` and `alert_sessions` count surfaced alongside the aggregate stats
+   - Every enabled zone and known valve gets a row; idle ones carry a `note`. `rfmanager.py report` fetches the live schedule-to-zones map (`scheduleRules` + `flexScheduleRules` on the device payload) to tie a skip event to its zones; when Rachio is unreachable the report still sends and idle zones read `no run recorded`
    - Supports HTML email delivery (via `<html><body><pre>` — auto-detected by `lib.Mailer`) and console output
 
 6. **AlertEngine** (`alert_engine.py`) + **AlertRule** (`alert_rules.py`)

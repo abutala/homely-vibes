@@ -564,6 +564,32 @@ class WaterTrackingDB:
 
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_controller_zones(self) -> List[Dict[str, Any]]:
+        """Controller zone roster rows (enabled or not), by zone number."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT zone_number, name, enabled FROM zones ORDER BY zone_number")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_skip_events(self, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
+        """Schedule-skip events (`*_SKIP` subtypes) for a date range.
+
+        A skip event names no zone: its zone_name column holds the event summary,
+        e.g. "Back Trees was scheduled for 10/21 at 06:05 AM".
+        """
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT event_date, event_type, zone_name AS summary FROM watering_events
+                WHERE event_type LIKE '%\\_SKIP' ESCAPE '\\'
+                    AND event_date >= ? AND event_date < ?
+                ORDER BY event_date
+                """,
+                (start_date, end_date),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
     def get_raw_data_intervals(
         self,
         start_time: datetime,
