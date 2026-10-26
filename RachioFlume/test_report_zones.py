@@ -206,7 +206,10 @@ def test_skip_with_no_unique_schedule_names_no_zones(
     assert run.zone_numbers == []
 
 
-def test_long_note_wraps_inside_the_report_width(db: WaterTrackingDB) -> None:
+def test_long_lines_wrap_inside_the_report_width(db: WaterTrackingDB) -> None:
+    db.save_zones(
+        [Zone(id=f"z{n}", zone_number=n, name=f"Zone {n}", enabled=False) for n in (15, 16, 17)]
+    )
     db.save_watering_events(
         [
             WateringEvent(
@@ -221,3 +224,4 @@ def test_long_note_wraps_inside_the_report_width(db: WaterTrackingDB) -> None:
     text = WeeklyReporter(str(db.db_path)).format_report_text(_report(db, SCHEDULES))
     assert max(len(line) for line in text.splitlines()) <= 40
     assert "Z6 BB    skipped: weather 10/21, weather" in text
+    assert "Disabled: Zone 13, Zone 15, Zone 16,\n          Zone 17" in text

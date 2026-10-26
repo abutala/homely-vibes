@@ -433,7 +433,13 @@ class WeeklyReporter:
 
         if report.disabled_zones:
             lines.append("")
-            lines.append(f"Disabled: {', '.join(report.disabled_zones)}")
+            lines.extend(
+                textwrap.wrap(
+                    f"Disabled: {', '.join(report.disabled_zones)}",
+                    width=REPORT_WIDTH,
+                    subsequent_indent=" " * len("Disabled: "),
+                )
+            )
 
         lines.append("")
         lines.append("=" * REPORT_WIDTH)
