@@ -1,6 +1,7 @@
 """Weekly reporting system for water tracking data."""
 
 import json
+import textwrap
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
@@ -46,6 +47,8 @@ class SkippedRun:
 
 # Hose valves have no controller zone number; sort them after real zones.
 HOSE_ZONE_SENTINEL = 999
+REPORT_WIDTH = 40  # width of the "=" rule; the email body must fit a phone
+NOTE_INDENT = 9  # an idle row's note starts after the 8-char name column
 
 
 def skip_reason(event_type: str) -> Optional[str]:
@@ -65,14 +68,19 @@ def _skipped_run(
     row: Dict[str, Any], schedule_zones: Optional[Dict[str, List[int]]]
 ) -> Optional[SkippedRun]:
     """Parse a skip event. Rachio truncates long schedule names in the summary
-    ("Front Beds Sum... was scheduled for ..."), so match by prefix, exact first.
+    ("Front Beds Sum... was scheduled for ..."), so a truncated name matches by
+    prefix, and only when exactly one schedule fits; a full name must match exactly.
     """
     reason = skip_reason(row["event_type"])
     if reason is None:
         return None
-    name = row["summary"].split(" was scheduled", 1)[0].removesuffix("...").strip()
-    candidates = sorted(schedule_zones or {}, key=lambda s: s != name)
-    schedule = next((s for s in candidates if s.startswith(name)), None)
+    raw = row["summary"].split(" was scheduled", 1)[0].strip()
+    name = raw.removesuffix("...")
+    if name == raw:
+        matches = [s for s in schedule_zones or {} if s == name]
+    else:
+        matches = [s for s in schedule_zones or {} if s.startswith(name)]
+    schedule = matches[0] if len(matches) == 1 else None
     return SkippedRun(
         date=datetime.fromisoformat(str(row["event_date"])),
         schedule=schedule or name,
@@ -240,6 +248,7 @@ class WeeklyReporter:
         hose_sessions = self.db.get_hose_zone_sessions(period_start, period_end)
         hose_agg: Dict[tuple, Dict[str, Any]] = {}
         hose_alerts: Dict[tuple, int] = {}
+        ran_valve_ids = {s["valve_id"] for s in hose_sessions}
         for s in hose_sessions:
             key = (s["base_station_label"], s["valve_name"])
             slot = hose_agg.setdefault(
@@ -288,7 +297,7 @@ class WeeklyReporter:
             if run
         ]
         idle_rows, disabled_zones = self._idle_zones(
-            {z.zone_number for z in formatted_zones}, set(hose_agg), skipped, schedule_zones
+            {z.zone_number for z in formatted_zones}, ran_valve_ids, skipped, schedule_zones
         )
         formatted_zones.extend(idle_rows)
 
@@ -317,7 +326,7 @@ class WeeklyReporter:
     def _idle_zones(
         self,
         ran_zone_numbers: set[int],
-        ran_valves: set[tuple],
+        ran_valve_ids: set[str],
         skipped: List[SkippedRun],
         schedule_zones: Optional[Dict[str, List[int]]],
     ) -> tuple[List[ZoneStats], List[str]]:
@@ -336,9 +345,9 @@ class WeeklyReporter:
             note = _no_run_note(z["zone_number"], skipped, schedule_zones)
             rows.append(_idle_row(z["zone_number"], name, note))
         for v in self.db.get_hose_valves():
-            if (v["base_station_label"], v["name"]) in ran_valves:
+            if v["id"] in ran_valve_ids:
                 continue
-            note = "no run recorded" + ("" if v["connected"] else ", valve disconnected")
+            note = "no run recorded" + ("" if v["connected"] else ", offline")
             rows.append(_idle_row(HOSE_ZONE_SENTINEL, compact_zone_label(v["name"]), note))
         return rows, disabled
 
@@ -367,7 +376,7 @@ class WeeklyReporter:
 
         lines.append("WATER USAGE REPORT")
         lines.append(f"Period: {report.period_start.date()} to {report.period_end.date()}")
-        lines.append("=" * 40)
+        lines.append("=" * REPORT_WIDTH)
 
         lines.append("")
         lines.append("SUMMARY:")
@@ -390,7 +399,11 @@ class WeeklyReporter:
 
             for zone in report.zones:
                 if zone.note:
-                    lines.append(f"{zone.zone_name[:8]:<8} {zone.note}")
+                    # Wrap under the name column so a long note stays inside the
+                    # 40-char rule and the <pre> body never scrolls on a phone.
+                    note_lines = textwrap.wrap(zone.note, width=REPORT_WIDTH - NOTE_INDENT)
+                    lines.append(f"{zone.zone_name[:8]:<8} {note_lines[0]}")
+                    lines.extend(" " * NOTE_INDENT + extra for extra in note_lines[1:])
                     continue
                 thr = f"{zone.threshold_gpm:.1f}" if zone.threshold_gpm > 0 else "-"
                 alrt = str(zone.alert_sessions) if zone.alert_sessions else "-"
@@ -416,7 +429,7 @@ class WeeklyReporter:
             lines.append(f"Disabled: {', '.join(report.disabled_zones)}")
 
         lines.append("")
-        lines.append("=" * 40)
+        lines.append("=" * REPORT_WIDTH)
         return "\n".join(lines)
 
     def format_report_html(self, report: WaterUsageReport) -> str:

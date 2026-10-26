@@ -22,7 +22,7 @@ A Python integration that connects Rachio irrigation controllers with Flume wate
   - **Hose-valve battery health check**: P1 when a valve reports `batteryStatus` `LOW` or `REPLACE`. Rachio exposes a four-value enum — `GOOD` / `LOW` / `REPLACE` / `UNKNOWN` — and **no percentage anywhere in the API** ([getValve schema](https://rachio.readme.io/reference/valveservice_getvalve)), so there is no level to threshold and nothing to tune but the repeat cadence (`valve_battery.retrigger_minutes`, default 1440). `UNKNOWN` never fires: that is the valve saying it hasn't reported in, which is the offline check's job, and paging on it would fire on every BLE dropout. An unrecognized value logs a warning rather than paging, so a firmware that adds an enum member can't spontaneously start waking you up. No debounce (unlike `connected`, the status doesn't flap with range); stale roster rows are skipped, same as the offline check. P0 once on recovery.
   - Mute support; P0 "all clear" for sustained-flow rules after `clear_after_minutes` of failing.
 - **Synthetic Simulator** (`simulate_alerts.py`): Replay scenarios through the alert engine without hitting real APIs or Pushover; wired into `test_alert_simulation.py`. See [TESTABILITY.md](TESTABILITY.md).
-- **HTML Email Report**: Period fixed-width table (via `<pre>` monospace; prod cron sends it weekly) covering every zone — controllers and hose valves in one unified table. Per-zone anomaly threshold + alert-session count are surfaced alongside runtime / gallons / GPM. A zone or valve with no run in the period still gets a row, with its reason in place of the numbers: `skipped: weather 10/21` (a Rachio `*_SKIP` event on a schedule that holds the zone), `in no active schedule`, or `no run recorded` (plus `valve disconnected` for a hose valve). A `SKIPPED RUNS` list names each skipped schedule, its reason and its zones; disabled controller zones go on one `Disabled:` line.
+- **HTML Email Report**: Period fixed-width table (via `<pre>` monospace; prod cron sends it weekly) covering every zone — controllers and hose valves in one unified table. Per-zone anomaly threshold + alert-session count are surfaced alongside runtime / gallons / GPM. A zone or valve with no run in the period still gets a row, with its reason in place of the numbers: `skipped: weather 10/21` (a Rachio `*_SKIP` event on a schedule that holds the zone), `in no active schedule`, or `no run recorded` (plus `offline` for a disconnected hose valve). Notes wrap under the name column so the body stays 40 characters wide. A `SKIPPED RUNS` list names each skipped schedule, its reason and its zones; disabled controller zones go on one `Disabled:` line.
 - **Continuous Monitoring**: Automated data collection service
 - **SQLite Storage**: Persistent data storage with session tracking
 
@@ -342,23 +342,31 @@ render the whole table in monospace with no viewport wrap.
 
 ```
 WATER USAGE REPORT
-Period: 2026-06-26 to 2026-07-03
+Period: 2026-10-18 to 2026-10-25
 ========================================
 
 SUMMARY:
-  Total watering sessions: 36
-  Total duration: 465.0 min
-  Total water used: 1828 gallons
-  Zones watered: 13
+  Total duration: 169.6 min
+  Total water used: 488 gallons
+  Zones watered: 10
 
 ZONE DETAILS:
-Name     Min    Gals  GPM   Thr   Alrt
+Name        Min  Gals   GPM   Thr Alrt
 --------------------------------------
-Z1 FS    40.0   261   6.5   6.6   -
-Z2 FS    39.7   211   5.3   6.0   -
+Z1 FS      10.0    75   7.5   8.8    -
+Z2 FS       9.9    66   6.7   8.0    -
 ...
-Z12 FDB  59.5   82    1.4   1.5   -
-Z13 FS   35.0   0     0.0   1.0   -
+Z6 BB    skipped: weather 10/21
+Z8 BD      14.9    56   3.7   1.8    1
+...
+Z13 BUD    20.0     5   0.3   0.8    -
+
+SKIPPED RUNS:
+  10/21 Back Trees: weather (Z6 Z10 Z11)
+  10/24 Back Beds: climate (Z5 Z8)
+
+Disabled: Zone 14, Zone 15, Zone 16
+
 ========================================
 ```
 

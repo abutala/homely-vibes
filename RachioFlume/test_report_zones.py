@@ -28,6 +28,7 @@ def db(tmp_path: Path) -> WaterTrackingDB:
             Zone(id="z6", zone_number=6, name="Z6 BB - Trees", enabled=True),
             Zone(id="z9", zone_number=9, name="Z9 FD - Side", enabled=True),
             Zone(id="z13", zone_number=13, name="Zone 13", enabled=False),
+            Zone(id="z14", zone_number=14, name="Z14 FB - Pots", enabled=False),  # ran, then off
         ]
     )
     db.save_watering_events(
@@ -53,10 +54,10 @@ def db(tmp_path: Path) -> WaterTrackingDB:
         ]
     )
     with db.get_connection() as conn:
-        conn.execute(
+        conn.executemany(
             "INSERT INTO zone_sessions (zone_name, zone_number, start_time, duration_seconds,"
-            " total_water_used) VALUES ('Z1 FS', 1, ?, 600, 75.0)",
-            (START + timedelta(hours=6),),
+            " total_water_used) VALUES (?, ?, ?, 600, 75.0)",
+            [("Z1 FS", 1, START + timedelta(hours=6)), ("Z14 FB", 14, START + timedelta(hours=7))],
         )
         conn.commit()
     db.save_hose_valves(
@@ -67,8 +68,23 @@ def db(tmp_path: Path) -> WaterTrackingDB:
                 "base_station_label": "Hoses",
                 "name": "Z13 BUD - Upper Deck Planters",
                 "connected": False,
-            }
+            },
+            {"id": "v2", "base_station_id": "bs1", "base_station_label": "Hoses", "name": "Pots"},
         ]
+    )
+    db.save_hose_zone_session(
+        {
+            "valve_id": "v2",
+            "base_station_id": "bs1",
+            "valve_name": "Pots",
+            "base_station_label": "Hoses",
+            "start_time": START + timedelta(hours=8),
+            "end_time": START + timedelta(hours=8, minutes=10),
+            "duration_seconds": 600,
+            "flow_detected": False,
+            "total_water_used": 5.0,
+            "average_flow_rate": 0.5,
+        }
     )
     return db
 
@@ -96,10 +112,12 @@ def test_every_enabled_zone_and_valve_gets_a_row_with_a_reason(db: WaterTracking
         "Z3 FB": "skipped: climate 10/23",
         "Z6 BB": "skipped: weather 10/21",
         "Z9 FD": "in no active schedule",
-        "Z13 BUD": "no run recorded, valve disconnected",
+        "Z14 FB": "",  # disabled now, but it ran: a data row, not a "Disabled:" entry
+        "Pots": "",  # ran, so no idle row beside its data row
+        "Z13 BUD": "no run recorded, offline",
     }
     assert report.disabled_zones == ["Zone 13"]
-    assert report.summary.zones_watered == 1
+    assert report.summary.zones_watered == 3
 
 
 def test_skipped_runs_name_the_schedule_and_its_zones(db: WaterTrackingDB) -> None:
@@ -155,3 +173,47 @@ def test_schedule_zones_from_device_keeps_enabled_rules_only() -> None:
         "flexScheduleRules": [{"name": "Flex", "enabled": True, "zones": [{"zoneId": "gone"}]}],
     }
     assert schedule_zones_from_device(device) == {"Back Trees": [6, 10], "Flex": []}
+
+
+@pytest.mark.parametrize(
+    ("summary", "schedules"),
+    [
+        # A full name never prefix-matches: a disabled "Lawn" is not "Lawn extra".
+        ("Lawn was scheduled for 10/21 at 06:05 AM", {"Lawn extra": [1]}),
+        # A truncated name that fits two schedules is ambiguous.
+        ("Front Be... was scheduled for 10/21 at 06:05 AM", {"Front Beds": [3], "Front Berm": [4]}),
+    ],
+)
+def test_skip_with_no_unique_schedule_names_no_zones(
+    tmp_path: Path, summary: str, schedules: dict[str, list[int]]
+) -> None:
+    db = WaterTrackingDB(str(tmp_path / "water.db"))
+    db.save_watering_events(
+        [
+            WateringEvent(
+                event_date=START + timedelta(days=3),
+                zone_name=summary,
+                zone_number=-1,
+                event_type="WEATHER_INTELLIGENCE_SKIP",
+            )
+        ]
+    )
+    (run,) = _report(db, schedules).skipped_runs
+    assert run.zone_numbers == []
+
+
+def test_long_note_wraps_inside_the_report_width(db: WaterTrackingDB) -> None:
+    db.save_watering_events(
+        [
+            WateringEvent(
+                event_date=START + timedelta(days=d, hours=6),
+                zone_name="Back Trees was scheduled for 10/2x at 06:05 AM",
+                zone_number=-1,
+                event_type="WEATHER_INTELLIGENCE_SKIP",
+            )
+            for d in (4, 5, 6)
+        ]
+    )
+    text = WeeklyReporter(str(db.db_path)).format_report_text(_report(db, SCHEDULES))
+    assert max(len(line) for line in text.splitlines()) <= 40
+    assert "Z6 BB    skipped: weather 10/21, weather" in text
