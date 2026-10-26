@@ -422,7 +422,14 @@ class WeeklyReporter:
             for run in report.skipped_runs:
                 zones = " ".join(f"Z{n}" for n in run.zone_numbers)
                 suffix = f" ({zones})" if zones else ""
-                lines.append(f"  {run.date:%m/%d} {run.schedule}: {run.reason}{suffix}")
+                lines.extend(
+                    textwrap.wrap(
+                        f"{run.date:%m/%d} {run.schedule}: {run.reason}{suffix}",
+                        width=REPORT_WIDTH,
+                        initial_indent="  ",
+                        subsequent_indent=" " * 8,
+                    )
+                )
 
         if report.disabled_zones:
             lines.append("")

@@ -15,7 +15,11 @@ from RachioFlume.reporter import WeeklyReporter, WaterUsageReport, skip_reason
 
 START = datetime(2026, 10, 18)
 END = START + timedelta(days=7)
-SCHEDULES = {"Lawn": [1, 2], "Back Trees": [6, 10, 11], "Front Beds Summer": [3]}
+SCHEDULES = {
+    "Lawn": [1, 2],
+    "Back Trees": [6, 10, 11],
+    "Front Beds Summer": [3, 4, 7, 12, 15],
+}
 
 
 @pytest.fixture
@@ -124,7 +128,7 @@ def test_skipped_runs_name_the_schedule_and_its_zones(db: WaterTrackingDB) -> No
     report = _report(db, SCHEDULES)
     assert [(s.schedule, s.reason, s.zone_numbers) for s in report.skipped_runs] == [
         ("Back Trees", "weather", [6, 10, 11]),
-        ("Front Beds Summer", "climate", [3]),
+        ("Front Beds Summer", "climate", [3, 4, 7, 12, 15]),
     ]
     text = WeeklyReporter(str(db.db_path)).format_report_text(report)
     assert "10/21 Back Trees: weather (Z6 Z10 Z11)" in text
