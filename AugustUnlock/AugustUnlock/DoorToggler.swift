@@ -6,7 +6,9 @@ import os
 /// Bluetooth a cancel before the write means the first command never reaches
 /// the lock, and a cloud request August already holds can't be recalled —
 /// the same limits as the app's button. Which command a tap sends is
-/// `WidgetTapPolicy`'s call.
+/// `WidgetTapPolicy`'s call. Main-actor isolated (the target's default, made
+/// explicit): overlapping taps and the app's exit check share this state.
+@MainActor
 final class DoorToggler {
     static let shared = DoorToggler()
 
