@@ -210,23 +210,27 @@ class TestZoneThresholdChecking:
         mock_engine.pushover.send_message.assert_not_called()  # type: ignore[attr-defined]
 
 
+@pytest.fixture(scope="module")
+def recent_zone_sessions(prod_db_path: str) -> list[dict[str, Any]]:
+    """Zone sessions from the last 7 days of the fetched DB.
+
+    Skips when there are none: a week of weather or seasonal skips is a normal
+    controller state, not a test failure.
+    """
+    db = WaterTrackingDB(prod_db_path)
+    now = datetime.now()
+    sessions = db.get_zone_sessions(now - timedelta(days=7), now)
+    if not sessions:
+        pytest.skip("Prod DB has no zone sessions in the last 7 days")
+    return sessions
+
+
 class TestRealZoneData:
     """Test with actual zone data from production database."""
 
-    def test_recent_zone_sessions_exist(self, prod_db_path: str) -> None:
-        """Verify the fetched DB has recent zone session data."""
-        db = WaterTrackingDB(prod_db_path)
-        now = datetime.now()
-        sessions = db.get_zone_sessions(now - timedelta(days=7), now)
-        assert len(sessions) > 0, "No zone sessions found in last 7 days"
-
-    def test_zone_sessions_have_flow_data(self, prod_db_path: str) -> None:
+    def test_zone_sessions_have_flow_data(self, recent_zone_sessions: list[dict[str, Any]]) -> None:
         """Verify zone sessions have flow rate data."""
-        db = WaterTrackingDB(prod_db_path)
-        now = datetime.now()
-        sessions = db.get_zone_sessions(now - timedelta(days=7), now)
-
-        zones_with_flow = [s for s in sessions if (s.get("average_flow_rate") or 0) > 0]
+        zones_with_flow = [s for s in recent_zone_sessions if (s.get("average_flow_rate") or 0) > 0]
         assert len(zones_with_flow) > 0, "No zones with flow data found"
 
 
