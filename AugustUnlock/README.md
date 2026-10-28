@@ -72,6 +72,24 @@ AugustUnlock/scripts/build_ipa.sh 2>&1 | tee /tmp/augustunlock-build-ipa.log
 
 Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://sideloadly.io).
 
+## Home Screen widget
+
+Long-press the Home Screen → **+** → AugustUnlock → **Doors** (small: 2 doors,
+medium: up to 4). One button per lock on the account, with no lock state shown.
+
+- A tap unlocks that door.
+- A tap while that door's command is still running sends the opposite, as the
+  app's button does.
+- A tap within 3 minutes of that door reporting unlocked locks it. After that
+  a tap unlocks again: the door may have auto-locked since.
+
+The tap runs in the app (launched in the background if needed), not in the
+widget, so it uses the app's sign-in. Only the lock picked in the app has an
+offline key on the phone, so only that door tries Bluetooth; the other goes
+through the cloud. The buttons read "Door 1", "Door 2" (the app's lock order)
+when the widget can't read the app's lock names — see
+[Logbook.md](Logbook.md#2026-10-28--home-screen-widget-for-both-doors).
+
 ## How it works
 
 - `AugustClient.swift` — the whole August cloud client: login, email 2FA,
@@ -114,6 +132,11 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
   lock answers with a success code, so the state shown is the one requested.
   Either way, a door that auto-locked or was operated elsewhere is picked up
   the next time the app opens.
+- `AugustUnlockWidget/` — the widget extension: buttons only.
+  `Shared/ToggleDoorIntent.swift` is the button's intent, built into both
+  targets; it runs `DoorToggler.swift` in the app, which asks
+  `WidgetTapPolicy.swift` whether to lock or unlock. `Shared/SharedLockList.swift`
+  passes the lock names to the widget through the Keychain.
 
 ## Measuring lag
 
@@ -144,7 +167,7 @@ the remembered peripheral connected without a scan):
 
 The app quits itself after 5 minutes in the background (`BackgroundExitPolicy.swift`).
 
-The Bluetooth protocol and the exit policy have unit tests against bytes produced by yalexs-ble's
+The Bluetooth protocol, the exit policy and the widget-tap policy have unit tests against bytes produced by yalexs-ble's
 own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
 AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 
@@ -152,8 +175,8 @@ AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 ```
 
-`Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`
-and `BackgroundExitPolicy.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
+`Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`,
+`BackgroundExitPolicy.swift` and `WidgetTapPolicy.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
 
 ## Security notes
 

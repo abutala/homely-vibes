@@ -414,3 +414,50 @@ The cloud case is a known gap. A queue closed it, but the door then unlocked
 on every switch. Also, the tap writes the new command to the screen
 at once, before its task starts: a fast second tap reads the command now
 shown, not the cancelled one.
+
+## 2026-10-28 — Home Screen widget for both doors
+
+Asked for: a widget with both doors, no state shown, tap to unlock and tap
+again to override — the app's button rules.
+
+Non-obvious, in order of how much they shaped the design:
+
+1. **The tap runs in the app, not the widget.** A widget's `AppIntent` runs
+   in the extension by default, which has no sign-in, no offline key and no
+   memory of the command in flight. Adopting `LiveActivityIntent` makes iOS
+   run `perform()` in the app's process, launching it in the background if
+   needed (App Intents team rule, [mgorbach on Mastodon](https://mastodon.social/@mgorbach/110812346248732071);
+   [Zach Waugh](https://zachwaugh-com.pages.dev/posts/forcing-appintent-to-run-in-main-app-process)).
+   The intent is built into both targets; the widget's copy is a no-op
+   (`WIDGET_EXTENSION`). `NSSupportsLiveActivities` is set on the app in case
+   iOS gates on it; no Live Activity is started.
+2. **No App Group under Sideloadly on a free Apple ID.** Developers report
+   that it provisions none, and that a widget reading one gets nothing
+   ([ryanbr/noop#2798](https://github.com/ryanbr/noop/pull/2798),
+   [js-surya/bytecache#22](https://github.com/js-surya/bytecache/pull/22)). So
+   nothing the taps need is shared. Only the button labels are: the app writes
+   the lock names to Keychain group `<team>.com.deviationlabs.AugustUnlock.shared`,
+   with the team prefix read at run time. Both targets ask for that group in
+   `Entitlements/`, which an Xcode signature honours. `build_ipa.sh` builds
+   unsigned, so the IPA carries no entitlements and the group exists only if
+   Sideloadly's re-sign grants it (not known yet). Without it, the widget
+   shows "Door 1", "Door 2" in the app's lock order (by lock ID). Each target
+   lists its own app-ID group first, so the app's other Keychain items (the
+   password, the token, the offline key) stay out of the shared group.
+3. **A background launch must not auto-unlock.** If iOS connects the scene
+   while launching the app for a widget tap, `onAppear` would unlock the
+   selected door. It now counts as a background launch, so the first real
+   open unlocks.
+4. **The background exit must wait for a widget command.** iOS resumes a
+   suspended app to run a widget tap; if the app was backgrounded over 5
+   minutes earlier, the exit timer fires at once. The exit check now counts
+   `DoorToggler`'s taps as well as the app button's command.
+5. **"Unlocked" expires after 3 minutes.** The widget can't refresh state, so
+   a tap long after an unlock would lock a door that already auto-locked.
+   `WidgetTapPolicy` forgets the unlock after 3 minutes; a wrong guess costs
+   one more tap.
+
+Bluetooth from a background launch is not verified. The app has no
+`bluetooth-central` background mode (Xcode's generated Info.plist has no key
+for it), so a scan may find nothing; the remembered peripheral may still
+connect. Either way the cloud takes over after 3 s.

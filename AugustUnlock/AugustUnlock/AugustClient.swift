@@ -1,4 +1,5 @@
 import Foundation
+import WidgetKit
 import os
 
 enum AugustError: LocalizedError {
@@ -32,7 +33,7 @@ struct OperationReply {
     let path: Path
 }
 
-struct AugustLock: Identifiable, Equatable {
+struct AugustLock: Identifiable, Equatable, Codable {
     let id: String
     let name: String
 }
@@ -106,10 +107,12 @@ final class AugustClient {
     func signOut() {
         for key in [
             "august_email", "august_password", "august_access_token",
-            "august_lock_id", "august_lock_name",
+            "august_lock_id", "august_lock_name", Self.lockListKey,
         ] + Self.bluetoothKeychainKeys {
             KeychainStore.remove(key)
         }
+        SharedLockList.clear()
+        WidgetCenter.shared.reloadAllTimelines()
         refreshedKeys.withLock { $0.removeAll() }
         // install_id is deliberately kept: reusing it on the next login
         // avoids tripping 2FA again for a device August already trusts.
@@ -218,9 +221,16 @@ final class AugustClient {
 
     var hasSelectedLock: Bool { KeychainStore.get("august_lock_id") != nil }
 
-    /// Fetches every lock on the account. Doesn't select one — the caller
-    /// decides (auto-select when there's exactly one, otherwise prompt).
+    /// Fetches every lock on the account and caches the list for the widget.
+    /// Doesn't select one — the caller decides (auto-select when there's
+    /// exactly one, otherwise prompt).
     func fetchLocks() async throws -> [AugustLock] {
+        let locks = try await requestLocks()
+        cacheLocks(locks)
+        return locks
+    }
+
+    private func requestLocks() async throws -> [AugustLock] {
         let data = try await sendLockRequest(method: "GET", path: "/users/locks/mine")
         guard let raw = try JSONSerialization.jsonObject(with: data) as? [String: [String: Any]] else {
             throw AugustError.noLocks
@@ -233,6 +243,39 @@ final class AugustClient {
         return raw.sorted { $0.key < $1.key }.compactMap { id, fields in
             (fields["LockName"] as? String).map { AugustLock(id: id, name: $0) }
         }
+    }
+
+    // MARK: - Widget doors
+
+    private static let lockListKey = "august_lock_list"
+
+    /// The widget numbers its buttons by this list's order (by lock ID). The
+    /// widget reads only the names, through `SharedLockList`; the IDs stay here.
+    private var cachedLocks: [AugustLock]? {
+        KeychainStore.get(Self.lockListKey).flatMap { try? JSONDecoder().decode([AugustLock].self, from: Data($0.utf8)) }
+    }
+
+    private func cacheLocks(_ locks: [AugustLock]) {
+        guard let json = try? JSONEncoder().encode(locks) else { return }
+        KeychainStore.set(String(decoding: json, as: UTF8.self), forKey: Self.lockListKey)
+        SharedLockList.write(locks.map(\.name))
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    /// Fills the cache for an install signed in before the widget existed, so
+    /// its buttons get names without a sign-out.
+    func cacheLocksIfMissing() async {
+        guard cachedLocks == nil, isReady else { return }
+        _ = try? await fetchLocks()
+    }
+
+    /// The lock behind widget button `slot`. Re-fetches once when the cache
+    /// is missing or shorter than the widget thinks.
+    func lock(atSlot slot: Int) async throws -> AugustLock {
+        if let locks = cachedLocks, locks.indices.contains(slot) { return locks[slot] }
+        let locks = try await fetchLocks()
+        guard locks.indices.contains(slot) else { throw AugustError.noLocks }
+        return locks[slot]
     }
 
     func selectLock(_ lock: AugustLock) {
@@ -287,33 +330,37 @@ final class AugustClient {
 
     // MARK: - Lock state / lock / unlock
 
-    /// The selected lock's state as August's cloud last heard it from the
-    /// lock — `LockStatus.status` on GET /locks/{id}, the same field
+    /// A lock's state as August's cloud last heard it from the lock —
+    /// `LockStatus.status` on GET /locks/{id}, the same field
     /// August/august_client.py's `get_lock_status()` reads through yalexs'
     /// `LockDetail`.
-    func fetchLockState() async throws -> LockState {
-        guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
+    private func fetchLockState(lockID: String) async throws -> LockState {
         let data = try await sendLockRequest(method: "GET", path: "/locks/\(lockID)")
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let lockStatus = json?["LockStatus"] as? [String: Any]
         return LockState(augustStatus: lockStatus?["status"] as? String)
     }
 
-    func unlock() async throws -> OperationReply {
-        try await operate(action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked)
+    /// `lockID` nil means the selected lock. Only the selected lock has an
+    /// offline key on this phone, so any other lock goes through the cloud.
+    func unlock(lockID: String? = nil) async throws -> OperationReply {
+        try await operate(lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked)
     }
 
-    func lock() async throws -> OperationReply {
-        try await operate(action: "lock", opcode: AugustBLE.lockOpcode, success: .locked)
+    func lock(lockID: String? = nil) async throws -> OperationReply {
+        try await operate(lockID: lockID, action: "lock", opcode: AugustBLE.lockOpcode, success: .locked)
     }
 
     /// Bluetooth first when this lock has a loaded offline key, the cloud
     /// otherwise or if Bluetooth fails — unlock and lock are idempotent, so a
     /// cloud retry after a Bluetooth command that did land is harmless. A jam
     /// the lock reports over Bluetooth is final and is not retried.
-    private func operate(action: String, opcode: UInt8, success: LockState) async throws -> OperationReply {
-        guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
-        if let credentials = bluetoothCredentials {
+    private func operate(lockID requested: String?, action: String, opcode: UInt8, success: LockState) async throws
+        -> OperationReply
+    {
+        guard let selectedID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
+        let lockID = requested ?? selectedID
+        if lockID == selectedID, let credentials = bluetoothCredentials {
             let start = ContinuousClock.now
             do {
                 let timing = try await AugustBLEOperation.run(opcode: opcode, credentials: credentials)
@@ -329,7 +376,7 @@ final class AugustClient {
             }
         }
         let state = try await cloudOperate(lockID: lockID, action: action)
-        refreshBluetoothKeyOnce(lockID: lockID)
+        if lockID == selectedID { refreshBluetoothKeyOnce(lockID: lockID) }
         return OperationReply(state: state, path: .cloud)
     }
 
@@ -344,7 +391,7 @@ final class AugustClient {
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         let reported = LockState(augustStatus: json?["status"] as? String)
         guard reported == .unknown else { return reported }
-        return (try? await fetchLockState()) ?? .unknown
+        return (try? await fetchLockState(lockID: lockID)) ?? .unknown
     }
 
     // MARK: - HTTP plumbing

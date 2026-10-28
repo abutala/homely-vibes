@@ -72,6 +72,10 @@ struct ContentView: View {
         }
     }
 
+    /// A widget door command (`DoorToggler`) counts too: the exit timer can
+    /// fire the moment iOS resumes the app to run one.
+    private var anyCommandInFlight: Bool { isOperating || DoorToggler.shared.isBusy }
+
     var body: some View {
         VStack(spacing: 24) {
             switch phase {
@@ -90,7 +94,18 @@ struct ContentView: View {
         .padding()
         .onAppear {
             phase = AugustClient.shared.isReady ? .ready : .needsLogin
-            openUnlock()
+            Task { await AugustClient.shared.cacheLocksIfMissing() }
+            // A widget tap can launch the app in the background (see
+            // ToggleDoorIntent). If iOS connects the scene then, it must not
+            // unlock the selected door: treat it as backgrounded, so the first
+            // real open unlocks instead.
+            if UIApplication.shared.applicationState == .background {
+                wasBackgrounded = true
+                exitPolicy.didBackground(at: Date())
+                armExitTimer()
+            } else {
+                openUnlock()
+            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             // Covers reopening from the background, not just cold launch —
@@ -110,7 +125,7 @@ struct ContentView: View {
             case .active where wasBackgrounded:
                 wasBackgrounded = false
                 exitTimer?.cancel()
-                let expired = exitPolicy.shouldExit(at: Date(), operationInFlight: isOperating)
+                let expired = exitPolicy.shouldExit(at: Date(), operationInFlight: anyCommandInFlight)
                 exitPolicy.didForeground()
                 if expired { exit(0) }
                 // An operation still in flight kept running in the
@@ -135,7 +150,7 @@ struct ContentView: View {
     }
 
     private func exitIfExpired() {
-        if exitPolicy.shouldExit(at: Date(), operationInFlight: isOperating) { exit(0) }
+        if exitPolicy.shouldExit(at: Date(), operationInFlight: anyCommandInFlight) { exit(0) }
     }
 
     /// Opening the app — cold launch, finishing setup, or returning from the
