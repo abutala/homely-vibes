@@ -357,8 +357,8 @@ final class AugustClient {
     /// cloud retry after a Bluetooth command that did land is harmless. A jam
     /// the lock reports over Bluetooth is final and is not retried.
     private func operate(lockID requested: String?, unlocking: Bool) async throws -> OperationReply {
-        guard let selectedID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
-        let lockID = requested ?? selectedID
+        let selectedID = KeychainStore.get("august_lock_id")
+        guard let lockID = requested ?? selectedID else { throw AugustError.noLocks }
         let action = unlocking ? "unlock" : "lock"
         #if !WIDGET_EXTENSION
         let opcode = unlocking ? AugustBLE.unlockOpcode : AugustBLE.lockOpcode

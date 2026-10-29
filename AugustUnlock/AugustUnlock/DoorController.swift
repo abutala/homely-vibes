@@ -93,7 +93,7 @@ final class DoorController {
         display = .unknown
         lastTiming = nil
         lastError = nil
-        DoorStateStore.clear(ids: (AugustClient.shared.cachedLocks ?? []).map(\.id))
+        DoorStateStore.clearAll()
         WidgetCenter.shared.reloadAllTimelines()
     }
 

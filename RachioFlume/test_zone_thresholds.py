@@ -1,18 +1,14 @@
-"""Integration test for zone threshold checking with production database.
+"""Zone threshold checking: computation, lookup and the zone-end alert.
 
-This test validates the zone threshold logic by:
-1. Fetching the production database from prod controller (configured in config/local.yaml)
-2. Testing threshold computation for all configured zones
-3. Simulating zone-end scenarios with actual historical data
-4. Verifying alert behavior for known/unknown zones
+The pytest cases are hermetic: fixture thresholds and an empty temp DB. They
+never touch prod, so a dry week cannot fail a commit.
 
-Run with: python -m pytest RachioFlume/test_zone_thresholds.py -v
-Or standalone: python RachioFlume/test_zone_thresholds.py
+On demand, `python RachioFlume/test_zone_thresholds.py` fetches the prod DB
+(`prod_controller` in config/local.yaml) and lists recent threshold violations.
 """
 
 import subprocess
 import tempfile
-from collections.abc import Generator
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -34,30 +30,6 @@ def _get_prod_controller_config() -> tuple[str, str]:
     """Load prod controller SSH config from config/local.yaml."""
     cfg = get_config()
     return cfg.prod_controller.ssh_host, cfg.prod_controller.db_path
-
-
-@pytest.fixture(scope="module")
-def prod_db_path() -> Generator[str, None, None]:
-    """Fetch the production database from prod controller for testing."""
-    host, db_path = _get_prod_controller_config()
-    if not host or not db_path:
-        pytest.skip("Prod controller SSH config not set in config/local.yaml")
-
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-        tmp_path = tmp.name
-
-    try:
-        subprocess.run(
-            ["scp", f"{host}:{db_path}", tmp_path],
-            check=True,
-            capture_output=True,
-            timeout=30,
-        )
-        yield tmp_path
-    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-        pytest.skip(f"Could not fetch DB from prod controller: {e}")
-    finally:
-        Path(tmp_path).unlink(missing_ok=True)
 
 
 _FIXTURE_ZONE_AVGS = {
@@ -87,9 +59,9 @@ def zone_thresholds() -> dict[int, ZoneThreshold]:
 
 
 @pytest.fixture
-def mock_engine(prod_db_path: str, zone_thresholds: dict[int, ZoneThreshold]) -> AlertEngine:
-    """Create an AlertEngine with real DB and mocked clients."""
-    db = WaterTrackingDB(prod_db_path)
+def mock_engine(tmp_path: Path, zone_thresholds: dict[int, ZoneThreshold]) -> AlertEngine:
+    """Create an AlertEngine with an empty temp DB and mocked clients."""
+    db = WaterTrackingDB(str(tmp_path / "water_tracking.db"))
     flume = MagicMock()
     rachio = MagicMock()
     rachio.get_active_zone.return_value = None
@@ -141,7 +113,7 @@ class TestZoneThresholdComputation:
 
 
 class TestZoneThresholdChecking:
-    """Test zone threshold checking with real database."""
+    """Test zone threshold lookup and the zone-end alert."""
 
     def test_get_zone_threshold_known_zone(self, mock_engine: AlertEngine) -> None:
         """Test threshold lookup for known zone."""
@@ -208,30 +180,6 @@ class TestZoneThresholdChecking:
         # 3-min run, well over the 7.7 threshold, but below min_runtime_minutes (5)
         mock_engine._send_zone_outcome("Z10 BB - Redwoods", 10, 3.0, 8.5, 25.5, 1)
         mock_engine.pushover.send_message.assert_not_called()  # type: ignore[attr-defined]
-
-
-@pytest.fixture(scope="module")
-def recent_zone_sessions(prod_db_path: str) -> list[dict[str, Any]]:
-    """Zone sessions from the last 7 days of the fetched DB.
-
-    Skips when there are none: a week of weather or seasonal skips is a normal
-    controller state, not a test failure.
-    """
-    db = WaterTrackingDB(prod_db_path)
-    now = datetime.now()
-    sessions = db.get_zone_sessions(now - timedelta(days=7), now)
-    if not sessions:
-        pytest.skip("Prod DB has no zone sessions in the last 7 days")
-    return sessions
-
-
-class TestRealZoneData:
-    """Test with actual zone data from production database."""
-
-    def test_zone_sessions_have_flow_data(self, recent_zone_sessions: list[dict[str, Any]]) -> None:
-        """Verify zone sessions have flow rate data."""
-        zones_with_flow = [s for s in recent_zone_sessions if (s.get("average_flow_rate") or 0) > 0]
-        assert len(zones_with_flow) > 0, "No zones with flow data found"
 
 
 def main() -> int:

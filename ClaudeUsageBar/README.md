@@ -65,8 +65,8 @@ can be launched from Finder/Spotlight/login items like a normal app.
 - **Forecast**: under each dropdown row, an indented line projects the margin
   left at reset at the window's average rate so far — `At this pace: 20% left
   at reset` (percent left, like the title), or, when 100%
-  lands before the reset, only when it runs out:
-  `At this pace: runs out Sun 4:24 AM (in 1d 13h)`. The first 5% of a window
+  lands before the reset, only the cool-down from run-out to reset:
+  `At this pace: cool down of 2d 12h`. The first 5% of a window
   shows `Too early to project`; a spent window shows `Spent until reset`; a
   stale snapshot past its reset shows `Resetting now`.
   Logic: `Forecast.swift`.

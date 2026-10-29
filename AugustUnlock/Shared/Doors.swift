@@ -7,12 +7,11 @@ enum Doors {
     struct Door {
         let name: String
         let slot: Int
-        let symbol: String
     }
 
     static let all = [
-        Door(name: "Front door", slot: 1, symbol: "door.left.hand.closed"),
-        Door(name: "Garage", slot: 0, symbol: "car.fill"),
+        Door(name: "Front door", slot: 1),
+        Door(name: "Garage", slot: 0),
     ]
 
     static func slot(named name: String) -> Int {

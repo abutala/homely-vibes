@@ -62,6 +62,7 @@ enum WidgetDoorAction {
             log.error("Widget command for \(door.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
         }
         DoorStateStore.write(DoorRecord(state: state, running: nil, at: Date()), for: door.id)
+        WidgetCenter.shared.reloadAllTimelines()
     }
 
     private static let log = Logger(subsystem: "AugustUnlock", category: "widget")

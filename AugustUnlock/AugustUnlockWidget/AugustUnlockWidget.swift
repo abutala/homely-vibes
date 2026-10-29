@@ -101,13 +101,17 @@ struct DoorsView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .invalidatableContent()
+        // One intent type per door (`DoorIntents.swift`); a door with no
+        // intent gets no button, never another door's.
         switch door.name {
         case "Front door":
             Button(intent: ToggleFrontDoorIntent()) { label }
                 .buttonStyle(.borderedProminent).tint(.clear)
-        default:
+        case "Garage":
             Button(intent: ToggleGarageIntent()) { label }
                 .buttonStyle(.borderedProminent).tint(.clear)
+        default:
+            label
         }
     }
 }

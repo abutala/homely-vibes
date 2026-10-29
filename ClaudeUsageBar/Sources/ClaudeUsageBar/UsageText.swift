@@ -57,7 +57,7 @@ enum UsageText {
     /// Second line under a window row: the margin left at reset at the average
     /// rate so far — `At this pace: 64% left at reset`, matching the title's
     /// percent-left convention — or, when 100% comes before the reset, only
-    /// when it runs out.
+    /// the cool-down from run-out to reset: `At this pace: cool down of 2d 12h`.
     static func forecastRow(
         window: UsageWindow, length: TimeInterval,
         font: NSFont = .menuFont(ofSize: 0), now: Date = Date()
@@ -68,7 +68,10 @@ enum UsageText {
     static func forecastText(window: UsageWindow, length: TimeInterval, now: Date = Date()) -> String {
         switch Forecast.make(window, length: length, now: now) {
         case .atReset(let used): return "At this pace: \(100 - Int(used.rounded()))% left at reset"
-        case .runsOut(let date): return "At this pace: runs out \(ResetFormatter.description(for: date, now: now))"
+        case .runsOut(let date):
+            // A run-out seconds before reset still reads `1m`, never `0m`.
+            let start = min(date, window.resetsAt.addingTimeInterval(-60))
+            return "At this pace: cool down of \(ResetFormatter.countdown(to: window.resetsAt, now: start))"
         case .tooEarly: return "Too early to project"
         case nil: return window.resetsAt <= now ? "Resetting now" : "Spent until reset"
         }

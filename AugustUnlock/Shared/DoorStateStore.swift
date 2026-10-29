@@ -6,6 +6,12 @@ import Foundation
 /// from one process can never revert the other's write for a different door.
 enum DoorStateStore {
     private static func key(_ id: String) -> String { "august_door_state_\(id)" }
+    /// Every lock ID ever written, so sign-out can clear them all.
+    private static let indexKey = "august_door_state_ids"
+
+    private static var ids: [String] {
+        KeychainStore.get(indexKey).flatMap { try? JSONDecoder().decode([String].self, from: Data($0.utf8)) } ?? []
+    }
 
     static func record(for id: String) -> DoorRecord {
         guard let json = KeychainStore.get(key(id)),
@@ -17,9 +23,14 @@ enum DoorStateStore {
     static func write(_ record: DoorRecord, for id: String) {
         guard let json = try? JSONEncoder().encode(record) else { return }
         KeychainStore.set(String(decoding: json, as: UTF8.self), forKey: key(id))
+        let known = ids
+        if !known.contains(id), let index = try? JSONEncoder().encode(known + [id]) {
+            KeychainStore.set(String(decoding: index, as: UTF8.self), forKey: indexKey)
+        }
     }
 
-    static func clear(ids: [String]) {
+    static func clearAll() {
         ids.forEach { KeychainStore.remove(key($0)) }
+        KeychainStore.remove(indexKey)
     }
 }
