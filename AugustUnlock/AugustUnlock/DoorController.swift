@@ -42,6 +42,9 @@ final class DoorController {
     private var lockID: String?
     private var task: Task<Void, Never>?
     private var keepAlive: BackgroundKeepAlive?
+    /// Identifies the current command, so a late background-expiry from an
+    /// older one is ignored.
+    private var commandToken = UUID()
 
     private init() {}
 
@@ -109,14 +112,15 @@ final class DoorController {
 
         // The expiry handler acts only on the command it was made for: a
         // newer command has its own keep-alive, and this one's may fire late.
-        var thisTask: Task<Void, Never>?
+        let token = UUID()
+        commandToken = token
         let keepAlive = BackgroundKeepAlive { [weak self] in
-            guard let self, let thisTask, self.task == thisTask else { return }
-            thisTask.cancel()
+            guard let self, self.commandToken == token else { return }
+            self.task?.cancel()
             self.finish(id: id, state: .unknown, error: "Interrupted — tap to retry")
         }
         self.keepAlive = keepAlive
-        thisTask = Task {
+        task = Task {
             defer { keepAlive.end() }
             let start = ContinuousClock.now
             do {
@@ -134,7 +138,6 @@ final class DoorController {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
         }
-        task = thisTask
     }
 
     private func finish(id: String, state: LockState, error: String?) {
