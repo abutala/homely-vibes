@@ -418,58 +418,61 @@ shown, not the cancelled one.
 
 ## 2026-10-28 — Home Screen widget for both doors
 
-Asked for: a widget with both doors, tap to unlock and tap again to override —
-the app's button rules. Then, the same day: coloured circles (green unlocked,
-pulsing green unlocking, red locked, gray unknown), side by side in the widget
-in one full-width size. The app tried both doors side by side too; Amit wanted
-it back to one door at a time, in colour.
+Asked for: a widget with both doors, tap to unlock and tap again to override,
+coloured circles, state shown, and never opening the app. It took four probe
+builds on the phone to find why no tap ever ran; the design that shipped is
+below. The two things that cost a day:
 
-Non-obvious, in order of how much they shaped the design:
+1. **`.buttonStyle(.plain)` makes a widget button inert on this phone.** A
+   tap on it falls through to the widget body: the renderer logs "Launching
+   with no widgetURL" and SpringBoard opens the app ("source: Widget"); no
+   intent process runs at all. Every circle build used `.plain`, so every tap
+   opened the app and the app's open-unlock moved the picked door — which
+   read as "the widget ignores which button I pressed". `.borderedProminent`
+   runs the intent in the widget, in the background, as documented. Proven
+   with two buttons side by side (A bordered, B plain): A logged `perform`,
+   B did nothing. Not the cause, each ruled out by a probe: a `LiveActivityIntent`
+   (its "run in the app" route never fired either), an intent `@Parameter`
+   (the archive log said `Prepared slot to Int(nil)`, but a parameterless
+   intent on a `.plain` button was just as dead), Sideloadly's signing (`linkd`
+   indexed both `Metadata.appintents`, the extension launched, no crash log).
+   The circles are now bordered buttons with `.buttonBorderShape(.circle)`.
+2. **The app and the widget share the Keychain, with no entitlement.**
+   Sideloadly signs both with keychain-access-groups `TEAMID.*`, so the
+   widget reads what the app writes in its default group (the widget read the
+   app's access token in every probe). The earlier "no shared group" result
+   (commit `203c18d`) named an explicit group neither binary was entitled to;
+   that was the bug, not Sideloadly. An App Group is still unavailable. So the
+   door state is one Keychain item (`DoorStateStore`), written in place with
+   `SecItemUpdate` so the other process never reads a gap, and the widget
+   reads the lock list the app caches. A `SecItem` call from the widget while
+   the phone is locked fails with -25308 unless the item is
+   `AfterFirstUnlock`; `KeychainStore` writes everything that way.
 
-1. **The tap runs in the app, not the widget.** A widget's `AppIntent` runs
-   in the extension by default, which has no sign-in, no offline key and no
-   memory of the command in flight. Adopting `LiveActivityIntent` makes iOS
-   run `perform()` in the app's process, launching it in the background if
-   needed (App Intents team rule, [mgorbach on Mastodon](https://mastodon.social/@mgorbach/110812346248732071);
-   [Zach Waugh](https://zachwaugh-com.pages.dev/posts/forcing-appintent-to-run-in-main-app-process)).
-   The intent is built into both targets; the widget's copy is a no-op
-   (`WIDGET_EXTENSION`). `NSSupportsLiveActivities` is set on the app in case
-   iOS gates on it; no Live Activity is started.
-2. **The widget can't read anything from the app under Sideloadly.** A free
-   Apple ID gets no App Group ([ryanbr/noop#2798](https://github.com/ryanbr/noop/pull/2798),
-   [js-surya/bytecache#22](https://github.com/js-surya/bytecache/pull/22)). A
-   shared Keychain group was tried next: the app wrote the lock names, the
-   widget read them. On the phone the widget still showed its fallback
-   labels, so Sideloadly's re-sign grants no shared group either (the IPA is
-   unsigned, so it carries no entitlements to ask for one). That code was
-   removed. So the widget can't show lock state, and its labels are fixed in
-   code, each with the lock's index in the app's door order (by lock ID). The
-   first guess put the labels on the wrong locks; on the phone the main door
-   sorts first, so "Garage" (left) is index 1. Every widget circle is gray;
-   `invalidatableContent` makes iOS dim the tapped one while its command runs,
-   the only progress a widget can show here. The taps don't need sharing: they run in the app.
-   Sideloadly's "Use custom entitlements" option might grant a group; not tried.
-3. **iOS doesn't animate a widget in a loop.** It redraws a widget only when
-   its data changes, so a widget circle can't pulse. Moot here (point 2), but
-   it rules out a pulsing widget even with shared state.
-4. **A background launch must not auto-unlock.** If iOS connects the scene
-   while launching the app for a widget tap, `onAppear` would unlock the
-   selected door. It now counts as a background launch, so the first real
-   open unlocks.
-5. **The background exit must wait for a widget command.** iOS resumes a
-   suspended app to run a widget tap; if the app was backgrounded over 5
-   minutes earlier, the exit timer fires at once. The exit check counts every
-   `DoorController` command, app or widget.
-6. **For the widget, "unlocked" expires after 3 minutes.** The widget can't
-   show state, so a tap long after an unlock would lock a door that already
-   auto-locked. `DoorTapPolicy` trusts a reported unlock for 3 minutes on a
-   widget tap, and for as long as it is shown on an app tap; a wrong guess
-   costs one more tap.
-7. **App and widget share one door state.** `DoorController` holds both, so a
-   widget tap while the app's unlock is still running overrides it, and the
-   app's circle shows what a widget tap did to the picked door.
+Design points that stand:
 
-Bluetooth from a background launch is not verified. The app has no
-`bluetooth-central` background mode (Xcode's generated Info.plist has no key
-for it), so a scan may find nothing; the remembered peripheral may still
-connect. Either way the cloud takes over after 3 s.
+3. **The widget runs its own commands, cloud only.** `AugustClient` builds in
+   both targets; under `WIDGET_EXTENSION` the Bluetooth branch and the offline
+   key refresh compile out, so the widget can neither try Bluetooth nor delete
+   the app's key. A widget command takes the cloud's 5–9 s. Deadline 20 s:
+   widget work is reported to get about 20–25 s before iOS stops it (Apple
+   documents no limit), and a stopped command would leave "running" set.
+4. **A "running" state expires.** Readers treat a run older than 45 s as
+   unknown, so a killed process can't leave a circle dimmed forever. The
+   widget's "unlocked" expires after 3 minutes; the app's never does, since it
+   shows what it fetched.
+5. **One rule for taps, from the shared state.** `DoorRecord` decides from
+   the stored record, not from memory, so a cold widget process decides the
+   same as the app: opposite of a run in flight, lock a recent unlock, else
+   unlock.
+6. **Both processes refresh the session.** On a 401 each re-reads the stored
+   token first and retries with it if the other process just refreshed;
+   only then does it log in again.
+7. **The app never blocks.** Change Lock and Sign Out stay live during a
+   command (asked for); every app command has a 30 s deadline and ends gray.
+   A command the other process started can't be cancelled; the last reply
+   wins. The background exit waits for the app's own command only.
+
+Not verified: the dimmed "Unlocking…" frame in the widget. iOS may delay a
+reload asked for mid-command; the end state always shows, since the system
+reloads the widget when the intent returns.

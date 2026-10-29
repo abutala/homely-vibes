@@ -75,40 +75,42 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
 ## Home Screen widget
 
 Long-press the Home Screen → **+** → AugustUnlock → **Doors**. One size, full
-width: a gray circle per door, "Garage" and "Main door", with no lock state.
-While a tap's command runs, iOS dims the tapped circle.
+width: a coloured circle per door, "Front door" and "Garage", with the same
+colours as the app. A tap runs in the widget itself; the app never opens.
 
-- A tap unlocks that door.
-- A tap while that door's command is still running sends the opposite, as in
-  the app.
-- A tap within 3 minutes of that door reporting unlocked locks it. After that
-  a tap unlocks again: the door may have auto-locked since.
+- A tap unlocks that door. A tap on a green circle locks it.
+- A tap while that door's command is still running sends the opposite.
+- "Unlocked" is trusted for 3 minutes in the widget: after that the circle
+  goes gray and a tap unlocks again, since the door may have auto-locked.
+- While a command runs the circle dims and the caption says "Unlocking…" or
+  "Locking…"; a command that gets no reply in 20 s ends as gray.
 
-The tap runs in the app (launched in the background if needed), not in the
-widget, so it uses the app's sign-in. Only the lock picked in the app has an
-offline key on the phone, so only that door tries Bluetooth; the other goes
-through the cloud. The labels and the lock each one drives are fixed in
-`AugustUnlockWidget.swift` (by its index in the app's lock order, by lock ID):
-under Sideloadly the widget can't read the app's lock names or states — see
+The widget has no Bluetooth, so its commands go through the cloud (5–9 s).
+The app and the widget share one door state through the Keychain, so a widget
+tap shows in the app and an app command shows in the widget. Which lock is
+"Front door" and which "Garage" is fixed in `Shared/Doors.swift` by the lock's
+place in the account's list (by lock ID) — see
 [Logbook.md](Logbook.md#2026-10-28--home-screen-widget-for-both-doors).
 
-## Door colours (app)
+## Door colours
 
-The app shows one door: the lock picked in "Change Lock".
+The app shows one door: the lock picked in "Change Lock". The widget shows both.
 
 | Circle | Means |
 |---|---|
 | Green | Unlocked |
-| Pulsing green | Unlock running |
+| Pulsing green (app) / dimmed green (widget) | Unlock running |
 | Red | Locked |
-| Pulsing red | Lock running |
-| Gray | State not known (or a command failed) |
+| Pulsing red (app) / dimmed red (widget) | Lock running |
+| Gray | State not known, a command failed, or (widget) an unlock older than 3 minutes |
 
-A tap on a green circle locks; on red or gray, unlocks.
+A tap on a green circle locks; on red or gray, unlocks. In the app a command
+that gets no reply in 30 s ends as gray "Timed out — tap to retry"; "Change
+Lock" and "Sign Out" stay live while a command runs.
 
 ## How it works
 
-- `AugustClient.swift` — the whole August cloud client: login, email 2FA,
+- `Shared/AugustClient.swift` — the whole August cloud client: login, email 2FA,
   token refresh, lock discovery, lock status, lock/unlock. See its header comments and
   [Logbook.md](Logbook.md) for the two non-obvious API details (a revoked API
   key, and lock operations using a different key than login). A lock
@@ -131,7 +133,7 @@ A tap on a green circle locks; on red or gray, unlocks.
   send is harmless). A reported jam is shown, not retried. Later opens also
   connect straight to the peripheral remembered from the last connection,
   while the scan runs.
-- `KeychainStore.swift` — thin wrapper over `SecItem*` for on-device storage
+- `Shared/KeychainStore.swift` — thin wrapper over `SecItem*` for on-device storage
   of the August email/password, install ID, access token, selected lock ID
   and name, and that lock's offline key, slot and serial. Standard practice for a
   personal-use app — this is the same trust model the official August app
@@ -148,12 +150,13 @@ A tap on a green circle locks; on red or gray, unlocks.
   lock answers with a success code, so the state shown is the one requested.
   Either way, a door that auto-locked or was operated elsewhere is picked up
   the next time the app opens.
-- `DoorController.swift` — every door's state and command, for the app's
-  circle and the widget's taps alike; `DoorTapPolicy.swift` decides lock or
-  unlock.
-- `AugustUnlockWidget/` — the widget extension: circles only.
-  `Shared/ToggleDoorIntent.swift` is the circle's intent, built into both
-  targets; it runs `DoorController` in the app.
+- `DoorController.swift` — the picked door's state and command for the app's
+  circle, shared with the widget through `Shared/DoorStateStore.swift` (one
+  Keychain item, written in place). `Shared/DoorState.swift` is the pure rule:
+  what a tap sends, when a run or an unlock expires.
+- `AugustUnlockWidget/` — the widget extension. `DoorIntents.swift` is the two
+  taps (one intent type per door, no parameters) and the widget-side command;
+  the widget builds `AugustClient` with the Bluetooth path compiled out.
 
 ## Measuring lag
 
@@ -184,7 +187,7 @@ the remembered peripheral connected without a scan):
 
 The app quits itself after 5 minutes in the background (`BackgroundExitPolicy.swift`).
 
-The Bluetooth protocol, the exit policy and the door-tap policy have unit tests against bytes produced by yalexs-ble's
+The Bluetooth protocol, the exit policy and the door record have unit tests against bytes produced by yalexs-ble's
 own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
 AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 
@@ -193,7 +196,7 @@ cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 ```
 
 `Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`,
-`BackgroundExitPolicy.swift` and `DoorTapPolicy.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
+`BackgroundExitPolicy.swift` and `Shared/DoorState.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
 
 ## Security notes
 

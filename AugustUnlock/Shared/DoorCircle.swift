@@ -21,12 +21,22 @@ enum DoorDisplay: Equatable {
         switch self {
         case .unlocked, .unlocking: return "lock.open.fill"
         case .locked, .locking: return "lock.fill"
-        case .unknown: return "door.left.hand.closed"
+        case .unknown: return "questionmark"
         }
     }
 
     /// A command is running: the circle pulses in the colour it is heading to.
     var isRunning: Bool { self == .locking || self == .unlocking }
+
+    var caption: String {
+        switch self {
+        case .unknown: return "Tap to unlock"
+        case .locked: return "Locked"
+        case .unlocked: return "Unlocked"
+        case .locking: return "Locking…"
+        case .unlocking: return "Unlocking…"
+        }
+    }
 }
 
 /// A door: a coloured circle with its name under it.

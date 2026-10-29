@@ -86,6 +86,7 @@ struct ContentView: View {
                 let expired = exitPolicy.shouldExit(at: Date(), operationInFlight: doors.isBusy)
                 exitPolicy.didForeground()
                 if expired { exit(0) }
+                doors.refreshFromStore()
                 openUnlock()
             default:
                 break
@@ -266,16 +267,12 @@ struct ContentView: View {
 
     private var unlockScreen: some View {
         VStack(spacing: 32) {
-            if let picked = AugustClient.shared.selectedLockID {
-                Button {
-                    doors.tap(picked)
-                } label: {
-                    DoorCircle(
-                        name: AugustClient.shared.lockName ?? "Door", display: doors.display(for: picked),
-                        diameter: 200)
-                }
-                .buttonStyle(.plain)
+            Button {
+                doors.tap()
+            } label: {
+                DoorCircle(name: pickedDoorName, display: doors.display, diameter: 200)
             }
+            .buttonStyle(.plain)
 
             if let lastError = doors.lastError {
                 Text(lastError).foregroundStyle(.red).font(.footnote)
@@ -310,15 +307,23 @@ struct ContentView: View {
                     phase = .needsLogin
                 }
             }
-            // Switching lock or signing out mid-command would drop the door
-            // being acted on with its outcome unknown — the request still
-            // reaches August even if the app stops listening. Blocking both
-            // while in flight is simpler and safer than reconciling a result
-            // for a lock no longer shown.
-            .disabled(doors.isBusy)
+            // Both stay live during a command (asked for): switching lock
+            // cancels it, and the outcome shows up in the widget's state.
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
+    }
+
+    /// "Front door" or "Garage" by the lock's place in the account's list;
+    /// a lock outside that list keeps its August name.
+    private var pickedDoorName: String {
+        let locks = AugustClient.shared.cachedLocks ?? []
+        if let id = AugustClient.shared.selectedLockID, let slot = locks.firstIndex(where: { $0.id == id }),
+            let name = Doors.name(forSlot: slot)
+        {
+            return name
+        }
+        return AugustClient.shared.lockName ?? "Door"
     }
 
     /// Re-fetches the account's locks and shows the picker again, even if
