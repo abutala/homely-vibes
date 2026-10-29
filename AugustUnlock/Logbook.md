@@ -443,8 +443,9 @@ below. The two things that cost a day:
    app's access token in every probe). The earlier "no shared group" result
    (commit `203c18d`) named an explicit group neither binary was entitled to;
    that was the bug, not Sideloadly. An App Group is still unavailable. So the
-   door state is one Keychain item (`DoorStateStore`), written in place with
-   `SecItemUpdate` so the other process never reads a gap, and the widget
+   door state is one Keychain item per door (`DoorStateStore`), written in
+   place with `SecItemUpdate` so the other process never reads a gap and a
+   write for one door can't revert the other's, and the widget
    reads the lock list the app caches. A `SecItem` call from the widget while
    the phone is locked fails with -25308 unless the item is
    `AfterFirstUnlock`; `KeychainStore` writes everything that way.

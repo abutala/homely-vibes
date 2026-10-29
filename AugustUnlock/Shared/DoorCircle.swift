@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// What one door's circle shows. Compiled into the app and the widget; the
-/// widget can't read the app's state, so it always shows `.unknown`.
+/// What one door's circle shows. Compiled into the app and the widget, which
+/// read the same shared state (`DoorStateStore`).
 enum DoorDisplay: Equatable {
     case unknown
     case locked

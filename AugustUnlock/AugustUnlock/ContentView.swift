@@ -299,8 +299,9 @@ struct ContentView: View {
                     Task { await presentLockPicker() }
                 }
                 Button("Sign Out") {
-                    AugustClient.shared.signOut()
+                    // Door state is keyed by the lock list, so clear it first.
                     doors.signOut()
+                    AugustClient.shared.signOut()
                     email = ""
                     password = ""
                     code = ""

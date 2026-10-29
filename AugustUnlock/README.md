@@ -154,7 +154,7 @@ Lock" and "Sign Out" stay live while a command runs.
   the next time the app opens.
 - `DoorController.swift` — the picked door's state and command for the app's
   circle, shared with the widget through `Shared/DoorStateStore.swift` (one
-  Keychain item, written in place). `Shared/DoorState.swift` is the pure rule:
+  Keychain item per door, written in place). `Shared/DoorState.swift` is the pure rule:
   what a tap sends, when a run or an unlock expires.
 - `AugustUnlockWidget/` — the widget extension. `DoorIntents.swift` is the two
   taps (one intent type per door, no parameters) and the widget-side command;

@@ -49,9 +49,8 @@ struct DoorsProvider: TimelineProvider {
     /// One record per door; nil when the app hasn't cached that lock yet.
     private func records() -> [DoorRecord?] {
         let locks = AugustClient.shared.cachedLocks ?? []
-        let stored = DoorStateStore.read()
         return Doors.all.map { door in
-            locks.indices.contains(door.slot) ? (stored[locks[door.slot].id] ?? DoorRecord(at: .distantPast)) : nil
+            locks.indices.contains(door.slot) ? DoorStateStore.record(for: locks[door.slot].id) : nil
         }
     }
 
