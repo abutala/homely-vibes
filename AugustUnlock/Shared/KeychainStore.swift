@@ -1,16 +1,19 @@
 import Foundation
 import Security
 
-/// Minimal wrapper around a generic-password Keychain item, scoped to this app's bundle id.
+/// Minimal wrapper around a generic-password Keychain item in the app's
+/// default access group, which the widget extension shares (see the Logbook).
 enum KeychainStore {
+    /// Updates in place when the item exists, so a reader in the other
+    /// process (app or widget) never sees a gap between delete and add.
     static func set(_ value: String, forKey key: String) {
         let data = Data(value.utf8)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
         ]
-        SecItemDelete(query as CFDictionary)
-
+        let update: [String: Any] = [kSecValueData as String: data]
+        guard SecItemUpdate(query as CFDictionary, update as CFDictionary) == errSecItemNotFound else { return }
         var attributes = query
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock

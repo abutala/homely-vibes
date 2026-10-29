@@ -1,6 +1,6 @@
 // swift-tools-version: 6.0
-// Builds only the pure Bluetooth protocol file, so `swift test` can check it
-// on the Mac. The app itself builds from AugustUnlock.xcodeproj.
+// Builds only the pure files (Bluetooth protocol, exit policy, door record), so
+// `swift test` can check them on the Mac. The app builds from AugustUnlock.xcodeproj.
 import PackageDescription
 
 let package = Package(
@@ -9,12 +9,11 @@ let package = Package(
     targets: [
         .target(
             name: "AugustBLEProtocol",
-            path: "AugustUnlock",
-            exclude: [
-                "Assets.xcassets", "AugustClient.swift", "AugustBLEOperation.swift",
-                "AugustUnlockApp.swift", "ContentView.swift", "KeychainStore.swift",
+            path: ".",
+            sources: [
+                "AugustUnlock/AugustBLEProtocol.swift", "AugustUnlock/BackgroundExitPolicy.swift",
+                "Shared/DoorState.swift",
             ],
-            sources: ["AugustBLEProtocol.swift", "BackgroundExitPolicy.swift"],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(

@@ -237,12 +237,13 @@ failed with "The network connection was lost". iOS suspends a backgrounded app
 within seconds, the ephemeral session's socket dies with it, and the reply is
 lost — though August often finished the command anyway.
 
-Fix: `run(_:)` holds a `UIApplication.beginBackgroundTask` (`BackgroundKeepAlive`)
+Fix: each command holds a `UIApplication.beginBackgroundTask` (`BackgroundKeepAlive`;
+`DoorController.send` since 2026-10-28)
 for exactly the life of the operation, and ends it as soon as the operation
 ends so the app can suspend. Resume no longer replaces an operation that is
 still running; it opens afresh only when nothing is in flight. If iOS takes the
 time back first (about 30s; a slow bridge can take ~60s), the expiration
-handler cancels the operation and marks the screen idle, so the next open
+handler cancels the operation and marks the door unknown, so the next open
 unlocks again.
 
 Rejected: a background `URLSession`. It outlives suspension, but it is
@@ -391,8 +392,8 @@ with the timer as a best effort for the cases where iOS keeps the process
 awake. The visible cost: reopening after more than 5 minutes flashes the app
 and closes it; the next launch is a clean cold start that unlocks as usual.
 
-An in-flight operation postpones the exit: the timer and `run(_:)` both ask
-again when it ends, so the background task from the 2026-10-12 fix is never
+An in-flight operation postpones the exit: the timer and the `doors.isBusy`
+watch in `ContentView` (`run(_:)` before 2026-10-28) both ask again when it ends, so the background task from the 2026-10-12 fix is never
 cut short. The policy is a pure struct that takes `Date` as a parameter; its
 tests run with `swift test` (it is in `Package.swift`).
 
@@ -414,3 +415,65 @@ The cloud case is a known gap. A queue closed it, but the door then unlocked
 on every switch. Also, the tap writes the new command to the screen
 at once, before its task starts: a fast second tap reads the command now
 shown, not the cancelled one.
+
+## 2026-10-28 — Home Screen widget for both doors
+
+Asked for: a widget with both doors, tap to unlock and tap again to override,
+coloured circles, state shown, and never opening the app. It took four probe
+builds on the phone to find why no tap ever ran; the design that shipped is
+below. The two things that cost a day:
+
+1. **`.buttonStyle(.plain)` makes a widget button inert on this phone.** A
+   tap on it falls through to the widget body: the renderer logs "Launching
+   with no widgetURL" and SpringBoard opens the app ("source: Widget"); no
+   intent process runs at all. Every circle build used `.plain`, so every tap
+   opened the app and the app's open-unlock moved the picked door — which
+   read as "the widget ignores which button I pressed". `.borderedProminent`
+   runs the intent in the widget, in the background, as documented. Proven
+   with two buttons side by side (A bordered, B plain): A logged `perform`,
+   B did nothing. Not the cause, each ruled out by a probe: a `LiveActivityIntent`
+   (its "run in the app" route never fired either), an intent `@Parameter`
+   (the archive log said `Prepared slot to Int(nil)`, but a parameterless
+   intent on a `.plain` button was just as dead), Sideloadly's signing (`linkd`
+   indexed both `Metadata.appintents`, the extension launched, no crash log).
+   The circles are now bordered buttons with `.buttonBorderShape(.circle)`.
+2. **The app and the widget share the Keychain, with no entitlement.**
+   Sideloadly signs both with keychain-access-groups `TEAMID.*`, so the
+   widget reads what the app writes in its default group (the widget read the
+   app's access token in every probe). The earlier "no shared group" result
+   (commit `203c18d`) named an explicit group neither binary was entitled to;
+   that was the bug, not Sideloadly. An App Group is still unavailable. So the
+   door state is one Keychain item per door (`DoorStateStore`), written in
+   place with `SecItemUpdate` so the other process never reads a gap and a
+   write for one door can't revert the other's, and the widget
+   reads the lock list the app caches. A `SecItem` call from the widget while
+   the phone is locked fails with -25308 unless the item is
+   `AfterFirstUnlock`; `KeychainStore` writes everything that way.
+
+Design points that stand:
+
+3. **The widget runs its own commands, cloud only.** `AugustClient` builds in
+   both targets; under `WIDGET_EXTENSION` the Bluetooth branch and the offline
+   key refresh compile out, so the widget can neither try Bluetooth nor delete
+   the app's key. A widget command takes the cloud's 5–9 s. Deadline 20 s:
+   widget work is reported to get about 20–25 s before iOS stops it (Apple
+   documents no limit), and a stopped command would leave "running" set.
+4. **A "running" state expires.** Readers treat a run older than 45 s as
+   unknown, so a killed process can't leave a circle dimmed forever. The
+   widget's "unlocked" expires after 3 minutes; the app's never does, since it
+   shows what it fetched.
+5. **One rule for taps, from the shared state.** `DoorRecord` decides from
+   the stored record, not from memory, so a cold widget process decides the
+   same as the app: opposite of a run in flight, lock a recent unlock, else
+   unlock.
+6. **Both processes refresh the session.** On a 401 each re-reads the stored
+   token first and retries with it if the other process just refreshed;
+   only then does it log in again.
+7. **The app never blocks.** Change Lock and Sign Out stay live during a
+   command (asked for); every app command has a 30 s deadline and ends gray.
+   A command the other process started can't be cancelled; the last reply
+   wins. The background exit waits for the app's own command only.
+
+Not verified: the "Unlocking…" frame in the widget (ellipsis icon and caption). iOS may delay a
+reload asked for mid-command; the end state always shows, since the system
+reloads the widget when the intent returns.
