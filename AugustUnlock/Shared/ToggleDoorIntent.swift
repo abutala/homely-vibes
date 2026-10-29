@@ -21,7 +21,7 @@ struct ToggleDoorIntent: LiveActivityIntent {
 
     func perform() async throws -> some IntentResult {
         #if !WIDGET_EXTENSION
-            try await DoorToggler.shared.tap(slot: slot)
+            try await DoorController.shared.widgetTap(slot: slot)
         #endif
         return .result()
     }

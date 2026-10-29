@@ -417,8 +417,10 @@ shown, not the cancelled one.
 
 ## 2026-10-28 — Home Screen widget for both doors
 
-Asked for: a widget with both doors, no state shown, tap to unlock and tap
-again to override — the app's button rules.
+Asked for: a widget with both doors, tap to unlock and tap again to override —
+the app's button rules. Then, the same day: a coloured circle per door, side
+by side, in the app and the widget (green unlocked, pulsing green unlocking,
+red locked, gray unknown), and one full-width widget size.
 
 Non-obvious, in order of how much they shaped the design:
 
@@ -431,31 +433,36 @@ Non-obvious, in order of how much they shaped the design:
    The intent is built into both targets; the widget's copy is a no-op
    (`WIDGET_EXTENSION`). `NSSupportsLiveActivities` is set on the app in case
    iOS gates on it; no Live Activity is started.
-2. **No App Group under Sideloadly on a free Apple ID.** Developers report
-   that it provisions none, and that a widget reading one gets nothing
-   ([ryanbr/noop#2798](https://github.com/ryanbr/noop/pull/2798),
-   [js-surya/bytecache#22](https://github.com/js-surya/bytecache/pull/22)). So
-   nothing the taps need is shared. Only the button labels are: the app writes
-   the lock names to Keychain group `<team>.com.deviationlabs.AugustUnlock.shared`,
-   with the team prefix read at run time. Both targets ask for that group in
-   `Entitlements/`, which an Xcode signature honours. `build_ipa.sh` builds
-   unsigned, so the IPA carries no entitlements and the group exists only if
-   Sideloadly's re-sign grants it (not known yet). Without it, the widget
-   shows "Door 1", "Door 2" in the app's lock order (by lock ID). Each target
-   lists its own app-ID group first, so the app's other Keychain items (the
-   password, the token, the offline key) stay out of the shared group.
-3. **A background launch must not auto-unlock.** If iOS connects the scene
+2. **The widget can't read anything from the app under Sideloadly.** A free
+   Apple ID gets no App Group ([ryanbr/noop#2798](https://github.com/ryanbr/noop/pull/2798),
+   [js-surya/bytecache#22](https://github.com/js-surya/bytecache/pull/22)). A
+   shared Keychain group was tried next: the app wrote the lock names, the
+   widget read them. On the phone the widget still showed its fallback
+   labels, so Sideloadly's re-sign grants no shared group either (the IPA is
+   unsigned, so it carries no entitlements to ask for one). That code was
+   removed. So the widget can't show lock state, and its labels are fixed in
+   code ("Garage", "Main door", in the app's door order by lock ID); every
+   widget circle is gray. The taps don't need sharing: they run in the app.
+   Sideloadly's "Use custom entitlements" option might grant a group; not tried.
+3. **iOS doesn't animate a widget in a loop.** It redraws a widget only when
+   its data changes, so a widget circle can't pulse. Moot here (point 2), but
+   it rules out a pulsing widget even with shared state.
+4. **A background launch must not auto-unlock.** If iOS connects the scene
    while launching the app for a widget tap, `onAppear` would unlock the
    selected door. It now counts as a background launch, so the first real
    open unlocks.
-4. **The background exit must wait for a widget command.** iOS resumes a
+5. **The background exit must wait for a widget command.** iOS resumes a
    suspended app to run a widget tap; if the app was backgrounded over 5
-   minutes earlier, the exit timer fires at once. The exit check now counts
-   `DoorToggler`'s taps as well as the app button's command.
-5. **"Unlocked" expires after 3 minutes.** The widget can't refresh state, so
-   a tap long after an unlock would lock a door that already auto-locked.
-   `WidgetTapPolicy` forgets the unlock after 3 minutes; a wrong guess costs
-   one more tap.
+   minutes earlier, the exit timer fires at once. The exit check counts every
+   `DoorController` command, app or widget.
+6. **For the widget, "unlocked" expires after 3 minutes.** The widget can't
+   show state, so a tap long after an unlock would lock a door that already
+   auto-locked. `DoorTapPolicy` trusts a reported unlock for 3 minutes on a
+   widget tap, and for as long as it is shown on an app tap; a wrong guess
+   costs one more tap.
+7. **App and widget share one door state.** `DoorController` holds both, so a
+   widget tap while the app's unlock is still running overrides it, and the
+   app's circles show what a widget tap did.
 
 Bluetooth from a background launch is not verified. The app has no
 `bluetooth-central` background mode (Xcode's generated Info.plist has no key

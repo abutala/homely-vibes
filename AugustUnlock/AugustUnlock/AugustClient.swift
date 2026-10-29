@@ -1,5 +1,4 @@
 import Foundation
-import WidgetKit
 import os
 
 enum AugustError: LocalizedError {
@@ -111,8 +110,6 @@ final class AugustClient {
         ] + Self.bluetoothKeychainKeys {
             KeychainStore.remove(key)
         }
-        SharedLockList.clear()
-        WidgetCenter.shared.reloadAllTimelines()
         refreshedKeys.withLock { $0.removeAll() }
         // install_id is deliberately kept: reusing it on the next login
         // avoids tripping 2FA again for a device August already trusts.
@@ -221,7 +218,7 @@ final class AugustClient {
 
     var hasSelectedLock: Bool { KeychainStore.get("august_lock_id") != nil }
 
-    /// Fetches every lock on the account and caches the list for the widget.
+    /// Fetches every lock on the account and caches the list (the door order).
     /// Doesn't select one — the caller decides (auto-select when there's
     /// exactly one, otherwise prompt).
     func fetchLocks() async throws -> [AugustLock] {
@@ -245,31 +242,30 @@ final class AugustClient {
         }
     }
 
-    // MARK: - Widget doors
+    // MARK: - Doors
 
     private static let lockListKey = "august_lock_list"
 
-    /// The widget numbers its buttons by this list's order (by lock ID). The
-    /// widget reads only the names, through `SharedLockList`; the IDs stay here.
-    private var cachedLocks: [AugustLock]? {
+    /// Every lock on the account, in door order (by lock ID): the app's
+    /// circles left to right, and the widget's door slots.
+    var cachedLocks: [AugustLock]? {
         KeychainStore.get(Self.lockListKey).flatMap { try? JSONDecoder().decode([AugustLock].self, from: Data($0.utf8)) }
     }
 
     private func cacheLocks(_ locks: [AugustLock]) {
         guard let json = try? JSONEncoder().encode(locks) else { return }
         KeychainStore.set(String(decoding: json, as: UTF8.self), forKey: Self.lockListKey)
-        SharedLockList.write(locks.map(\.name))
-        WidgetCenter.shared.reloadAllTimelines()
     }
 
-    /// Fills the cache for an install signed in before the widget existed, so
-    /// its buttons get names without a sign-out.
+    /// Fills the cache for an install signed in before the door list existed.
     func cacheLocksIfMissing() async {
         guard cachedLocks == nil, isReady else { return }
         _ = try? await fetchLocks()
     }
 
-    /// The lock behind widget button `slot`. Re-fetches once when the cache
+    var selectedLockID: String? { KeychainStore.get("august_lock_id") }
+
+    /// The lock behind widget door `slot`. Re-fetches once when the cache
     /// is missing or shorter than the widget thinks.
     func lock(atSlot slot: Int) async throws -> AugustLock {
         if let locks = cachedLocks, locks.indices.contains(slot) { return locks[slot] }
@@ -334,7 +330,7 @@ final class AugustClient {
     /// `LockStatus.status` on GET /locks/{id}, the same field
     /// August/august_client.py's `get_lock_status()` reads through yalexs'
     /// `LockDetail`.
-    private func fetchLockState(lockID: String) async throws -> LockState {
+    func fetchLockState(lockID: String) async throws -> LockState {
         let data = try await sendLockRequest(method: "GET", path: "/locks/\(lockID)")
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let lockStatus = json?["LockStatus"] as? [String: Any]

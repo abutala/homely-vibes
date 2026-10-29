@@ -2,69 +2,51 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// A button per door, with no lock state shown. Each tap runs
+/// One full-width row: a gray circle per door. The widget can't read the
+/// app's lock names or states under Sideloadly (see the Logbook), so the
+/// labels are fixed and every circle shows "unknown". Each tap runs
 /// `ToggleDoorIntent` in the app, which decides lock or unlock.
 @main
 struct AugustUnlockWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: "Doors", provider: DoorsProvider()) { entry in
-            DoorsView(entry: entry)
+        StaticConfiguration(kind: "Doors", provider: DoorsProvider()) { _ in
+            DoorsView()
         }
         .configurationDisplayName("Doors")
         .description("Tap a door to unlock it. Tap again to lock it.")
-        .supportedFamilies([.systemSmall, .systemMedium])
+        .supportedFamilies([.systemMedium])
     }
 }
 
-struct DoorsEntry: TimelineEntry {
-    let date: Date
-    let names: [String]
-}
-
-/// One static entry: the names change only when the app's lock list does,
-/// and the app reloads the widget then.
+/// The view never changes, so one entry that never expires.
 struct DoorsProvider: TimelineProvider {
-    /// Used when the app's lock names can't be read (see `SharedLockList`).
-    static let fallbackNames = ["Door 1", "Door 2"]
-
-    func placeholder(in context: Context) -> DoorsEntry {
-        DoorsEntry(date: .now, names: Self.fallbackNames)
+    struct Entry: TimelineEntry {
+        let date: Date
     }
 
-    func getSnapshot(in context: Context, completion: @escaping (DoorsEntry) -> Void) {
-        completion(currentEntry())
+    func placeholder(in context: Context) -> Entry { Entry(date: .now) }
+
+    func getSnapshot(in context: Context, completion: @escaping (Entry) -> Void) {
+        completion(Entry(date: .now))
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<DoorsEntry>) -> Void) {
-        completion(Timeline(entries: [currentEntry()], policy: .never))
-    }
-
-    private func currentEntry() -> DoorsEntry {
-        let names = SharedLockList.read().flatMap { $0.isEmpty ? nil : $0 } ?? Self.fallbackNames
-        return DoorsEntry(date: .now, names: names)
+    func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
+        completion(Timeline(entries: [Entry(date: .now)], policy: .never))
     }
 }
 
 struct DoorsView: View {
-    @Environment(\.widgetFamily) private var family
-    let entry: DoorsEntry
-
-    private var maxDoors: Int { family == .systemSmall ? 2 : 4 }
+    /// In the app's door order (by lock ID), so slot N is the app's door N.
+    static let doorNames = ["Garage", "Main door"]
 
     var body: some View {
-        let doors = Array(entry.names.prefix(maxDoors).enumerated())
-        VStack(spacing: 8) {
-            ForEach(doors, id: \.offset) { slot, name in
+        HStack {
+            ForEach(Array(Self.doorNames.enumerated()), id: \.offset) { slot, name in
                 Button(intent: ToggleDoorIntent(slot: slot)) {
-                    Label(name, systemImage: "door.left.hand.open")
-                        .font(.headline)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    DoorCircle(name: name, display: .unknown, diameter: 92)
+                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.borderedProminent)
-                .buttonBorderShape(.roundedRectangle(radius: 14))
-                .invalidatableContent()
+                .buttonStyle(.plain)
             }
         }
         .containerBackground(.fill.tertiary, for: .widget)
