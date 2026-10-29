@@ -82,8 +82,8 @@ colours as the app. A tap runs in the widget itself; the app never opens.
 - A tap while that door's command is still running sends the opposite.
 - "Unlocked" is trusted for 3 minutes in the widget: after that the circle
   goes gray and a tap unlocks again, since the door may have auto-locked.
-- While a command runs the circle dims and the caption says "Unlocking…" or
-  "Locking…"; a command that gets no reply in 20 s ends as gray.
+- While a command runs the circle shows an ellipsis and the caption says
+  "Unlocking…" or "Locking…"; a command that gets no reply in 20 s ends as gray.
 - Each door's half of the widget is its button. A tap on the gap between
   them is a tap on the widget itself, which opens the app, as on any widget.
 
@@ -101,9 +101,9 @@ The app shows one door: the lock picked in "Change Lock". The widget shows both.
 | Circle | Means |
 |---|---|
 | Green | Unlocked |
-| Pulsing green (app) / dimmed green (widget) | Unlock running |
+| Pulsing green (app) / green with an ellipsis (widget) | Unlock running |
 | Red | Locked |
-| Pulsing red (app) / dimmed red (widget) | Lock running |
+| Pulsing red (app) / red with an ellipsis (widget) | Lock running |
 | Gray | State not known, a command failed, or (widget) an unlock older than 3 minutes |
 
 A tap on a green circle locks; on red or gray, unlocks. In the app a command

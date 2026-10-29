@@ -107,13 +107,16 @@ final class DoorController {
         display = unlocking ? .unlocking : .locking
         share(DoorRecord(state: .unknown, running: unlocking, at: Date()), for: id)
 
+        // The expiry handler acts only on the command it was made for: a
+        // newer command has its own keep-alive, and this one's may fire late.
+        var thisTask: Task<Void, Never>?
         let keepAlive = BackgroundKeepAlive { [weak self] in
-            guard let self else { return }
-            self.task?.cancel()
+            guard let self, let thisTask, self.task == thisTask else { return }
+            thisTask.cancel()
             self.finish(id: id, state: .unknown, error: "Interrupted — tap to retry")
         }
         self.keepAlive = keepAlive
-        task = Task {
+        thisTask = Task {
             defer { keepAlive.end() }
             let start = ContinuousClock.now
             do {
@@ -131,6 +134,7 @@ final class DoorController {
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
         }
+        task = thisTask
     }
 
     private func finish(id: String, state: LockState, error: String?) {

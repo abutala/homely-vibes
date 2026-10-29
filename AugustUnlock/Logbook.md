@@ -474,6 +474,6 @@ Design points that stand:
    A command the other process started can't be cancelled; the last reply
    wins. The background exit waits for the app's own command only.
 
-Not verified: the dimmed "Unlocking…" frame in the widget. iOS may delay a
+Not verified: the "Unlocking…" frame in the widget (ellipsis icon and caption). iOS may delay a
 reload asked for mid-command; the end state always shows, since the system
 reloads the widget when the intent returns.
