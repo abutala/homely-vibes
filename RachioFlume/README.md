@@ -397,24 +397,25 @@ uv run python -m pytest RachioFlume/test_alert_engine.py -v
 # Synthetic scenario assertions
 uv run python -m pytest RachioFlume/test_alert_simulation.py -v
 
-# Zone threshold integration test (fetches DB from prod controller)
+# Zone threshold tests (hermetic)
 uv run python -m pytest RachioFlume/test_zone_thresholds.py -v
-# Or standalone:
+# On demand: fetch the prod DB and list recent threshold violations
 python RachioFlume/test_zone_thresholds.py
 
 # Replay historical DB through the alert engine (no Pushover)
 uv run python RachioFlume/rfmanager.py alerts replay --hours 168
 ```
 
-### Zone Threshold Integration Test
+### Zone threshold tests
 
-The `test_zone_thresholds.py` integration test validates the zone anomaly detection logic against production data:
+`test_zone_thresholds.py` checks the zone anomaly logic: threshold
+computation, lookup for known and unknown zones, and the zone-end alert. The
+pytest cases use fixture thresholds and an empty temp DB, so they never touch
+prod.
 
-1. **Fetches the production database** from prod controller via SCP
-2. **Loads zone thresholds** from config (12 zones with per-zone avg GPM)
-3. **Tests threshold computation** for known/unknown zones
-4. **Simulates zone-end scenarios** with real historical data
-5. **Checks for threshold violations** in recent production sessions
+Run the file directly for the on-demand prod check: it fetches the prod DB
+over SCP, loads the thresholds from config, and lists recent sessions that
+cross their threshold.
 
 **Threshold formula** (adaptive mode):
 ```
@@ -431,7 +432,7 @@ flow triggers an alert.
 valves by their raw API name. Why, and how display strings are derived:
 [Logbook.md](Logbook.md).
 
-**Requirements**: SSH access to prod controller (configured in `config/local.yaml`) must work without password prompt (key-based auth).
+**On-demand requirements**: SSH access to the prod controller (configured in `config/local.yaml`) must work without a password prompt (key-based auth).
 
 ## Development
 
