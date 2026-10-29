@@ -37,16 +37,13 @@ final class DoorController {
     /// another door's error.
     private var lastErrorDoor: String?
     /// What August last reported per lock ID — taken from each command's
-    /// reply or a status fetch, never inferred from the command sent.
+    /// reply, never inferred from the command sent.
     private var reported: [String: LockState] = [:]
     /// Lock ID → true while unlocking, false while locking.
     private var running: [String: Bool] = [:]
     private var policies: [String: DoorTapPolicy] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
-    /// Bumped by every command, so a status fetch that started before one
-    /// can't overwrite that command's reply.
-    private var commandCounts: [String: Int] = [:]
-    /// Bumped by sign-out, so a status fetch from before can't write after it.
+    /// Bumped by sign-out, so a door-list fetch from before can't write after it.
     private var session = 0
     /// Widget taps still running, counted from the start: the lock lookup can
     /// wait on the network before any command exists.
@@ -71,30 +68,20 @@ final class DoorController {
     /// confirmation (requested explicitly). No status fetch first: it cost a
     /// full cloud round trip before the command, and unlocking an unlocked
     /// door is a no-op. A command for it still in flight (a background resume)
-    /// is left to report. Every other door gets its state from August.
+    /// is left to report. The app shows only the picked door; the door list is
+    /// loaded for the names in the timing caption and errors.
     func openUnlock() {
         doors = AugustClient.shared.cachedLocks ?? doors
         if let picked = AugustClient.shared.selectedLockID, running[picked] == nil {
             reported[picked] = nil
             send(picked, unlocking: true)
         }
+        guard doors.isEmpty else { return }
         let session = session
         Task {
-            if doors.isEmpty {
-                do {
-                    let locks = try await AugustClient.shared.fetchLocks()
-                    guard self.session == session else { return }
-                    doors = locks
-                } catch {
-                    guard self.session == session else { return }
-                    setError("Couldn't load the doors: \(error.localizedDescription)", door: nil)
-                    return
-                }
-            }
-            let picked = AugustClient.shared.selectedLockID
-            for door in doors where door.id != picked && running[door.id] == nil {
-                refreshState(door.id)
-            }
+            let locks = (try? await AugustClient.shared.fetchLocks()) ?? []
+            guard self.session == session else { return }
+            doors = locks
         }
     }
 
@@ -143,7 +130,6 @@ final class DoorController {
         tasks[id]?.cancel()
         policies[id, default: DoorTapPolicy()].didSend(unlocking: unlocking)
         running[id] = unlocking
-        commandCounts[id, default: 0] += 1
         if lastErrorDoor == id || lastErrorDoor == nil { setError(nil, door: nil) }
         let name = doors.first { $0.id == id }?.name ?? "door"
 
@@ -190,17 +176,6 @@ final class DoorController {
     private func setError(_ message: String?, door: String?) {
         lastError = message
         lastErrorDoor = door
-    }
-
-    private func refreshState(_ id: String) {
-        let count = commandCounts[id, default: 0]
-        let session = session
-        Task {
-            let state = (try? await AugustClient.shared.fetchLockState(lockID: id)) ?? .unknown
-            guard self.session == session, commandCounts[id, default: 0] == count else { return }
-            reported[id] = state
-            policies[id, default: DoorTapPolicy()].didFinish(reportedUnlocked: state == .unlocked, at: Date())
-        }
     }
 
     private static func seconds(since start: ContinuousClock.Instant) -> String {

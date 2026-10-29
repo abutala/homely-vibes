@@ -419,9 +419,10 @@ shown, not the cancelled one.
 ## 2026-10-28 — Home Screen widget for both doors
 
 Asked for: a widget with both doors, tap to unlock and tap again to override —
-the app's button rules. Then, the same day: a coloured circle per door, side
-by side, in the app and the widget (green unlocked, pulsing green unlocking,
-red locked, gray unknown), and one full-width widget size.
+the app's button rules. Then, the same day: coloured circles (green unlocked,
+pulsing green unlocking, red locked, gray unknown), side by side in the widget
+in one full-width size. The app tried both doors side by side too; Amit wanted
+it back to one door at a time, in colour.
 
 Non-obvious, in order of how much they shaped the design:
 
@@ -442,8 +443,11 @@ Non-obvious, in order of how much they shaped the design:
    labels, so Sideloadly's re-sign grants no shared group either (the IPA is
    unsigned, so it carries no entitlements to ask for one). That code was
    removed. So the widget can't show lock state, and its labels are fixed in
-   code ("Garage", "Main door", in the app's door order by lock ID); every
-   widget circle is gray. The taps don't need sharing: they run in the app.
+   code, each with the lock's index in the app's door order (by lock ID). The
+   first guess put the labels on the wrong locks; on the phone the main door
+   sorts first, so "Garage" (left) is index 1. Every widget circle is gray;
+   `invalidatableContent` makes iOS dim the tapped one while its command runs,
+   the only progress a widget can show here. The taps don't need sharing: they run in the app.
    Sideloadly's "Use custom entitlements" option might grant a group; not tried.
 3. **iOS doesn't animate a widget in a loop.** It redraws a widget only when
    its data changes, so a widget circle can't pulse. Moot here (point 2), but
@@ -463,7 +467,7 @@ Non-obvious, in order of how much they shaped the design:
    costs one more tap.
 7. **App and widget share one door state.** `DoorController` holds both, so a
    widget tap while the app's unlock is still running overrides it, and the
-   app's circles show what a widget tap did.
+   app's circle shows what a widget tap did to the picked door.
 
 Bluetooth from a background launch is not verified. The app has no
 `bluetooth-central` background mode (Xcode's generated Info.plist has no key

@@ -5,7 +5,8 @@ import WidgetKit
 /// One full-width row: a gray circle per door. The widget can't read the
 /// app's lock names or states under Sideloadly (see the Logbook), so the
 /// labels are fixed and every circle shows "unknown". Each tap runs
-/// `ToggleDoorIntent` in the app, which decides lock or unlock.
+/// `ToggleDoorIntent` in the app, which decides lock or unlock; while it runs,
+/// iOS dims the tapped circle (`invalidatableContent`).
 @main
 struct AugustUnlockWidget: Widget {
     var body: some WidgetConfiguration {
@@ -36,17 +37,17 @@ struct DoorsProvider: TimelineProvider {
 }
 
 struct DoorsView: View {
-    /// In the app's door order (by lock ID) — the order of the app's circles
-    /// and of its "Change Lock" list, where Garage comes first. If those ever
-    /// change order, these labels point at the wrong lock.
-    static let doorNames = ["Garage", "Main door"]
+    /// Left to right. `slot` is the lock's index in the app's door order (by
+    /// lock ID), where the main door sorts first — checked on the phone.
+    static let doors: [(name: String, slot: Int)] = [("Garage", 1), ("Main door", 0)]
 
     var body: some View {
         HStack {
-            ForEach(Array(Self.doorNames.enumerated()), id: \.offset) { slot, name in
-                Button(intent: ToggleDoorIntent(slot: slot)) {
-                    DoorCircle(name: name, display: .unknown, diameter: 92)
+            ForEach(Self.doors, id: \.slot) { door in
+                Button(intent: ToggleDoorIntent(slot: door.slot)) {
+                    DoorCircle(name: door.name, display: .unknown, diameter: 92)
                         .frame(maxWidth: .infinity)
+                        .invalidatableContent()
                 }
                 .buttonStyle(.plain)
             }

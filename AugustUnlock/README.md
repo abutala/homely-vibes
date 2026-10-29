@@ -3,9 +3,9 @@
 Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
 
 A one-screen iOS app: open it, your August door unlocks — no tap needed, opening
-the app *is* the confirmation. Each lock on the account is a circle; tap one to
-lock or unlock that door. A tap while a door is still unlocking cancels the
-unlock and locks instead (and the other way round while locking). No home server, no VPN. Near the door the app talks to the lock over Bluetooth, as the
+the app *is* the confirmation. The door is a coloured circle; tap it to lock or
+unlock. A tap while it is still unlocking cancels the unlock and locks instead
+(and the other way round while locking). No home server, no VPN. Near the door the app talks to the lock over Bluetooth, as the
 official August app does; anywhere else, or for a lock with no offline key, it
 uses August's cloud API directly, so it works from anywhere with a network
 connection (WiFi or cellular), not just at home.
@@ -76,6 +76,7 @@ Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://
 
 Long-press the Home Screen → **+** → AugustUnlock → **Doors**. One size, full
 width: a gray circle per door, "Garage" and "Main door", with no lock state.
+While a tap's command runs, iOS dims the tapped circle.
 
 - A tap unlocks that door.
 - A tap while that door's command is still running sends the opposite, as in
@@ -86,12 +87,14 @@ width: a gray circle per door, "Garage" and "Main door", with no lock state.
 The tap runs in the app (launched in the background if needed), not in the
 widget, so it uses the app's sign-in. Only the lock picked in the app has an
 offline key on the phone, so only that door tries Bluetooth; the other goes
-through the cloud. The labels are fixed in `AugustUnlockWidget.swift`, in the
-app's door order (by lock ID): under Sideloadly the widget can't read the
-app's lock names or states — see
+through the cloud. The labels and the lock each one drives are fixed in
+`AugustUnlockWidget.swift` (by its index in the app's lock order, by lock ID):
+under Sideloadly the widget can't read the app's lock names or states — see
 [Logbook.md](Logbook.md#2026-10-28--home-screen-widget-for-both-doors).
 
 ## Door colours (app)
+
+The app shows one door: the lock picked in "Change Lock".
 
 | Circle | Means |
 |---|---|
@@ -134,20 +137,19 @@ A tap on a green circle locks; on red or gray, unlocks.
   personal-use app — this is the same trust model the official August app
   uses.
 - `ContentView.swift` — the whole UI: sign-in form → one-time verification
-  code entry → the door circles (`Shared/DoorCircle.swift`). A single-lock
+  code entry → the door's circle (`Shared/DoorCircle.swift`). A single-lock
   account skips straight to its circle; a multi-lock account gets a one-time
-  picker on first sign-in for the lock that opening the app unlocks (and a
-  "Change Lock" link on the main screen to redo it later). Every open — cold
-  launch or back from the background — sends that unlock at once, with no
-  status check first (an already-unlocked door just stays unlocked), and asks
-  August for every other door's state. A lock/unlock still running when the
+  picker on first sign-in (and a "Change Lock" link on the main screen to redo
+  it later). Every open — cold launch or back from the background — sends the
+  unlock at once, with no status check first (an already-unlocked door just
+  stays unlocked). A lock/unlock still running when the
   app is backgrounded keeps running and reports its own result instead. After a cloud command the state shown is
   what the lock reported back, not what was requested; over Bluetooth the
   lock answers with a success code, so the state shown is the one requested.
   Either way, a door that auto-locked or was operated elsewhere is picked up
   the next time the app opens.
 - `DoorController.swift` — every door's state and command, for the app's
-  circles and the widget's taps alike; `DoorTapPolicy.swift` decides lock or
+  circle and the widget's taps alike; `DoorTapPolicy.swift` decides lock or
   unlock.
 - `AugustUnlockWidget/` — the widget extension: circles only.
   `Shared/ToggleDoorIntent.swift` is the circle's intent, built into both

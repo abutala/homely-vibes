@@ -246,7 +246,7 @@ struct ContentView: View {
         VStack(spacing: 16) {
             Text("Choose a Lock")
                 .font(.title2).bold()
-            Text("Opening the app unlocks this lock.")
+            Text("Your August account has more than one lock.")
                 .font(.footnote)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
@@ -266,19 +266,15 @@ struct ContentView: View {
 
     private var unlockScreen: some View {
         VStack(spacing: 32) {
-            if doors.doors.isEmpty {
-                ProgressView()
-            } else {
-                HStack(spacing: 24) {
-                    ForEach(doors.doors) { door in
-                        Button {
-                            doors.tap(door.id)
-                        } label: {
-                            DoorCircle(name: door.name, display: doors.display(for: door.id), diameter: 140)
-                        }
-                        .buttonStyle(.plain)
-                    }
+            if let picked = AugustClient.shared.selectedLockID {
+                Button {
+                    doors.tap(picked)
+                } label: {
+                    DoorCircle(
+                        name: AugustClient.shared.lockName ?? "Door", display: doors.display(for: picked),
+                        diameter: 200)
                 }
+                .buttonStyle(.plain)
             }
 
             if let lastError = doors.lastError {
