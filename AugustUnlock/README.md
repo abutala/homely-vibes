@@ -84,6 +84,8 @@ colours as the app. A tap runs in the widget itself; the app never opens.
   goes gray and a tap unlocks again, since the door may have auto-locked.
 - While a command runs the circle dims and the caption says "Unlocking…" or
   "Locking…"; a command that gets no reply in 20 s ends as gray.
+- Each door's half of the widget is its button. A tap on the gap between
+  them is a tap on the widget itself, which opens the app, as on any widget.
 
 The widget has no Bluetooth, so its commands go through the cloud (5–9 s).
 The app and the widget share one door state through the Keychain, so a widget

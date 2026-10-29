@@ -11,7 +11,7 @@ struct ToggleFrontDoorIntent: AppIntent {
     static let authenticationPolicy = IntentAuthenticationPolicy.requiresAuthentication
 
     func perform() async throws -> some IntentResult {
-        await WidgetDoorAction.tap(slot: 0)
+        await WidgetDoorAction.tap(slot: Doors.slot(named: "Front door"))
         return .result()
     }
 }
@@ -22,7 +22,7 @@ struct ToggleGarageIntent: AppIntent {
     static let authenticationPolicy = IntentAuthenticationPolicy.requiresAuthentication
 
     func perform() async throws -> some IntentResult {
-        await WidgetDoorAction.tap(slot: 1)
+        await WidgetDoorAction.tap(slot: Doors.slot(named: "Garage"))
         return .result()
     }
 }

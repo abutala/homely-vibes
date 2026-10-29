@@ -73,35 +73,42 @@ struct DoorsProvider: TimelineProvider {
 struct DoorsView: View {
     let entry: DoorsEntry
 
+    /// Each door is one button that fills its half of the widget: a tap
+    /// anywhere outside a button is a widget-body tap, which opens the app.
     var body: some View {
-        HStack(spacing: 32) {
+        HStack(spacing: 0) {
             ForEach(Array(Doors.all.enumerated()), id: \.offset) { index, door in
-                let display = entry.displays[index]
-                VStack(spacing: 6) {
-                    button(for: door, display: display)
-                    Text(door.name).font(.caption).bold()
-                    Text(display.caption).font(.caption2).foregroundStyle(.secondary)
-                }
+                button(for: door, display: entry.displays[index])
             }
         }
         .containerBackground(.fill.tertiary, for: .widget)
     }
 
     /// Bordered is the one button style that stays interactive in this
-    /// install (`.plain` taps fall through to "open the app" — see the Logbook).
+    /// install (`.plain` taps fall through to "open the app" — see the
+    /// Logbook); a clear tint leaves only our circle visible.
     @ViewBuilder
     private func button(for door: Doors.Door, display: DoorDisplay) -> some View {
-        let label = Image(systemName: display.isRunning ? "ellipsis" : display.symbol)
-            .font(.system(size: 28))
-            .frame(width: 44, height: 44)
-            .invalidatableContent()
-        switch door.slot {
-        case 0:
+        let label = VStack(spacing: 6) {
+            ZStack {
+                Circle().fill(display.color)
+                Image(systemName: display.isRunning ? "ellipsis" : display.symbol)
+                    .font(.system(size: 30))
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 76, height: 76)
+            Text(door.name).font(.caption).bold().foregroundStyle(.primary)
+            Text(display.caption).font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .invalidatableContent()
+        switch door.name {
+        case "Front door":
             Button(intent: ToggleFrontDoorIntent()) { label }
-                .buttonStyle(.borderedProminent).buttonBorderShape(.circle).tint(display.color)
+                .buttonStyle(.borderedProminent).tint(.clear)
         default:
             Button(intent: ToggleGarageIntent()) { label }
-                .buttonStyle(.borderedProminent).buttonBorderShape(.circle).tint(display.color)
+                .buttonStyle(.borderedProminent).tint(.clear)
         }
     }
 }
