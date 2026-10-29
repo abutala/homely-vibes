@@ -257,12 +257,6 @@ final class AugustClient {
         KeychainStore.set(String(decoding: json, as: UTF8.self), forKey: Self.lockListKey)
     }
 
-    /// Fills the cache for an install signed in before the door list existed.
-    func cacheLocksIfMissing() async {
-        guard cachedLocks == nil, isReady else { return }
-        _ = try? await fetchLocks()
-    }
-
     var selectedLockID: String? { KeychainStore.get("august_lock_id") }
 
     /// The lock behind widget door `slot`. Re-fetches once when the cache

@@ -33,6 +33,9 @@ final class DoorController {
     private(set) var doors: [AugustLock] = []
     private(set) var lastTiming: LastTiming?
     private(set) var lastError: String?
+    /// The door `lastError` is about, so one door's command doesn't hide
+    /// another door's error.
+    private var lastErrorDoor: String?
     /// What August last reported per lock ID — taken from each command's
     /// reply or a status fetch, never inferred from the command sent.
     private var reported: [String: LockState] = [:]
@@ -43,6 +46,8 @@ final class DoorController {
     /// Bumped by every command, so a status fetch that started before one
     /// can't overwrite that command's reply.
     private var commandCounts: [String: Int] = [:]
+    /// Bumped by sign-out, so a status fetch from before can't write after it.
+    private var session = 0
     /// Widget taps still running, counted from the start: the lock lookup can
     /// wait on the network before any command exists.
     private var widgetTaps = 0
@@ -73,8 +78,19 @@ final class DoorController {
             reported[picked] = nil
             send(picked, unlocking: true)
         }
+        let session = session
         Task {
-            if doors.isEmpty { doors = (try? await AugustClient.shared.fetchLocks()) ?? [] }
+            if doors.isEmpty {
+                do {
+                    let locks = try await AugustClient.shared.fetchLocks()
+                    guard self.session == session else { return }
+                    doors = locks
+                } catch {
+                    guard self.session == session else { return }
+                    setError("Couldn't load the doors: \(error.localizedDescription)", door: nil)
+                    return
+                }
+            }
             let picked = AugustClient.shared.selectedLockID
             for door in doors where door.id != picked && running[door.id] == nil {
                 refreshState(door.id)
@@ -98,14 +114,16 @@ final class DoorController {
         doors = AugustClient.shared.cachedLocks ?? doors
         let unlocking = nextTapUnlocks(door.id, trust: DoorTapPolicy.widgetUnlockedTrust)
         Self.log.notice("Widget \(unlocking ? "unlock" : "lock", privacy: .public) for slot \(slot)")
-        await send(door.id, unlocking: unlocking).value
+        await send(door.id, unlocking: unlocking, fromWidget: true).value
     }
 
     func signOut() {
+        session += 1
         tasks.values.forEach { $0.cancel() }
         doors = []
         lastTiming = nil
         lastError = nil
+        lastErrorDoor = nil
         reported = [:]
         running = [:]
         policies = [:]
@@ -121,12 +139,12 @@ final class DoorController {
     /// keeps running if the app is backgrounded mid-flight; if iOS takes the
     /// time back first, it is dropped and the door shows unknown.
     @discardableResult
-    private func send(_ id: String, unlocking: Bool) -> Task<Void, Never> {
+    private func send(_ id: String, unlocking: Bool, fromWidget: Bool = false) -> Task<Void, Never> {
         tasks[id]?.cancel()
         policies[id, default: DoorTapPolicy()].didSend(unlocking: unlocking)
         running[id] = unlocking
         commandCounts[id, default: 0] += 1
-        lastError = nil
+        if lastErrorDoor == id || lastErrorDoor == nil { setError(nil, door: nil) }
         let name = doors.first { $0.id == id }?.name ?? "door"
 
         var task: Task<Void, Never>?
@@ -150,7 +168,11 @@ final class DoorController {
             } catch {
                 guard !Task.isCancelled else { return }
                 finish(id, state: .unknown)
-                lastError = "\(name): \(error.localizedDescription)"
+                setError("\(name): \(error.localizedDescription)", door: id)
+                // A widget tap shows no result, so the log is its only trace.
+                if fromWidget {
+                    Self.log.error("Widget \(unlocking ? "unlock" : "lock", privacy: .public) of \(name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                }
                 UINotificationFeedbackGenerator().notificationOccurred(.error)
             }
         }
@@ -165,11 +187,17 @@ final class DoorController {
         policies[id, default: DoorTapPolicy()].didFinish(reportedUnlocked: state == .unlocked, at: Date())
     }
 
+    private func setError(_ message: String?, door: String?) {
+        lastError = message
+        lastErrorDoor = door
+    }
+
     private func refreshState(_ id: String) {
         let count = commandCounts[id, default: 0]
+        let session = session
         Task {
             let state = (try? await AugustClient.shared.fetchLockState(lockID: id)) ?? .unknown
-            guard commandCounts[id, default: 0] == count else { return }
+            guard self.session == session, commandCounts[id, default: 0] == count else { return }
             reported[id] = state
             policies[id, default: DoorTapPolicy()].didFinish(reportedUnlocked: state == .unlocked, at: Date())
         }

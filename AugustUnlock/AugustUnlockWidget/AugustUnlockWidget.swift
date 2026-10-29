@@ -36,7 +36,9 @@ struct DoorsProvider: TimelineProvider {
 }
 
 struct DoorsView: View {
-    /// In the app's door order (by lock ID), so slot N is the app's door N.
+    /// In the app's door order (by lock ID) — the order of the app's circles
+    /// and of its "Change Lock" list, where Garage comes first. If those ever
+    /// change order, these labels point at the wrong lock.
     static let doorNames = ["Garage", "Main door"]
 
     var body: some View {

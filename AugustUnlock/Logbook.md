@@ -237,12 +237,13 @@ failed with "The network connection was lost". iOS suspends a backgrounded app
 within seconds, the ephemeral session's socket dies with it, and the reply is
 lost — though August often finished the command anyway.
 
-Fix: `run(_:)` holds a `UIApplication.beginBackgroundTask` (`BackgroundKeepAlive`)
+Fix: each command holds a `UIApplication.beginBackgroundTask` (`BackgroundKeepAlive`;
+`DoorController.send` since 2026-10-28)
 for exactly the life of the operation, and ends it as soon as the operation
 ends so the app can suspend. Resume no longer replaces an operation that is
 still running; it opens afresh only when nothing is in flight. If iOS takes the
 time back first (about 30s; a slow bridge can take ~60s), the expiration
-handler cancels the operation and marks the screen idle, so the next open
+handler cancels the operation and marks the door unknown, so the next open
 unlocks again.
 
 Rejected: a background `URLSession`. It outlives suspension, but it is
@@ -391,8 +392,8 @@ with the timer as a best effort for the cases where iOS keeps the process
 awake. The visible cost: reopening after more than 5 minutes flashes the app
 and closes it; the next launch is a clean cold start that unlocks as usual.
 
-An in-flight operation postpones the exit: the timer and `run(_:)` both ask
-again when it ends, so the background task from the 2026-10-12 fix is never
+An in-flight operation postpones the exit: the timer and the `doors.isBusy`
+watch in `ContentView` (`run(_:)` before 2026-10-28) both ask again when it ends, so the background task from the 2026-10-12 fix is never
 cut short. The policy is a pure struct that takes `Date` as a parameter; its
 tests run with `swift test` (it is in `Package.swift`).
 
