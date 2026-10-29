@@ -151,6 +151,15 @@ beyond the threshold) the very first `Stale-zone alert sent: ...` message
 
 ## Landmines
 
+### Never assert on prod data in pytest
+
+`TestRealZoneData` asserted that the prod DB held zone sessions from the last 7
+days. In a dry week (2026-10-28, end of season) it failed, and since the
+pre-commit hook runs the whole suite, it blocked every commit in the repo. A
+freshness check is monitoring, not a code test. The pytest cases now use an
+empty temp DB; the prod check runs only on demand
+(`python RachioFlume/test_zone_thresholds.py`).
+
 ### Never poll a back-to-back window from an API that publishes late
 
 Rachio and Flume both publish late. A `[last poll, now]` window loses anything that
