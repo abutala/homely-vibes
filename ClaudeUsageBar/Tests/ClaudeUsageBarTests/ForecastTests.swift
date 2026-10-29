@@ -65,6 +65,11 @@ final class ForecastTests: XCTestCase {
         XCTAssertEqual(text(used: 75, secondsLeft: 9000), "At this pace: cool down of 1h 40m")
     }
 
+    /// 51% used 9170s in runs out ~20s before reset: floors at 1m, never `0m`.
+    func testTextCoolDownUnderAMinuteReadsOneMinute() {
+        XCTAssertEqual(text(used: 51, secondsLeft: 8830), "At this pace: cool down of 1m")
+    }
+
     /// 7-day, 50% used 2 days in: runs out 2 days from now, 5 days before reset.
     func testTextSevenDayCoolDownInDays() {
         XCTAssertEqual(text(used: 50, secondsLeft: 5 * 86400, length: PaceAlert.sevenDayLength), "At this pace: cool down of 3d 0h")

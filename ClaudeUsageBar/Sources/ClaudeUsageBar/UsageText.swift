@@ -69,7 +69,9 @@ enum UsageText {
         switch Forecast.make(window, length: length, now: now) {
         case .atReset(let used): return "At this pace: \(100 - Int(used.rounded()))% left at reset"
         case .runsOut(let date):
-            return "At this pace: cool down of \(ResetFormatter.countdown(to: window.resetsAt, now: date))"
+            // A run-out seconds before reset still reads `1m`, never `0m`.
+            let start = min(date, window.resetsAt.addingTimeInterval(-60))
+            return "At this pace: cool down of \(ResetFormatter.countdown(to: window.resetsAt, now: start))"
         case .tooEarly: return "Too early to project"
         case nil: return window.resetsAt <= now ? "Resetting now" : "Spent until reset"
         }
