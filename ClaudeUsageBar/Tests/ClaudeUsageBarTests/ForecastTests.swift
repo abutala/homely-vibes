@@ -60,11 +60,14 @@ final class ForecastTests: XCTestCase {
         XCTAssertEqual(text(used: 25, secondsLeft: 9000), "At this pace: 50% left at reset")
     }
 
-    func testTextRunsOutNamesOnlyTheTime() {
-        let row = text(used: 75, secondsLeft: 9000)
-        XCTAssertTrue(row.hasPrefix("At this pace: runs out "), row)
-        XCTAssertTrue(row.hasSuffix("(in 50m)"), row)
-        XCTAssertFalse(row.contains("left at reset"), row)
+    /// Runs out 50m from now, resets 2.5h from now: 1h 40m locked out.
+    func testTextRunsOutShowsOnlyTheCoolDown() {
+        XCTAssertEqual(text(used: 75, secondsLeft: 9000), "At this pace: cool down of 1h 40m")
+    }
+
+    /// 7-day, 50% used 2 days in: runs out 2 days from now, 5 days before reset.
+    func testTextSevenDayCoolDownInDays() {
+        XCTAssertEqual(text(used: 50, secondsLeft: 5 * 86400, length: PaceAlert.sevenDayLength), "At this pace: cool down of 3d 0h")
     }
 
     /// Margin, not use: 80% used at reset reads as 20% left. 7-day, 42% used
