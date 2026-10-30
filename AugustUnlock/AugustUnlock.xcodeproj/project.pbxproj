@@ -63,11 +63,6 @@
 			path = AugustUnlockWidget;
 			sourceTree = "<group>";
 		};
-		A1B2C3D4E5F60718293A4B07 /* Shared */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = Shared;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -93,7 +88,6 @@
 			children = (
 				FA6804D58B3486B44F788059 /* AugustUnlock */,
 				A1B2C3D4E5F60718293A4B06 /* AugustUnlockWidget */,
-				A1B2C3D4E5F60718293A4B07 /* Shared */,
 				7A2952070E909859C413BDED /* Products */,
 			);
 			sourceTree = "<group>";
@@ -126,7 +120,6 @@
 			);
 			fileSystemSynchronizedGroups = (
 				FA6804D58B3486B44F788059 /* AugustUnlock */,
-				A1B2C3D4E5F60718293A4B07 /* Shared */,
 			);
 			name = AugustUnlock;
 			packageProductDependencies = (
@@ -149,7 +142,6 @@
 			);
 			fileSystemSynchronizedGroups = (
 				A1B2C3D4E5F60718293A4B06 /* AugustUnlockWidget */,
-				A1B2C3D4E5F60718293A4B07 /* Shared */,
 			);
 			name = AugustUnlockWidget;
 			packageProductDependencies = (
@@ -450,7 +442,6 @@
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) WIDGET_EXTENSION";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
@@ -479,7 +470,6 @@
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) WIDGET_EXTENSION";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
