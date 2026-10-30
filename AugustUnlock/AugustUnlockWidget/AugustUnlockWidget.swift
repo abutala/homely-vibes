@@ -30,11 +30,15 @@ struct DoorsEntry: TimelineEntry {
     let message: String?
 }
 
-/// Each timeline re-fetches the lock list, so a renamed or added lock shows
-/// up, and an expired sign-in shows "Open the app to sign in" (a failed tap
-/// reloads, so it shows then too); between reloads the only changes are expiries, so the timeline holds
+/// A timeline re-fetches the lock list, so a renamed or added lock shows up,
+/// and an expired sign-in shows "Open the app to sign in" (a tap's final
+/// reload fetches, so a failed tap shows it too). The reload a tap fires to
+/// show "running" skips the fetch, and any fetch is capped at
+/// `fetchDeadline`, so the tap's feedback never waits on the network; between reloads the only changes are expiries, so the timeline holds
 /// the next one.
 struct DoorsProvider: TimelineProvider {
+    static let fetchDeadline: TimeInterval = 4
+
     func placeholder(in context: Context) -> DoorsEntry {
         DoorsEntry(date: .now, doors: [], message: nil)
     }
@@ -46,8 +50,13 @@ struct DoorsProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<DoorsEntry>) -> Void) {
         Task {
             var message: String?
+            let running = shownLocks().contains { WidgetStore.record(for: $0.id).effective(at: Date()).running != nil }
             do {
-                WidgetStore.locks = try await WidgetCloud.fetchLocks()
+                if !running {
+                    WidgetStore.locks = try await withDeadline(seconds: Self.fetchDeadline) {
+                        try await WidgetCloud.fetchLocks()
+                    }
+                }
             } catch WidgetCloud.Failure.signedOut {
                 message = WidgetCloud.Failure.signedOut.localizedDescription
             } catch {

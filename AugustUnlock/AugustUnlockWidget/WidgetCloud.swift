@@ -51,7 +51,7 @@ enum WidgetCloud {
     }
 
     private static func send(method: String, path: String) async throws -> Data {
-        guard let token = keychainString("august_access_token") else { throw Failure.signedOut }
+        guard let token = await accessToken() else { throw Failure.signedOut }
         var request = URLRequest(url: URL(string: baseURL + path)!)
         request.httpMethod = method
         request.setValue(lockAPIKey, forHTTPHeaderField: "x-august-api-key")
@@ -68,6 +68,14 @@ enum WidgetCloud {
         if status == 401 { throw Failure.signedOut }
         guard (200...299).contains(status) else { throw Failure.server(status) }
         return data
+    }
+
+    /// The app writes its token with delete-then-add, so a read can land in
+    /// the gap and find nothing; one retry after a moment rides it out.
+    private static func accessToken() async -> String? {
+        if let token = keychainString("august_access_token") { return token }
+        try? await Task.sleep(for: .milliseconds(300))
+        return keychainString("august_access_token")
     }
 
     private static func keychainString(_ key: String) -> String? {
