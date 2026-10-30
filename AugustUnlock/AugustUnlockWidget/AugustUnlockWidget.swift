@@ -2,9 +2,10 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// One full-width row: a coloured circle per door, from the state the app
-/// and the widget share (`DoorStateStore`). Each tap runs in the widget
-/// (`DoorIntents.swift`); the app never opens.
+/// One full-width row: a coloured circle per door, named as August names it.
+/// Each tap runs in the widget (`DoorIntents.swift`); the app never opens.
+/// The widget shares no code or state with the app; it only reads the app's
+/// sign-in (`WidgetCloud`).
 @main
 struct AugustUnlockWidget: Widget {
     var body: some WidgetConfiguration {
@@ -18,54 +19,80 @@ struct AugustUnlockWidget: Widget {
 }
 
 struct DoorsEntry: TimelineEntry {
+    struct Door {
+        let name: String
+        let display: DoorDisplay
+    }
+
     let date: Date
-    /// Per door, in `Doors.all` order.
-    let displays: [DoorDisplay]
+    /// At most two, in `WidgetStore.locks` order.
+    let doors: [Door]
+    let message: String?
 }
 
-/// The app reloads the widget after each of its commands and the widget
-/// after its own; between reloads the only changes are expiries, so the
+/// A timeline re-fetches the lock list, so a renamed or added lock shows up,
+/// capped at `fetchDeadline`. The reloads a tap fires (to show "running" and
+/// to show the result) skip the fetch for `tapQuiet`, so a tap's feedback
+/// never waits on the network. "Open the app to sign in" follows
+/// `WidgetStore.signedOut`, which a 401 from a fetch or a tap sets and any
+/// good reply clears. Between reloads the only changes are expiries, so the
 /// timeline holds the next one.
 struct DoorsProvider: TimelineProvider {
+    static let fetchDeadline: TimeInterval = 4
+    static let tapQuiet: TimeInterval = 60
+
     func placeholder(in context: Context) -> DoorsEntry {
-        DoorsEntry(date: .now, displays: Doors.all.map { _ in .unknown })
+        DoorsEntry(date: .now, doors: [], message: nil)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (DoorsEntry) -> Void) {
-        completion(entry(at: .now))
+        Task { completion(await refresh().entry) }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<DoorsEntry>) -> Void) {
-        let now = Date()
-        var entries = [entry(at: now)]
-        let trust = DoorRecord.widgetUnlockedTrust
-        let changes = records().compactMap { $0?.nextChange(after: now, trustUnlockedFor: trust) }.filter { $0 > now }
-        if let next = changes.min() {
-            entries.append(entry(at: next))
-        }
-        completion(Timeline(entries: entries, policy: .atEnd))
-    }
-
-    /// One record per door; nil when the app hasn't cached that lock yet.
-    private func records() -> [DoorRecord?] {
-        let locks = AugustClient.shared.cachedLocks ?? []
-        return Doors.all.map { door in
-            locks.indices.contains(door.slot) ? DoorStateStore.record(for: locks[door.slot].id) : nil
+        Task {
+            let (first, message) = await refresh()
+            let now = first.date
+            var entries = [first]
+            let changes = shownLocks().compactMap { WidgetStore.record(for: $0.id).nextChange() }.filter { $0 > now }
+            if let next = changes.min() {
+                entries.append(entry(at: next, message: message))
+            }
+            completion(Timeline(entries: entries, policy: .atEnd))
         }
     }
 
-    private func entry(at date: Date) -> DoorsEntry {
-        let displays = records().map { record -> DoorDisplay in
-            guard let record else { return .unknown }
-            let now = record.effective(at: date, trustUnlockedFor: DoorRecord.widgetUnlockedTrust)
-            if let running = now.running { return running ? .unlocking : .locking }
-            switch now.state {
-            case .locked: return .locked
-            case .unlocked: return .unlocked
-            case .unknown: return .unknown
+    /// Fetches the lock list unless a tap just ran, then builds the entry for now.
+    private func refresh() async -> (entry: DoorsEntry, message: String?) {
+        var failure: String?
+        let tapped = Date().timeIntervalSince(WidgetStore.lastTap) < Self.tapQuiet
+        if !tapped || WidgetStore.locks.isEmpty {
+            do {
+                WidgetStore.locks = try await withDeadline(seconds: Self.fetchDeadline) {
+                    try await WidgetCloud.fetchLocks()
+                }
+                WidgetStore.signedOut = false
+            } catch WidgetCloud.Failure.signedOut {
+                WidgetStore.signedOut = true
+            } catch {
+                failure = error.localizedDescription
             }
         }
-        return DoorsEntry(date: date, displays: displays)
+        let message = WidgetStore.signedOut
+            ? WidgetCloud.Failure.signedOut.localizedDescription
+            : WidgetStore.locks.isEmpty ? failure : nil
+        return (entry(at: Date(), message: message), message)
+    }
+
+    private func shownLocks() -> [WidgetCloud.Lock] {
+        Array(WidgetStore.locks.prefix(2))
+    }
+
+    private func entry(at date: Date, message: String?) -> DoorsEntry {
+        let doors = shownLocks().map { lock in
+            DoorsEntry.Door(name: lock.name, display: DoorDisplay(WidgetStore.record(for: lock.id).effective(at: date)))
+        }
+        return DoorsEntry(date: date, doors: doors, message: message)
     }
 }
 
@@ -75,9 +102,20 @@ struct DoorsView: View {
     /// Each door is one button that fills its half of the widget: a tap
     /// anywhere outside a button is a widget-body tap, which opens the app.
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(Array(Doors.all.enumerated()), id: \.offset) { index, door in
-                button(for: door, display: entry.displays[index])
+        Group {
+            if entry.doors.isEmpty {
+                Text(entry.message ?? "Loading doors…").font(.footnote).foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 4) {
+                    HStack(spacing: 0) {
+                        ForEach(Array(entry.doors.enumerated()), id: \.offset) { position, door in
+                            button(position: position, door: door)
+                        }
+                    }
+                    if let message = entry.message {
+                        Text(message).font(.caption2).foregroundStyle(.red)
+                    }
+                }
             }
         }
         .containerBackground(.fill.tertiary, for: .widget)
@@ -87,31 +125,26 @@ struct DoorsView: View {
     /// install (`.plain` taps fall through to "open the app" — see the
     /// Logbook); a clear tint leaves only our circle visible.
     @ViewBuilder
-    private func button(for door: Doors.Door, display: DoorDisplay) -> some View {
+    private func button(position: Int, door: DoorsEntry.Door) -> some View {
         let label = VStack(spacing: 6) {
             ZStack {
-                Circle().fill(display.color)
-                Image(systemName: display.isRunning ? "ellipsis" : display.symbol)
+                Circle().fill(door.display.color)
+                Image(systemName: door.display.symbol)
                     .font(.system(size: 30))
                     .foregroundStyle(.white)
             }
             .frame(width: 76, height: 76)
-            Text(door.name).font(.caption).bold().foregroundStyle(.primary)
-            Text(display.caption).font(.caption2).foregroundStyle(.secondary)
+            Text(door.name).font(.caption).bold().foregroundStyle(.primary).lineLimit(1)
+            Text(door.display.caption).font(.caption2).foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .invalidatableContent()
-        // One intent type per door (`DoorIntents.swift`); a door with no
-        // intent gets no button, never another door's.
-        switch door.name {
-        case "Front door":
-            Button(intent: ToggleFrontDoorIntent()) { label }
+        if position == 0 {
+            Button(intent: ToggleFirstDoorIntent()) { label }
                 .buttonStyle(.borderedProminent).tint(.clear)
-        case "Garage":
-            Button(intent: ToggleGarageIntent()) { label }
+        } else {
+            Button(intent: ToggleSecondDoorIntent()) { label }
                 .buttonStyle(.borderedProminent).tint(.clear)
-        default:
-            label
         }
     }
 }
