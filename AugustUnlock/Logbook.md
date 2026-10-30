@@ -471,12 +471,15 @@ Fix: the app is restored file for file to `c69bce9`, before the widget. The
 widget shares no code or state with it:
 
 - `WidgetCloud` reads the app's access token from the Keychain and never
-  writes anything there. On a 401 the widget says "Open the app to sign in";
-  the app refreshes the token on its next request.
+  writes anything there. On a 401 the widget shows "Open the app to sign in"
+  under the doors; the app refreshes the token on its next request.
 - The widget fetches the lock list itself and names each door as August
-  does. The label and the command read the same list entry, so they can't
-  disagree. Its own lock list and door records live in the extension's
-  UserDefaults.
+  does. The label and the command read the same list entry by position, with
+  no table between them; only a change to the account's lock list can move a
+  lock, and the widget redraws with it. Its own lock list and door records
+  live in the extension's UserDefaults.
+- A second tap while a command runs doesn't cancel it. The newer tap owns the
+  door's record, and the older reply is dropped instead of overwriting it.
 - Cloud only, 20 s deadline (widget work is reported to get about 20–25 s
   before iOS stops it; Apple documents no limit). A run older than 45 s
   reads as unknown, and an "unlocked" older than 3 minutes as unknown.

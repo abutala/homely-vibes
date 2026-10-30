@@ -31,7 +31,8 @@ struct DoorsEntry: TimelineEntry {
 }
 
 /// Each timeline re-fetches the lock list, so a renamed or added lock shows
-/// up; between reloads the only changes are expiries, so the timeline holds
+/// up, and an expired sign-in shows "Open the app to sign in" (a failed tap
+/// reloads, so it shows then too); between reloads the only changes are expiries, so the timeline holds
 /// the next one.
 struct DoorsProvider: TimelineProvider {
     func placeholder(in context: Context) -> DoorsEntry {
@@ -47,6 +48,8 @@ struct DoorsProvider: TimelineProvider {
             var message: String?
             do {
                 WidgetStore.locks = try await WidgetCloud.fetchLocks()
+            } catch WidgetCloud.Failure.signedOut {
+                message = WidgetCloud.Failure.signedOut.localizedDescription
             } catch {
                 message = WidgetStore.locks.isEmpty ? error.localizedDescription : nil
             }
@@ -82,9 +85,14 @@ struct DoorsView: View {
             if entry.doors.isEmpty {
                 Text(entry.message ?? "Open the app to sign in").font(.footnote).foregroundStyle(.secondary)
             } else {
-                HStack(spacing: 0) {
-                    ForEach(Array(entry.doors.enumerated()), id: \.offset) { position, door in
-                        button(position: position, door: door)
+                VStack(spacing: 4) {
+                    HStack(spacing: 0) {
+                        ForEach(Array(entry.doors.enumerated()), id: \.offset) { position, door in
+                            button(position: position, door: door)
+                        }
+                    }
+                    if let message = entry.message {
+                        Text(message).font(.caption2).foregroundStyle(.red)
                     }
                 }
             }

@@ -91,8 +91,8 @@ in the widget itself; the app never opens.
 The widget shares no code or state with the app (`AugustUnlockWidget/`). It
 reads the app's sign-in from the Keychain and never writes it, fetches the
 lock list itself, and sends every command through the cloud (5–9 s; it has
-no Bluetooth). When the app's token has expired the widget says "Open the
-app to sign in". See [Logbook.md](Logbook.md#2026-10-30--the-widget-pr-broke-the-app-the-widget-is-now-a-separate-island).
+no Bluetooth). When the app's token has expired the widget shows "Open the
+app to sign in" under the doors. See [Logbook.md](Logbook.md#2026-10-30--the-widget-pr-broke-the-app-the-widget-is-now-a-separate-island).
 
 ## How it works
 

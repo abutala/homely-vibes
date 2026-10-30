@@ -5,8 +5,8 @@ import os
 /// The widget's own path to August's cloud. It only reads the app's sign-in
 /// from the Keychain (Sideloadly gives both targets the same default access
 /// group, see the Logbook) and never writes it: a token refresh, a lock pick
-/// or the Bluetooth key stay the app's alone. On a 401 the widget asks the
-/// user to open the app, which signs in again on its next request.
+/// or the Bluetooth key stay the app's alone. On a 401 the widget shows
+/// "Open the app to sign in"; the app signs in again on its next request.
 /// The request shape copies the app's `AugustClient`.
 enum WidgetCloud {
     enum Failure: LocalizedError {

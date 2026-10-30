@@ -5,8 +5,9 @@ import os
 /// One intent type per door position, with no parameters, run by the widget
 /// itself in the background. `.plain` button styles are inert in this install
 /// and a parameter was ruled out separately, so the types stay as plain as
-/// this. The label and the command read the same `WidgetStore.locks` entry,
-/// so a door's name always matches the lock it acts on.
+/// this. The label and the command read the same `WidgetStore.locks` entry
+/// by position. Only a change to the account's lock list can move a lock to
+/// another position, and the widget redraws with the new list at once.
 struct ToggleFirstDoorIntent: AppIntent {
     static let title: LocalizedStringResource = "Toggle First Door"
     static let isDiscoverable = false
@@ -31,8 +32,9 @@ struct ToggleSecondDoorIntent: AppIntent {
 
 /// A widget tap: decide from the widget's own record, mark it running, send
 /// the cloud command, record the reply. Cloud only, so a tap takes the
-/// cloud's 5–9 s. It shares nothing with a command the app runs; the lock
-/// itself serialises them.
+/// cloud's 5–9 s. A tap while one runs doesn't cancel it: the newer tap owns
+/// the record, so the older reply is dropped, not shown. It shares nothing
+/// with a command the app runs; the lock itself serialises them.
 enum WidgetDoorAction {
     /// Under the 20–25 s that widget work is reported to get before iOS
     /// stops it; a stopped command would leave "running" stuck until
@@ -48,7 +50,8 @@ enum WidgetDoorAction {
         let door = locks[position]
         let before = WidgetStore.record(for: door.id)
         let unlocking = before.nextTapUnlocks(at: Date())
-        WidgetStore.write(DoorRecord(state: before.state, running: unlocking, at: Date()), for: door.id)
+        let sent = DoorRecord(state: before.state, running: unlocking, at: Date())
+        WidgetStore.write(sent, for: door.id)
         WidgetCenter.shared.reloadAllTimelines()
         log.notice("Widget \(unlocking ? "unlock" : "lock", privacy: .public) of \(door.name, privacy: .public)")
 
@@ -59,6 +62,12 @@ enum WidgetDoorAction {
             }
         } catch {
             log.error("Widget command for \(door.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+        }
+        // Compared within 1 ms, not with `==`: the record went through JSON.
+        let now = WidgetStore.record(for: door.id)
+        guard now.running == sent.running, abs(now.at.timeIntervalSince(sent.at)) < 0.001 else {
+            log.notice("Widget reply for \(door.name, privacy: .public) dropped: a newer tap owns the door")
+            return
         }
         WidgetStore.write(DoorRecord(state: state, running: nil, at: Date()), for: door.id)
         WidgetCenter.shared.reloadAllTimelines()
