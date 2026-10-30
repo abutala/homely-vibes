@@ -99,6 +99,18 @@ enum WidgetStore {
     private static let defaults = UserDefaults.standard
     private static let locksKey = "locks"
 
+    /// Set by a 401, cleared by any good reply; drives "Open the app to sign in".
+    static var signedOut: Bool {
+        get { defaults.bool(forKey: "signedOut") }
+        set { defaults.set(newValue, forKey: "signedOut") }
+    }
+
+    /// When the last tap started; its reloads skip the lock-list fetch.
+    static var lastTap: Date {
+        get { defaults.object(forKey: "lastTap") as? Date ?? .distantPast }
+        set { defaults.set(newValue, forKey: "lastTap") }
+    }
+
     static var locks: [WidgetCloud.Lock] {
         get { decode([WidgetCloud.Lock].self, locksKey) ?? [] }
         set { encode(newValue, locksKey) }

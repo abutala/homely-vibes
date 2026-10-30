@@ -31,45 +31,57 @@ struct DoorsEntry: TimelineEntry {
 }
 
 /// A timeline re-fetches the lock list, so a renamed or added lock shows up,
-/// and an expired sign-in shows "Open the app to sign in" (a tap's final
-/// reload fetches, so a failed tap shows it too). The reload a tap fires to
-/// show "running" skips the fetch, and any fetch is capped at
-/// `fetchDeadline`, so the tap's feedback never waits on the network; between reloads the only changes are expiries, so the timeline holds
-/// the next one.
+/// capped at `fetchDeadline`. The reloads a tap fires (to show "running" and
+/// to show the result) skip the fetch for `tapQuiet`, so a tap's feedback
+/// never waits on the network. "Open the app to sign in" follows
+/// `WidgetStore.signedOut`, which a 401 from a fetch or a tap sets and any
+/// good reply clears. Between reloads the only changes are expiries, so the
+/// timeline holds the next one.
 struct DoorsProvider: TimelineProvider {
     static let fetchDeadline: TimeInterval = 4
+    static let tapQuiet: TimeInterval = 60
 
     func placeholder(in context: Context) -> DoorsEntry {
         DoorsEntry(date: .now, doors: [], message: nil)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (DoorsEntry) -> Void) {
-        completion(entry(at: .now, message: nil))
+        Task { completion(await refresh().entry) }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<DoorsEntry>) -> Void) {
         Task {
-            var message: String?
-            let running = shownLocks().contains { WidgetStore.record(for: $0.id).effective(at: Date()).running != nil }
-            do {
-                if !running {
-                    WidgetStore.locks = try await withDeadline(seconds: Self.fetchDeadline) {
-                        try await WidgetCloud.fetchLocks()
-                    }
-                }
-            } catch WidgetCloud.Failure.signedOut {
-                message = WidgetCloud.Failure.signedOut.localizedDescription
-            } catch {
-                message = WidgetStore.locks.isEmpty ? error.localizedDescription : nil
-            }
-            let now = Date()
-            var entries = [entry(at: now, message: message)]
+            let (first, message) = await refresh()
+            let now = first.date
+            var entries = [first]
             let changes = shownLocks().compactMap { WidgetStore.record(for: $0.id).nextChange() }.filter { $0 > now }
             if let next = changes.min() {
                 entries.append(entry(at: next, message: message))
             }
             completion(Timeline(entries: entries, policy: .atEnd))
         }
+    }
+
+    /// Fetches the lock list unless a tap just ran, then builds the entry for now.
+    private func refresh() async -> (entry: DoorsEntry, message: String?) {
+        var failure: String?
+        let tapped = Date().timeIntervalSince(WidgetStore.lastTap) < Self.tapQuiet
+        if !tapped || WidgetStore.locks.isEmpty {
+            do {
+                WidgetStore.locks = try await withDeadline(seconds: Self.fetchDeadline) {
+                    try await WidgetCloud.fetchLocks()
+                }
+                WidgetStore.signedOut = false
+            } catch WidgetCloud.Failure.signedOut {
+                WidgetStore.signedOut = true
+            } catch {
+                failure = error.localizedDescription
+            }
+        }
+        let message = WidgetStore.signedOut
+            ? WidgetCloud.Failure.signedOut.localizedDescription
+            : WidgetStore.locks.isEmpty ? failure : nil
+        return (entry(at: Date(), message: message), message)
     }
 
     private func shownLocks() -> [WidgetCloud.Lock] {
@@ -92,7 +104,7 @@ struct DoorsView: View {
     var body: some View {
         Group {
             if entry.doors.isEmpty {
-                Text(entry.message ?? "Open the app to sign in").font(.footnote).foregroundStyle(.secondary)
+                Text(entry.message ?? "Loading doors…").font(.footnote).foregroundStyle(.secondary)
             } else {
                 VStack(spacing: 4) {
                     HStack(spacing: 0) {
