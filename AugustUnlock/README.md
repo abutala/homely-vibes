@@ -70,7 +70,10 @@ Same flow as [`NoShorts`](../NoShorts/README.md#building-an-ipa-for-sideloadly):
 AugustUnlock/scripts/build_ipa.sh 2>&1 | tee /tmp/augustunlock-build-ipa.log
 ```
 
-Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://sideloadly.io).
+Output: `build/AugustUnlock.ipa`, unsigned — install via [Sideloadly](https://sideloadly.io)
+(`open -a Sideloadly build/AugustUnlock.ipa`, then **Start**). Never install with Xcode or
+`devicectl`: they use the plain bundle ID, so the phone ends up with a second copy and a second
+Keychain (a second August sign-in).
 
 ## Home Screen widget
 
