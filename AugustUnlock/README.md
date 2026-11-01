@@ -130,6 +130,22 @@ buttons means August rejected the sign-in; opening the app renews it.
   Either way, a door that auto-locked or was operated elsewhere is picked up
   the next time the app opens.
 
+## Deadline and recovery
+
+Every lock/unlock has 30 s to answer. Past that the circle goes gray with
+"Timed out — tap to retry"; the command's late reply is discarded, though a
+cloud request August already holds may still move the door (a WiFi-bridge
+lock can take ~60 s — that reply is lost). A command that stalled while the
+phone slept is caught the same way when the app returns to the foreground,
+and the app does not unlock again by itself after a timeout. "Change Lock"
+and "Sign Out" stay live during a command: both cancel it, and the picker
+says the previous command may still complete.
+
+A tap while a command runs sends the opposite. While the command is still
+on Bluetooth, a cancel before the write drops it; once it has gone to the
+cloud, August runs the request it already holds, so the lock does both in
+turn. A second tap within 0.75 s is the same tap and sends nothing.
+
 ## Measuring lag
 
 The screen shows how long the last lock/unlock took ("Last unlock: 1.2 s"),
