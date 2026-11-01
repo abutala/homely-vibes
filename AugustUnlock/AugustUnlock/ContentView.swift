@@ -33,6 +33,8 @@ struct ContentView: View {
     @State private var deadlineTask: Task<Void, Never>?
     /// Shown in the lock picker after "Change Lock" cut a command short.
     @State private var changeLockNote: String?
+    /// An accidental double tap must not send two commands.
+    @State private var lastTapAt: Date = .distantPast
     /// Set when the scene actually reaches `.background`, consumed on the
     /// next `.active`. A real background resume is `.background ->
     /// .inactive -> .active` (two onChange calls, never one direct
@@ -450,7 +452,12 @@ struct ContentView: View {
             Text("\(stateLabel) \u{2014} tap to \(lockState == .unlocked ? "lock" : "unlock")")
                 .foregroundStyle(.secondary)
         case .inProgress(let unlocking):
-            Text(unlocking ? "Unlocking\u{2026} tap to lock" : "Locking\u{2026} tap to unlock")
+            let verb = unlocking ? "Unlocking" : "Locking"
+            Text(
+                AugustClient.shared.inCloudPhase
+                    ? "\(verb)\u{2026} with August; tap to \(unlocking ? "lock" : "unlock") after"
+                    : "\(verb)\u{2026} tap to \(unlocking ? "lock" : "unlock")"
+            )
                 .foregroundStyle(.secondary)
         case .success: Text(stateLabel).foregroundStyle(lockState == .unlocked ? .green : .secondary)
         case .failure(let message): Text(message).foregroundStyle(.red).font(.footnote)
@@ -466,6 +473,13 @@ struct ContentView: View {
     /// shown at once, so a fast second tap reads it, not the cancelled one.
     private func performToggle() {
         let unlocking: Bool
+        // Dedup (Amit, 2026-11-01): a second tap within 0.75 s is the same
+        // tap, not a new command. A later tap always switches: over
+        // Bluetooth the cancel before the write drops the first command; in
+        // the cloud phase August runs both (the caption says so).
+        let now = Date()
+        guard now.timeIntervalSince(lastTapAt) >= 0.75 else { return }
+        lastTapAt = now
         if case .inProgress(let inFlightUnlocking) = operationResult {
             unlocking = !inFlightUnlocking
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()

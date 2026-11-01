@@ -313,8 +313,15 @@ final class AugustClient {
     /// otherwise or if Bluetooth fails — unlock and lock are idempotent, so a
     /// cloud retry after a Bluetooth command that did land is harmless. A jam
     /// the lock reports over Bluetooth is final and is not retried.
+    /// True from the moment a command goes to the cloud until it ends. A
+    /// cloud request August already holds cannot be recalled, so a tap in
+    /// that phase adds a command rather than replacing one; the caption says so.
+    private(set) var inCloudPhase = false
+
     private func operate(action: String, opcode: UInt8, success: LockState) async throws -> OperationReply {
         guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
+        inCloudPhase = false
+        defer { inCloudPhase = false }
         if let credentials = bluetoothCredentials {
             let start = ContinuousClock.now
             do {
@@ -330,6 +337,7 @@ final class AugustClient {
                 Self.log.notice("BLE \(action, privacy: .public) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public); using the cloud")
             }
         }
+        inCloudPhase = true
         let state = try await cloudOperate(lockID: lockID, action: action)
         refreshBluetoothKeyOnce(lockID: lockID)
         return OperationReply(state: state, path: .cloud)

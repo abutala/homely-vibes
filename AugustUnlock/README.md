@@ -151,6 +151,12 @@ and the app does not unlock again by itself after a timeout. "Change Lock"
 and "Sign Out" stay live during a command: both cancel it, and the picker
 says the previous command may still complete.
 
+A tap while a command runs sends the opposite. While the command is still
+on Bluetooth, a cancel before the write drops it; once it has gone to the
+cloud the caption says "with August", because August runs a request it
+already holds, so the lock does both in turn. A second tap within 0.75 s is
+the same tap and sends nothing.
+
 ## Measuring lag
 
 The screen shows how long the last lock/unlock took ("Last unlock: 1.2 s"),

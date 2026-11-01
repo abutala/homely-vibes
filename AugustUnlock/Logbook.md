@@ -518,3 +518,15 @@ changed or the account signed out.
 Not measured: whether a `Task.sleep` past due fires at once when the app
 thaws. Test: start a command, lock the phone for 90 s, unlock; the screen
 must show the timeout within a few seconds of wake.
+
+**Same day, on the phone (d7e1580):** the front door "cycled" four times.
+The phone log shows why: Bluetooth worked for two taps, then failed to
+connect, and every command went to the cloud (1–24 s). Each tap during a
+running command sent the opposite (the 2026-10-23 feature) and "cancelled"
+the cloud request, which August ran anyway: unlock, lock, unlock, lock. The
+deadline never fired. Amit's call: switching stays (drop the previous
+where Bluetooth allows, add the new one otherwise); only a repeat is
+dropped. So a second tap within 0.75 s sends nothing, and in the cloud
+phase (`AugustClient.inCloudPhase`) the caption says the command is "with
+August" and the next tap's command runs after it. Also seen: the garage's
+bridge answered `HTTP 560` after 24 s.
