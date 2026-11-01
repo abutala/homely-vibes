@@ -6,75 +6,55 @@ import os
 /// itself in the background. `.plain` button styles are inert in this install
 /// and a parameter was ruled out separately, so the types stay as plain as
 /// this. The label and the command read the same `WidgetStore.locks` entry
-/// by position. Only a change to the account's lock list can move a lock to
-/// another position, and the widget redraws with the new list at once.
-struct ToggleFirstDoorIntent: AppIntent {
-    static let title: LocalizedStringResource = "Toggle First Door"
+/// by position.
+struct UnlockFirstDoorIntent: AppIntent {
+    static let title: LocalizedStringResource = "Unlock First Door"
     static let isDiscoverable = false
     static let authenticationPolicy = IntentAuthenticationPolicy.requiresAuthentication
 
     func perform() async throws -> some IntentResult {
-        await WidgetDoorAction.tap(position: 0)
+        await WidgetDoorAction.unlock(position: 0)
         return .result()
     }
 }
 
-struct ToggleSecondDoorIntent: AppIntent {
-    static let title: LocalizedStringResource = "Toggle Second Door"
+struct UnlockSecondDoorIntent: AppIntent {
+    static let title: LocalizedStringResource = "Unlock Second Door"
     static let isDiscoverable = false
     static let authenticationPolicy = IntentAuthenticationPolicy.requiresAuthentication
 
     func perform() async throws -> some IntentResult {
-        await WidgetDoorAction.tap(position: 1)
+        await WidgetDoorAction.unlock(position: 1)
         return .result()
     }
 }
 
-/// A widget tap: decide from the widget's own record, mark it running, send
-/// the cloud command, record the reply. Cloud only, so a tap takes the
-/// cloud's 5–9 s. A tap while one runs doesn't cancel it: the newer tap owns
-/// the record, so the older reply is dropped, not shown. It shares nothing
-/// with a command the app runs; the lock itself serialises them.
+/// A widget tap: send unlock for that door and log the reply. Stateless by
+/// design (Amit, 2026-11-01): the widget shows no state and never locks.
+/// Unlock is idempotent, so a repeat is a no-op at the door. Cloud only, so a
+/// tap takes the cloud's 1–25 s. The lock itself serialises this with
+/// anything the app sends.
 enum WidgetDoorAction {
     /// Under the 20–25 s that widget work is reported to get before iOS
-    /// stops it; a stopped command would leave "running" stuck until
-    /// `DoorRecord.runningTimeout`. Kept below that timeout, so a reply can
-    /// never land after its own run has expired.
-    static let deadline: TimeInterval = min(20, DoorRecord.runningTimeout - 5)
+    /// stops it.
+    static let deadline: TimeInterval = 20
 
-    static func tap(position: Int) async {
+    static func unlock(position: Int) async {
         let locks = WidgetStore.locks
         guard locks.indices.contains(position) else {
             log.error("Widget tap at position \(position) has no lock; \(locks.count) cached")
             return
         }
         let door = locks[position]
-        let before = WidgetStore.record(for: door.id)
-        let unlocking = before.nextTapUnlocks(at: Date())
-        WidgetStore.lastTap = Date()
-        let sent = DoorRecord(state: before.state, running: unlocking, at: Date())
-        WidgetStore.write(sent, for: door.id)
-        WidgetCenter.shared.reloadAllTimelines()
-        log.notice("Widget \(unlocking ? "unlock" : "lock", privacy: .public) of \(door.name, privacy: .public)")
-
-        var state = DoorRecord.State.unknown
+        log.notice("Widget unlock of \(door.name, privacy: .public)")
         do {
-            state = try await withDeadline(seconds: deadline) {
-                try await WidgetCloud.operate(lockID: door.id, unlocking: unlocking)
-            }
+            try await withDeadline(seconds: deadline) { try await WidgetCloud.unlock(lockID: door.id) }
             WidgetStore.signedOut = false
         } catch {
             if case WidgetCloud.Failure.signedOut = error { WidgetStore.signedOut = true }
-            log.error("Widget command for \(door.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            log.error("Widget unlock of \(door.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
         }
-        // Compared within 1 ms, not with `==`: the record went through JSON.
-        let now = WidgetStore.record(for: door.id)
-        guard now.running == sent.running, abs(now.at.timeIntervalSince(sent.at)) < 0.001 else {
-            log.notice("Widget reply for \(door.name, privacy: .public) dropped: a newer tap owns the door")
-            return
-        }
-        WidgetStore.write(DoorRecord(state: state, running: nil, at: Date()), for: door.id)
-        WidgetCenter.shared.reloadAllTimelines()
+        WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
     }
 
     private static let log = Logger(subsystem: "AugustUnlock", category: "widget")
@@ -84,8 +64,9 @@ struct DoorTimeout: LocalizedError {
     var errorDescription: String? { "Timed out" }
 }
 
-/// Runs `operation` with a deadline, so a hung command never leaves a
-/// circle running. The slow side is cancelled; `URLSession` honours that.
+/// Runs `operation` with a deadline, so a hung command never holds the
+/// widget's time budget. The slow side is cancelled; `URLSession` honours
+/// that, though a request August already holds still runs.
 func withDeadline<T: Sendable>(
     seconds: TimeInterval, _ operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {

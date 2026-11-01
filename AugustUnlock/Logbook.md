@@ -487,3 +487,13 @@ widget shares no code or state with it:
 Rule: a widget, extension or second surface gets its own files. Changing
 the app's code for it is a separate PR, re-tested on the phone through the
 app's own flows.
+
+## 2026-11-01 — The widget is two unlock buttons, nothing more
+
+On the phone both widget buttons acted on the lock the app had picked: the
+taps were not reaching the buttons and opened the app instead, whose
+open-unlock then ran. The toggle logic on top could also send LOCK from a
+stale "unlocked" record. Amit's call: stateless buttons that only unlock.
+Gone: `DoorRecord`, `DoorDisplay`, the per-door records and their tests,
+the lock command. Kept: the widget's own cloud client, the lock list from
+August, the 20 s tap deadline, bordered buttons (`.plain` is inert here).
