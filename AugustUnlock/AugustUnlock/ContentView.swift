@@ -31,6 +31,10 @@ struct ContentView: View {
     /// hold the screen — see the Logbook, 2026-11-01.
     @State private var commandStartedAt: Date?
     @State private var deadlineTask: Task<Void, Never>?
+    /// Set when a command times out while the app is away, so the next
+    /// return does not unlock on its own: the deadline task and the resume
+    /// handler both run on wake, in either order.
+    @State private var timedOutWhileAway = false
     /// Shown in the lock picker after "Change Lock" cut a command short.
     @State private var changeLockNote: String?
     /// An accidental double tap must not send two commands.
@@ -131,6 +135,8 @@ struct ContentView: View {
                     CommandDeadline(startedAt: started).isExpired(at: Date())
                 {
                     timeOutCommand()
+                } else if timedOutWhileAway {
+                    timedOutWhileAway = false
                 } else if !isOperating {
                     openUnlock()
                 }
@@ -157,6 +163,7 @@ struct ContentView: View {
     /// already holds may still move the door.
     private func timeOutCommand() {
         guard isOperating else { return }
+        timedOutWhileAway = wasBackgrounded
         operationTask?.cancel()
         operationTask = nil
         operationResult = .failure(CommandDeadline.timedOutMessage)
