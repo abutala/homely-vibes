@@ -272,7 +272,9 @@ final class AugustClient {
     private func refreshBluetoothKey(lockID: String) async {
         guard let data = try? await sendLockRequest(method: "GET", path: "/locks/\(lockID)"),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            KeychainStore.get("august_lock_id") == lockID
+            // Nothing is written once the lock changed or the account signed
+            // out while the fetch ran: this task outlives a cancelled command.
+            isReady, KeychainStore.get("august_lock_id") == lockID
         else { return }
         guard let credentials = AugustBLECredentials(lockDetail: json) else {
             Self.bluetoothKeychainKeys.forEach { KeychainStore.remove($0) }

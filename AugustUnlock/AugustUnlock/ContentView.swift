@@ -26,6 +26,19 @@ struct ContentView: View {
     /// The status check, lock or unlock in flight, kept so a newer one can
     /// cancel it — see `run(_:)`.
     @State private var operationTask: Task<Void, Never>?
+    /// When the command in flight started (wall clock), for the deadline
+    /// check on resume: a command stalled while the phone slept must not
+    /// hold the screen — see the Logbook, 2026-11-01.
+    @State private var commandStartedAt: Date?
+    @State private var deadlineTask: Task<Void, Never>?
+    /// Set when a command times out while the app is away, so the next
+    /// return does not unlock on its own: the deadline task and the resume
+    /// handler both run on wake, in either order.
+    @State private var timedOutWhileAway = false
+    /// Shown in the lock picker after "Change Lock" cut a command short.
+    @State private var changeLockNote: String?
+    /// An accidental double tap must not send two commands.
+    @State private var lastTapAt: Date = .distantPast
     /// Set when the scene actually reaches `.background`, consumed on the
     /// next `.active`. A real background resume is `.background ->
     /// .inactive -> .active` (two onChange calls, never one direct
@@ -114,8 +127,19 @@ struct ContentView: View {
                 exitPolicy.didForeground()
                 if expired { exit(0) }
                 // An operation still in flight kept running in the
-                // background (see `run(_:)`): let it report, don't replace it.
-                if !isOperating { openUnlock() }
+                // background (see `run(_:)`): let it report, don't replace
+                // it — unless it is past its deadline (the phone slept and
+                // its timers with it): then it has failed, and the next tap
+                // is the user's call, not an automatic unlock.
+                if isOperating, let started = commandStartedAt,
+                    CommandDeadline(startedAt: started).isExpired(at: Date())
+                {
+                    timeOutCommand()
+                } else if timedOutWhileAway {
+                    timedOutWhileAway = false
+                } else if !isOperating {
+                    openUnlock()
+                }
             default:
                 break
             }
@@ -132,6 +156,19 @@ struct ContentView: View {
             guard !Task.isCancelled else { return }
             exitIfExpired()
         }
+    }
+
+    /// Ends the command in flight as timed out. The command's own task is
+    /// cancelled, so its late reply writes nothing; a cloud request August
+    /// already holds may still move the door.
+    private func timeOutCommand() {
+        guard isOperating else { return }
+        timedOutWhileAway = wasBackgrounded
+        operationTask?.cancel()
+        operationTask = nil
+        operationResult = .failure(CommandDeadline.timedOutMessage)
+        lockState = .unknown
+        UINotificationFeedbackGenerator().notificationOccurred(.error)
     }
 
     private func exitIfExpired() {
@@ -285,6 +322,9 @@ struct ContentView: View {
                 .font(.footnote)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
+            if let changeLockNote {
+                Text(changeLockNote).font(.footnote).foregroundStyle(.secondary)
+            }
             ForEach(availableLocks) { lock in
                 Button(lock.name) {
                     AugustClient.shared.selectLock(lock)
@@ -351,6 +391,7 @@ struct ContentView: View {
                     Task { await presentLockPicker() }
                 }
                 Button("Sign Out") {
+                    cancelCommand()
                     AugustClient.shared.signOut()
                     email = ""
                     password = ""
@@ -360,12 +401,9 @@ struct ContentView: View {
                     phase = .needsLogin
                 }
             }
-            // Switching lock or signing out mid-operation would drop the
-            // lock being acted on off screen with its outcome unknown —
-            // the request still reaches August even if the app stops
-            // listening. Blocking both while in flight is simpler and safer
-            // than reconciling a result for a lock no longer shown.
-            .disabled(isOperating)
+            // Both stay live during a command (asked for, 2026-11-01): the
+            // command is cancelled, and the picker says a request August
+            // already holds may still move the old lock.
             .font(.footnote)
             .foregroundStyle(.secondary)
         }
@@ -377,6 +415,8 @@ struct ContentView: View {
     private func presentLockPicker() async {
         errorMessage = nil
         lastTiming = nil
+        changeLockNote = isOperating ? "The previous command may still complete." : nil
+        cancelCommand()
         do {
             availableLocks = try await AugustClient.shared.fetchLocks()
             phase = availableLocks.isEmpty ? .ready : .pickLock
@@ -435,6 +475,13 @@ struct ContentView: View {
     /// shown at once, so a fast second tap reads it, not the cancelled one.
     private func performToggle() {
         let unlocking: Bool
+        // Dedup (Amit, 2026-11-01): a second tap within 0.75 s is the same
+        // tap, not a new command. A later tap always switches: over
+        // Bluetooth the cancel before the write drops the first command; in
+        // the cloud phase August runs both in turn (Logbook, 2026-10-23).
+        let now = Date()
+        guard now.timeIntervalSince(lastTapAt) >= 0.75 else { return }
+        lastTapAt = now
         if case .inProgress(let inFlightUnlocking) = operationResult {
             unlocking = !inFlightUnlocking
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
@@ -459,6 +506,15 @@ struct ContentView: View {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
+    /// Drops the command in flight without a result: its late reply writes
+    /// nothing. For "Change Lock" and "Sign Out".
+    private func cancelCommand() {
+        operationTask?.cancel()
+        operationTask = nil
+        deadlineTask?.cancel()
+        if isOperating { operationResult = .idle }
+    }
+
     /// Runs one operation at a time, cancelling any still in flight. Every
     /// state write in an operation follows a cancellation check, so a
     /// cancelled one's late reply can't overwrite its replacement's. The
@@ -467,6 +523,8 @@ struct ContentView: View {
     /// operation is dropped and the next open unlocks again.
     private func run(_ operation: @escaping () async throws -> Void) {
         operationTask?.cancel()
+        deadlineTask?.cancel()
+        commandStartedAt = Date()
         var task: Task<Void, Never>?
         let keepAlive = BackgroundKeepAlive {
             task?.cancel()
@@ -483,6 +541,7 @@ struct ContentView: View {
             }
             keepAlive.end()
             guard !Task.isCancelled else { return }
+            deadlineTask?.cancel()
             exitIfExpired()
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
@@ -492,6 +551,14 @@ struct ContentView: View {
             }
         }
         operationTask = task
+        // The deadline: `Task.sleep` counts on the continuous clock, so a
+        // sleep that outlives the phone's nap fires on wake; the resume path
+        // checks the wall clock as well, in case it does not.
+        deadlineTask = Task {
+            try? await Task.sleep(for: .seconds(CommandDeadline.limit))
+            guard !Task.isCancelled, task == operationTask else { return }
+            timeOutCommand()
+        }
     }
 }
 
