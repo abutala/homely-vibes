@@ -140,6 +140,17 @@ app to sign in" under the doors. See [Logbook.md](Logbook.md#2026-10-30--the-wid
   Either way, a door that auto-locked or was operated elsewhere is picked up
   the next time the app opens.
 
+## Deadline and recovery
+
+Every lock/unlock has 30 s to answer. Past that the circle goes gray with
+"Timed out — tap to retry"; the command's late reply is discarded, though a
+cloud request August already holds may still move the door (a WiFi-bridge
+lock can take ~60 s — that reply is lost). A command that stalled while the
+phone slept is caught the same way when the app returns to the foreground,
+and the app does not unlock again by itself after a timeout. "Change Lock"
+and "Sign Out" stay live during a command: both cancel it, and the picker
+says the previous command may still complete.
+
 ## Measuring lag
 
 The screen shows how long the last lock/unlock took ("Last unlock: 1.2 s"),

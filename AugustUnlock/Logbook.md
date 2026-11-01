@@ -487,3 +487,34 @@ widget shares no code or state with it:
 Rule: a widget, extension or second surface gets its own files. Changing
 the app's code for it is a separate PR, re-tested on the phone through the
 app's own flows.
+
+## 2026-11-01 — A command could hold the screen until the phone woke
+
+Reported: the app sits in "Unlocking…" and never recovers (seen with the
+phone possibly in Low Power Mode), and "Change Lock" is dead meanwhile.
+
+Cause, from the code (TRIAL of the fix, 2026-11-01): the Bluetooth timers
+run on `DispatchTime`, device uptime, which stops while the phone sleeps. A
+command stalled at screen-off keeps its remaining 3 s or 12 s until wake,
+then the cloud fallback runs for up to ~60 s. Above all that there was no
+deadline, and the resume path skipped open-unlock while a command was in
+flight, so the screen stayed stuck until the chain ended. Low Power Mode was
+never shown to matter; sleep alone explains it. "Change Lock" and "Sign Out"
+were `.disabled` during a command by design.
+
+Fix: `CommandDeadline` (pure, tested) — 30 s per command, raced with a
+`Task.sleep` on the continuous clock, and checked again by wall clock when
+the app returns to the foreground, in case the sleep did not fire on wake.
+A timed-out command ends as "Timed out — tap to retry" with the state
+unknown, and no automatic unlock follows: after a timeout the next command
+is the user's (a stale unlock could undo a lock they tapped). 30 s is Amit's
+call, knowing a bridge lock's ~60 s cloud reply is then lost; the door may
+still move. Change Lock and Sign Out cancel the command; the lock picker says
+the previous command may still complete, since a cloud request August
+already holds cannot be recalled. The offline-key refresh, an unstructured
+task that outlives a cancelled command, now writes nothing once the lock
+changed or the account signed out.
+
+Not measured: whether a `Task.sleep` past due fires at once when the app
+thaws. Test: start a command, lock the phone for 90 s, unlock; the screen
+must show the timeout within a few seconds of wake.
