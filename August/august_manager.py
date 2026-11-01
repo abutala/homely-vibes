@@ -5,7 +5,7 @@ import sys
 from typing import Optional
 import logging
 
-from August.august_client import AugustMonitor, AugustClient
+from August.august_client import AugustMonitor, AugustClient, battery_summary
 from lib.logger import get_logger
 from lib.config import get_config
 from lib.MyPushover import Pushover
@@ -15,15 +15,13 @@ cfg = get_config()
 pushover = Pushover(cfg.pushover.user, cfg.pushover.tokens["August"])
 
 
-async def _test() -> None:
+async def _test(battery_pct: int) -> None:
     cfg = get_config()
     client = AugustClient(cfg.august.email, cfg.august.password)
-    message = ""
     try:
         statuses = await client.get_all_lock_statuses()
-        for _, status in statuses.items():
-            message += f"{status.lock_name}: {status.battery_level}%\n"
-        pushover.send_message(message, title="August Battery Status", priority=-1)
+        message, priority = battery_summary(statuses.values(), battery_pct)
+        pushover.send_message(message, title="August Battery Status", priority=priority)
     except Exception as e:
         pushover.send_message(
             f"Error initializing August client: {e}",
@@ -63,7 +61,7 @@ async def _run_command(
         await complete_2fa()
 
     elif args.command == "test":
-        await _test()
+        await _test(args.battery_pct)
 
 
 def main() -> None:
@@ -107,7 +105,13 @@ def main() -> None:
     _ = subparsers.add_parser("validate", help="Complete 2FA validation")
 
     # Test command
-    _ = subparsers.add_parser("test", help="Test commands")
+    test_parser = subparsers.add_parser("test", help="Battery report (P-1 unless a lock is low)")
+    test_parser.add_argument(
+        "--battery-pct",
+        type=int,
+        default=20,
+        help="Below this a lock is low and the report goes out at P1 (default: 20)",
+    )
 
     args = parser.parse_args()
 

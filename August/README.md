@@ -46,7 +46,7 @@ uv run python August/august_manager.py monitor \
 
 Test commands:
 ```bash
-uv run python August/august_manager.py test                 # Test battery status monitoring
+uv run python August/august_manager.py test                 # Battery report: P-1, or P1 if a lock is below --battery-pct (20)
 uv run python August/validate_2fa.py 123456                # Complete 2FA with code
 ```
 
