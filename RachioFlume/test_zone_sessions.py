@@ -127,7 +127,7 @@ class TestSessionPairing:
         assert [s["duration_seconds"] for s in sessions(db, 10)] == [345, 116]
 
     def test_orphan_without_flow_is_a_zero_length_session(self, db: WaterTrackingDB) -> None:
-        # Kept rather than dropped: the stale-zone monitor reads MAX(start_time) from sessions.
+        # Kept rather than dropped: the weekly report counts the zone as run.
         db.save_watering_events(
             [event("06:55:02", 9, "ZONE_STARTED"), event("07:03:02", 12, "ZONE_STARTED")]
         )

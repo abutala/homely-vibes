@@ -88,7 +88,7 @@ key and readings upsert. A START is now closed by the next controller event, sin
 the controller runs one zone at a time. When that event isn't the zone's own end,
 the end was lost and is read off Flume flow: contiguous flow from the START, one dry
 minute tolerated, capped. A run with no visible flow is kept as zero-length rather
-than dropped, because the stale-zone monitor reads `MAX(start_time)` from sessions.
+than dropped, so the weekly report still shows the zone as run.
 
 Prod repair: re-fetched Rachio's event history and inserted the missing rows. The
 collector rebuilds sessions from events every cycle, so reports healed on the next
@@ -130,7 +130,6 @@ from lib.config import reset_config, get_config; reset_config()
 cfg = get_config()
 print(\"zone_anomaly:\", cfg.rachio_flume.alerts.zone_anomaly.absolute_gpm)
 print(\"flow rules:\", [r.name for r in cfg.rachio_flume.alerts.default_flow_rules])
-print(\"stale days:\", cfg.rachio_flume.alerts.stale_zone_days)
 "'
 
 # 5) Kill the python collector process; run-one-constantly auto-restarts with new code
@@ -143,9 +142,7 @@ ssh <user>@<prod-host> 'tail -25 ~/logs/rfmanager.py.log' 2>&1 | tee /tmp/rfmana
 ```
 
 The first post-restart cycle should show: zones saved, Flume readings
-saved, hose-timer valves listed (if any), and (if any zones are stale
-beyond the threshold) the very first `Stale-zone alert sent: ...` message
-— that's expected on new code or fresh DB.
+saved, and hose-timer valves listed (if any).
 
 ---
 
@@ -225,10 +222,12 @@ middle 90% of minutes (2026-10-07 incident above).
 
 ### An alert that is routinely ignored is not an alert
 
-The stale-zone monitor's 10 → 15 day / P1 → P2 retune is one change, not two:
-at 10 days the alert fired often enough on ordinary seasonal gaps to be
-ignored, and an alert that is routinely ignored is not an alert. Widening the
-window is what makes the louder priority correct rather than merely louder.
+The stale-zone monitor (P2 when a zone had not run in 15 days) was widened from
+10 days / P1 because it fired on ordinary seasonal gaps. Even at 15 days it
+fired every night at the end of the season (2026-11-01: three zones that
+Weather Intelligence had skipped). It was removed: the weekly water report now
+lists every zone with why it did not run, which covers the same failure
+without paging.
 
 ### Config keys follow what the API surfaces, not what reads nicely
 

@@ -18,7 +18,6 @@ from RachioFlume.flume_client import FlumeClient
 from RachioFlume.hose_timer_processor import HoseTimerProcessor
 from RachioFlume.rachio_client import RachioClient, schedule_zones_from_device
 from RachioFlume.rachio_hose_client import RachioHoseClient
-from RachioFlume.stale_zone_checker import StaleZoneChecker
 from lib.MyPushover import Pushover
 from RachioFlume.reporter import WeeklyReporter
 from lib.logger import get_logger
@@ -229,17 +228,11 @@ def run_collection(args: argparse.Namespace) -> int:
         alert_engine = _build_alert_engine() if cfg.rachio_flume.alerts.enabled else None
         db = WaterTrackingDB(DB_PATH)
         hose_processors = _build_hose_processors(db)
-        stale_checker = StaleZoneChecker(
-            db=db,
-            pushover=pushover,
-            stale_zone_days=cfg.rachio_flume.alerts.stale_zone_days,
-        )
         collector = WaterTrackingCollector(
             DB_PATH,
             args.interval,
             alert_engine=alert_engine,
             hose_processors=hose_processors,
-            stale_zone_checker=stale_checker,
         )
         if alert_engine is not None:
             logger.info(f"Alerts enabled with {len(alert_engine.rules)} rules")

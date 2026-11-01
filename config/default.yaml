@@ -355,8 +355,7 @@ flume:
 #   P-2  routine zone-end reports  -- silent, no banner; inbox + badge only
 #   P1   health checks             -- data outage, device offline, valve battery
 #   P2   emergencies               -- sustained-flow rules (P1 first), zone anomaly,
-#                                     Flume outage (leak detection blind),
-#                                     stale zone (15d of no watering)
+#                                     Flume outage (leak detection blind)
 # Watchdogs re-trigger every retrigger_minutes while the condition holds,
 # unless muted. Sustained-flow rules fire P1 first, then P2 every window while
 # they hold, and send a P0 "all clear" after clear_after_minutes of failing.
@@ -402,15 +401,6 @@ rachio_flume:
       - {name: "High Flow",  min_gpm: 5.4, duration_minutes: 8,  max_cv: null, trim_fraction: 0.0}
       - {name: "Mid Flow",   min_gpm: 2.0, duration_minutes: 14, max_cv: 0.42, trim_fraction: 0.0}
       - {name: "Leak",       min_gpm: 0.1, duration_minutes: 45, max_cv: 0.50, trim_fraction: 0.05}
-
-    # === Stale-zone monitoring ===
-    # Fire a P2 alert if any enabled controller zone or known hose-timer
-    # valve (connected or not) hasn't run within this many days.
-    # 15, not 10: at 10 this still fired on ordinary seasonal gaps, and an
-    # alert that gets routinely ignored is not an alert. The wider window is
-    # what makes P2 (emergency, retries until acked) the right level -- a
-    # zone that has missed a fortnight is a real watering failure.
-    stale_zone_days: 15
 
     # === Hose-valve battery health ===
     # Rachio reports batteryStatus as an enum -- GOOD / LOW / REPLACE /
