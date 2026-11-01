@@ -153,9 +153,8 @@ says the previous command may still complete.
 
 A tap while a command runs sends the opposite. While the command is still
 on Bluetooth, a cancel before the write drops it; once it has gone to the
-cloud the caption says "with August", because August runs a request it
-already holds, so the lock does both in turn. A second tap within 0.75 s is
-the same tap and sends nothing.
+cloud, August runs the request it already holds, so the lock does both in
+turn. A second tap within 0.75 s is the same tap and sends nothing.
 
 ## Measuring lag
 

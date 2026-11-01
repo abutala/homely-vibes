@@ -526,7 +526,6 @@ running command sent the opposite (the 2026-10-23 feature) and "cancelled"
 the cloud request, which August ran anyway: unlock, lock, unlock, lock. The
 deadline never fired. Amit's call: switching stays (drop the previous
 where Bluetooth allows, add the new one otherwise); only a repeat is
-dropped. So a second tap within 0.75 s sends nothing, and in the cloud
-phase (`AugustClient.inCloudPhase`) the caption says the command is "with
-August" and the next tap's command runs after it. Also seen: the garage's
-bridge answered `HTTP 560` after 24 s.
+dropped. So a second tap within 0.75 s sends nothing. The status text stays
+as it was: the cloud-phase mechanics live here, not on the screen. Also
+seen: the garage's bridge answered `HTTP 560` after 24 s.

@@ -452,12 +452,7 @@ struct ContentView: View {
             Text("\(stateLabel) \u{2014} tap to \(lockState == .unlocked ? "lock" : "unlock")")
                 .foregroundStyle(.secondary)
         case .inProgress(let unlocking):
-            let verb = unlocking ? "Unlocking" : "Locking"
-            Text(
-                AugustClient.shared.inCloudPhase
-                    ? "\(verb)\u{2026} with August; tap to \(unlocking ? "lock" : "unlock") after"
-                    : "\(verb)\u{2026} tap to \(unlocking ? "lock" : "unlock")"
-            )
+            Text(unlocking ? "Unlocking\u{2026} tap to lock" : "Locking\u{2026} tap to unlock")
                 .foregroundStyle(.secondary)
         case .success: Text(stateLabel).foregroundStyle(lockState == .unlocked ? .green : .secondary)
         case .failure(let message): Text(message).foregroundStyle(.red).font(.footnote)
@@ -476,7 +471,7 @@ struct ContentView: View {
         // Dedup (Amit, 2026-11-01): a second tap within 0.75 s is the same
         // tap, not a new command. A later tap always switches: over
         // Bluetooth the cancel before the write drops the first command; in
-        // the cloud phase August runs both (the caption says so).
+        // the cloud phase August runs both in turn (Logbook, 2026-10-23).
         let now = Date()
         guard now.timeIntervalSince(lastTapAt) >= 0.75 else { return }
         lastTapAt = now
