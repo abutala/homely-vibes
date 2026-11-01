@@ -499,12 +499,6 @@ struct ContentView: View {
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
-    /// Runs one operation at a time, cancelling any still in flight. Every
-    /// state write in an operation follows a cancellation check, so a
-    /// cancelled one's late reply can't overwrite its replacement's. The
-    /// operation keeps running if the app is backgrounded mid-flight, and the
-    /// app may suspend once it ends. If iOS takes the time back first, the
-    /// operation is dropped and the next open unlocks again.
     /// Drops the command in flight without a result: its late reply writes
     /// nothing. For "Change Lock" and "Sign Out".
     private func cancelCommand() {
@@ -514,6 +508,12 @@ struct ContentView: View {
         if isOperating { operationResult = .idle }
     }
 
+    /// Runs one operation at a time, cancelling any still in flight. Every
+    /// state write in an operation follows a cancellation check, so a
+    /// cancelled one's late reply can't overwrite its replacement's. The
+    /// operation keeps running if the app is backgrounded mid-flight, and the
+    /// app may suspend once it ends. If iOS takes the time back first, the
+    /// operation is dropped and the next open unlocks again.
     private func run(_ operation: @escaping () async throws -> Void) {
         operationTask?.cancel()
         deadlineTask?.cancel()
