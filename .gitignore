@@ -58,3 +58,5 @@ _apalache-out/
 
 # Hypothesis example database
 .hypothesis/
+# A symlink to the primary checkout (the `node_modules/` rule above skips symlinks)
+formal/node_modules
