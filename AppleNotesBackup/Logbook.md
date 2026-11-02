@@ -73,7 +73,7 @@ Afterwards Notes replied in 0.2 s. The system log kept nothing from that window,
 cause of the hang is not known.
 
 A hung Notes stays hung until it restarts, so `export_notes()` restarts it and retries
-once. It quits Notes, kills it if the quit also hangs, then relaunches it hidden
+once. It quits Notes, kills it if the quit fails or hangs, then relaunches it hidden
 (`open -gj`). It does this only for `-1712`. Other errors (for example `-1743`, no
 Automation permission) fail at once, because a restart cannot fix them.
 
@@ -81,3 +81,6 @@ The default limit is 120 s per Apple Event, and our `osascript_timeout_seconds` 
 change it. `export_notes.applescript` sets `with timeout of 60 seconds` around each
 `tell` block, so a hang fails in 60 s. The limit is lexical: a handler that sends events
 must set it again.
+
+After a restart, an export with zero notes is an error, never a mirror: `prune_stale` would
+delete every file in the backup repo.

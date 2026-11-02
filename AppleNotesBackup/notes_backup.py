@@ -104,23 +104,31 @@ def run_export(
     return str(result.stdout)
 
 
+def _quit_notes(runner: Runner) -> bool:
+    """Ask Notes.app to quit. False if it did not answer, so the caller kills it."""
+    try:
+        result = runner(
+            [
+                "osascript",
+                "-e",
+                "with timeout of 15 seconds",
+                "-e",
+                'tell application "Notes" to quit',
+                "-e",
+                "end timeout",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    return result.returncode == 0
+
+
 def restart_notes(runner: Runner = subprocess.run, sleep: Sleep = time.sleep) -> None:
-    """Quit Notes.app (kill it if the quit hangs too), then relaunch it hidden."""
-    quit_notes = runner(
-        [
-            "osascript",
-            "-e",
-            "with timeout of 15 seconds",
-            "-e",
-            'tell application "Notes" to quit',
-            "-e",
-            "end timeout",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if quit_notes.returncode != 0:
+    """Quit Notes.app (kill it if the quit fails), then relaunch it hidden."""
+    if not _quit_notes(runner):
         runner(["pkill", "-x", "Notes"], capture_output=True, text=True, timeout=10)
     sleep(5)  # let the old process exit before the relaunch
     runner(["open", "-gj", "-a", "Notes"], capture_output=True, text=True, timeout=30)
@@ -329,6 +337,9 @@ def backup(dry_run: bool = False) -> None:
 
     raw = export_notes(cfg.osascript_timeout_seconds)
     notes = parse_stream(raw)
+    if not notes:
+        # Never mirror an empty export: prune_stale would delete every backed-up note.
+        raise RuntimeError("export returned no notes; Notes.app may not have loaded its accounts")
     logger.info("exported %d notes", len(notes))
 
     if dry_run:

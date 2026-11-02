@@ -336,3 +336,16 @@ class TestGitEnv:
     def test_non_git_environment_survives(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("PATH", "/usr/bin")
         assert git_env()["PATH"] == "/usr/bin"
+
+
+def test_export_notes_kills_notes_when_quit_times_out() -> None:
+    runner = ScriptedRunner(export=[(1, "", _TIMED_OUT), (0, "STREAM", "")])
+
+    def runner_with_hung_quit(argv: list[str], **k: object) -> subprocess.CompletedProcess:
+        if argv[:2] == ["osascript", "-e"]:
+            runner.calls.append(argv)
+            raise subprocess.TimeoutExpired(argv, 30)
+        return runner(argv, **k)
+
+    assert export_notes(timeout=5, runner=runner_with_hung_quit, sleep=_no_sleep) == "STREAM"
+    assert "pkill Notes" in runner.programs()
