@@ -619,9 +619,14 @@ Learnings, for the next widget:
 3. The phone's system log without sudo: `uvx pymobiledevice3 syslog collect`
    (the archive, Default level) and `syslog live` (Info and Debug). Cabled;
    no tunnel needed.
-4. The Simulator still cannot dispatch a widget intent here (ad-hoc signature,
-   no team, no entitlements — measured). That claim is unproven for a
-   cert-signed Simulator build and stays an open item, not a fact.
+4. The Simulator dispatches widget intents after all. With the cue off the
+   button, the UI test's tap ran `OpenFirstDoorIntent.perform()` on the
+   iPhone 17 Pro Simulator (its log: `perform() finished`, `Successfully ran
+   action`), ad-hoc signature and all; `linkd`'s "Unable to get teamId"
+   lines come after, from the donation, and are harmless. The 2026-10-30
+   and 2026-11-01 claims that the Simulator cannot run a tap were this
+   same bug seen on the Simulator. `WidgetTapTests` is strict now, and the
+   rung-by-rung ladder could have run there: FV + Simulator first holds.
 5. Sideloadly sometimes opens with "Apple Silicon" selected as the device;
    it refuses that install (Patreon-only), so nothing lands on the Mac, but
    the phone must be re-selected by hand before Start.

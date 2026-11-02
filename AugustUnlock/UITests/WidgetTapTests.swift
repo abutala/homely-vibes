@@ -2,7 +2,8 @@ import XCTest
 
 /// The widget on the Simulator: added through SpringBoard's own gallery, it
 /// draws two buttons before it has a lock list and shows its sign-in caption
-/// (the 2026-11-01 bug). The tap itself is an expected failure here; see below.
+/// (the 2026-11-01 bug), and a tap on a button runs in the widget: the app
+/// stays closed.
 ///
 /// Run: `xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme
 /// AugustUnlockUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
@@ -30,14 +31,11 @@ final class WidgetTapTests: XCTestCase {
         XCTAssertEqual(doors.count, 2, springboard.debugDescription)
         let door = doors.element(boundBy: 0)
 
-        // On the Simulator the intent registry (linkd) rejects the widget for
-        // want of a team identifier, so the tap falls through and opens the
-        // app; only a signed device build can pass this part (Logbook,
-        // 2026-11-01). Expected failure here, so the day it works it turns green.
-        XCTExpectFailure("Simulator: widget intents don't dispatch (no team identifier)", options: .nonStrict()) {
-            door.tap()
-            XCTAssertFalse(app.wait(for: .runningForeground, timeout: 3), "a widget tap opened the app")
-        }
+        // The Simulator dispatches the intent (`OpenFirstDoorIntent.perform()
+        // finished` in its log, 2026-11-02); a tap that opens the app is the
+        // inert-button bug, not a Simulator limit (Logbook, 2026-11-02).
+        door.tap()
+        XCTAssertFalse(app.wait(for: .runningForeground, timeout: 3), "a widget tap opened the app")
     }
 
     /// Long-press the Home Screen → Edit → Add Widget → search → add.
