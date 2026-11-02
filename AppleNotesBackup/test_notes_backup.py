@@ -12,6 +12,7 @@ from AppleNotesBackup.notes_backup import (
     UNIT_SEP,
     Note,
     commit_and_push,
+    export_notes,
     folder_relpath,
     git_env,
     note_filename,
@@ -242,6 +243,69 @@ def test_run_export_raises_on_failure() -> None:
 
     with pytest.raises(RuntimeError, match="boom"):
         run_export(timeout=5, runner=fake_runner)
+
+
+# ── export_notes (restart a hung Notes.app, retry once) ──────────────────────
+
+_TIMED_OUT = "export_notes.applescript:1320:1498: execution error: Notes got an error: AppleEvent timed out. (-1712)"
+
+
+class ScriptedRunner:
+    """Fake runner: records each argv; answers from a per-program queue of (rc, stdout, stderr)."""
+
+    def __init__(self, **replies: list[tuple[int, str, str]]) -> None:
+        self.replies = replies
+        self.calls: list[list[str]] = []
+
+    def __call__(self, argv: list[str], **_k: object) -> subprocess.CompletedProcess:
+        self.calls.append(argv)
+        key = "export" if argv[0] == "osascript" and argv[1] != "-e" else argv[0]
+        rc, out, err = self.replies[key].pop(0) if self.replies.get(key) else (0, "", "")
+        return subprocess.CompletedProcess(args=argv, returncode=rc, stdout=out, stderr=err)
+
+    def programs(self) -> list[str]:
+        return [
+            "export" if c[0] == "osascript" and c[1] != "-e" else " ".join(c[:1] + c[-1:])
+            for c in self.calls
+        ]
+
+
+def _no_sleep(_s: float) -> None:
+    pass
+
+
+def test_export_notes_restarts_hung_notes_and_retries() -> None:
+    runner = ScriptedRunner(export=[(1, "", _TIMED_OUT), (0, "STREAM", "")])
+    assert export_notes(timeout=5, runner=runner, sleep=_no_sleep) == "STREAM"
+    assert runner.programs() == ["export", "osascript end timeout", "open Notes", "export"]
+
+
+def test_export_notes_kills_notes_when_quit_also_hangs() -> None:
+    runner = ScriptedRunner(
+        export=[(1, "", _TIMED_OUT), (0, "STREAM", "")], osascript=[(1, "", _TIMED_OUT)]
+    )
+    assert export_notes(timeout=5, runner=runner, sleep=_no_sleep) == "STREAM"
+    assert runner.programs() == [
+        "export",
+        "osascript end timeout",
+        "pkill Notes",
+        "open Notes",
+        "export",
+    ]
+
+
+def test_export_notes_gives_up_after_one_retry() -> None:
+    runner = ScriptedRunner(export=[(1, "", _TIMED_OUT), (1, "", _TIMED_OUT)])
+    with pytest.raises(RuntimeError, match="-1712"):
+        export_notes(timeout=5, runner=runner, sleep=_no_sleep)
+    assert runner.programs().count("export") == 2
+
+
+def test_export_notes_does_not_restart_on_other_errors() -> None:
+    runner = ScriptedRunner(export=[(1, "", "Not authorized to send Apple events (-1743)")])
+    with pytest.raises(RuntimeError, match="-1743"):
+        export_notes(timeout=5, runner=runner, sleep=_no_sleep)
+    assert runner.programs() == ["export"]
 
 
 class TestGitEnv:

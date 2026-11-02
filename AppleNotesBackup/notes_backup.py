@@ -24,6 +24,7 @@ import hashlib
 import os
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -43,6 +44,7 @@ _N_FIELDS = 6  # id, folder, name, modified, attachment_count, body
 
 _APPLESCRIPT = Path(__file__).with_name("export_notes.applescript")
 _FILENAME_MAXLEN = 80  # cap the readable portion of a filename
+_AE_TIMEOUT = "(-1712)"  # osascript's errAETimeout: the target app did not answer in time
 
 # Git exports these into any hook it runs, and they outrank both `cwd` and `-C`.
 # Inherited from a hook (or any git-invoked parent), they would silently redirect
@@ -59,6 +61,11 @@ _GIT_ENV_OVERRIDES = (
 )
 
 Runner = Callable[..., subprocess.CompletedProcess]
+Sleep = Callable[[float], None]
+
+
+class NotesUnresponsive(RuntimeError):
+    """Notes.app did not answer an Apple Event in time (-1712)."""
 
 
 @dataclass(frozen=True)
@@ -92,10 +99,46 @@ def run_export(
         timeout=timeout,
     )
     if result.returncode != 0:
-        raise RuntimeError(
-            f"osascript export failed (exit {result.returncode}): {result.stderr.strip()}"
-        )
+        error = NotesUnresponsive if _AE_TIMEOUT in result.stderr else RuntimeError
+        raise error(f"osascript export failed (exit {result.returncode}): {result.stderr.strip()}")
     return str(result.stdout)
+
+
+def restart_notes(runner: Runner = subprocess.run, sleep: Sleep = time.sleep) -> None:
+    """Quit Notes.app (kill it if the quit hangs too), then relaunch it hidden."""
+    quit_notes = runner(
+        [
+            "osascript",
+            "-e",
+            "with timeout of 15 seconds",
+            "-e",
+            'tell application "Notes" to quit',
+            "-e",
+            "end timeout",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if quit_notes.returncode != 0:
+        runner(["pkill", "-x", "Notes"], capture_output=True, text=True, timeout=10)
+    sleep(5)  # let the old process exit before the relaunch
+    runner(["open", "-gj", "-a", "Notes"], capture_output=True, text=True, timeout=30)
+    sleep(10)  # let Notes load its accounts before the next export
+
+
+def export_notes(timeout: int, runner: Runner = subprocess.run, sleep: Sleep = time.sleep) -> str:
+    """Run the export; if Notes.app does not answer, restart it and retry once.
+
+    A Notes.app that stops answering Apple Events stays hung until it is restarted:
+    on 2026-11-02 two routines 40 minutes apart both timed out on its first event.
+    """
+    try:
+        return run_export(timeout, runner=runner)
+    except NotesUnresponsive as e:
+        logger.warning("Notes.app not answering (%s); restarting it and retrying once", e)
+    restart_notes(runner, sleep)
+    return run_export(timeout, runner=runner)
 
 
 def parse_stream(raw: str) -> list[Note]:
@@ -284,7 +327,7 @@ def commit_and_push(repo: Path, branch: str, remote: str) -> str | None:
 def backup(dry_run: bool = False) -> None:
     cfg = get_config().apple_notes_backup
 
-    raw = run_export(cfg.osascript_timeout_seconds)
+    raw = export_notes(cfg.osascript_timeout_seconds)
     notes = parse_stream(raw)
     logger.info("exported %d notes", len(notes))
 
