@@ -110,8 +110,9 @@ struct ContentView: View {
                 // background (see `run(_:)`): let it report, don't replace
                 // it — unless it is past its deadline (the phone slept and
                 // its timers with it): then it has failed, and the next tap
-                // is the user's call, not an automatic unlock.
-                perform(machine.resume(at: Date()))
+                // is the user's call, not an automatic unlock. Before the
+                // unlock screen there is nothing to send.
+                if phase == .ready { perform(machine.resume(at: Date())) }
             default:
                 break
             }
@@ -436,8 +437,9 @@ struct ContentView: View {
     /// The button: the machine decides (lock, unlock, the opposite of a
     /// command in flight, or nothing for a double tap).
     private func performToggle() {
+        let replacing = isOperating
         let effect = machine.tap(at: Date())
-        if case .send = effect, isOperating { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+        if case .send = effect, replacing { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
         perform(effect)
     }
 

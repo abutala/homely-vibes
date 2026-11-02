@@ -545,3 +545,9 @@ and watch the screens (`UITests/AppFlowTests.swift`). The six flows passed
 first time, except for one wrong assertion in the test (a 1 s reply is
 settled before the first wait). Nothing about the command machine changed:
 the Simulator confirmed the model, which is the order Amit asked for.
+The PR's reviewer then found a hole the model cannot see, because phase is
+a view concern: the return to the foreground sent an unlock from the sign-in
+screen too (the old `openUnlock()` guard was lost in the refactor). The
+Simulator test caught it before the fix ("2 sent" after sign-in), and
+`resume` now runs only on the unlock screen.
+
