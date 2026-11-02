@@ -19,6 +19,11 @@
 --
 -- `body` is the note as HTML (Apple's own rendering) — lossless for text,
 -- lists, tables, and checklists. Attachments are reported by count only.
+--
+-- Every Notes call sits inside `with timeout of 60 seconds`. Without it the
+-- default is 120 s per event, and a hung Notes.app fails slowly. The limit is
+-- lexical, so collectFolder sets it again. On -1712 the Python parent restarts
+-- Notes and retries once.
 
 property allRecords : {}
 property uSep : (character id 31)
@@ -26,15 +31,17 @@ property rSep : (character id 30)
 
 set allRecords to {}
 
-tell application "Notes"
-	repeat with acct in accounts
-		repeat with f in folders of acct
-			if (class of container of f) is account then
-				my collectFolder(f, "")
-			end if
+with timeout of 60 seconds
+	tell application "Notes"
+		repeat with acct in accounts
+			repeat with f in folders of acct
+				if (class of container of f) is account then
+					my collectFolder(f, "")
+				end if
+			end repeat
 		end repeat
-	end repeat
-end tell
+	end tell
+end timeout
 
 set AppleScript's text item delimiters to rSep
 set output to (allRecords as string)
@@ -43,29 +50,31 @@ return output & rSep
 
 -- Emit every note in folder `f` under path `prefix`, then recurse into subfolders.
 on collectFolder(f, prefix)
-	tell application "Notes"
-		set folderName to name of f as string
-		if prefix is "" then
-			set fullPath to folderName
-		else
-			set fullPath to prefix & "/" & folderName
-		end if
-		repeat with n in notes of f
-			set noteId to id of n as string
-			set noteName to name of n as string
-			set noteBody to body of n as string
-			set noteModified to (modification date of n) as «class isot» as string
-			try
-				set attCount to (count of attachments of n) as string
-			on error
-				set attCount to "0"
-			end try
-			-- Append to a script property (amortized O(1)); joining once at the end
-			-- avoids the O(n^2) blowup of growing an immutable string via `&`.
-			set end of my allRecords to (noteId & my uSep & fullPath & my uSep & noteName & my uSep & noteModified & my uSep & attCount & my uSep & noteBody)
-		end repeat
-		repeat with sub in folders of f
-			my collectFolder(sub, fullPath)
-		end repeat
-	end tell
+	with timeout of 60 seconds
+		tell application "Notes"
+			set folderName to name of f as string
+			if prefix is "" then
+				set fullPath to folderName
+			else
+				set fullPath to prefix & "/" & folderName
+			end if
+			repeat with n in notes of f
+				set noteId to id of n as string
+				set noteName to name of n as string
+				set noteBody to body of n as string
+				set noteModified to (modification date of n) as «class isot» as string
+				try
+					set attCount to (count of attachments of n) as string
+				on error
+					set attCount to "0"
+				end try
+				-- Append to a script property (amortized O(1)); joining once at the end
+				-- avoids the O(n^2) blowup of growing an immutable string via `&`.
+				set end of my allRecords to (noteId & my uSep & fullPath & my uSep & noteName & my uSep & noteModified & my uSep & attCount & my uSep & noteBody)
+			end repeat
+			repeat with sub in folders of f
+				my collectFolder(sub, fullPath)
+			end repeat
+		end tell
+	end timeout
 end collectFolder

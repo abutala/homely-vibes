@@ -131,7 +131,7 @@ def test_skipped_runs_name_the_schedule_and_its_zones(db: WaterTrackingDB) -> No
         ("Front Beds Summer", "climate", [3, 4, 7, 12, 15]),
     ]
     text = WeeklyReporter(str(db.db_path)).format_report_text(report)
-    assert "10/21 Back Trees: weather (Z6 Z10 Z11)" in text
+    assert "  10/21 weather Back Trees\n  10/23 climate Front Beds Summer\n" in text
     assert "Z6 BB    skipped: weather 10/21" in text
     assert "Disabled: Zone 13" in text
 

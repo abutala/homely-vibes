@@ -419,17 +419,12 @@ class WeeklyReporter:
         if report.skipped_runs:
             lines.append("")
             lines.append("SKIPPED RUNS:")
+            # One row per run, cut at the width: the zone rows above already
+            # name each skipped zone, so a wrapped zone list only broke the table.
+            reason_width = max(len(run.reason) for run in report.skipped_runs)
             for run in report.skipped_runs:
-                zones = " ".join(f"Z{n}" for n in run.zone_numbers)
-                suffix = f" ({zones})" if zones else ""
-                lines.extend(
-                    textwrap.wrap(
-                        f"{run.date:%m/%d} {run.schedule}: {run.reason}{suffix}",
-                        width=REPORT_WIDTH,
-                        initial_indent="  ",
-                        subsequent_indent=" " * 8,
-                    )
-                )
+                row = f"  {run.date:%m/%d} {run.reason:<{reason_width}} {run.schedule}"
+                lines.append(row[:REPORT_WIDTH])
 
         if report.disabled_zones:
             lines.append("")
