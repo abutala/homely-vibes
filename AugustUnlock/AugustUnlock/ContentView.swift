@@ -18,27 +18,16 @@ struct ContentView: View {
     @State private var availableLocks: [AugustLock] = []
     @State private var errorMessage: String?
     @State private var isBusy = false
-    @State private var operationResult: OperationResult = .idle
-    /// What August last reported for the selected lock — fetched on every
-    /// open and taken from each lock/unlock reply, never inferred from the
-    /// command this app sent.
-    @State private var lockState: LockState = .unknown
+    /// The command state machine (`CommandMachine`, mirrored by
+    /// `formal/august_unlock_command.qnt`): this view feeds it events and
+    /// runs the effects it returns.
+    @State private var machine = CommandMachine()
     /// The status check, lock or unlock in flight, kept so a newer one can
     /// cancel it — see `run(_:)`.
     @State private var operationTask: Task<Void, Never>?
-    /// When the command in flight started (wall clock), for the deadline
-    /// check on resume: a command stalled while the phone slept must not
-    /// hold the screen — see the Logbook, 2026-11-01.
-    @State private var commandStartedAt: Date?
     @State private var deadlineTask: Task<Void, Never>?
-    /// Set when a command times out while the app is away, so the next
-    /// return does not unlock on its own: the deadline task and the resume
-    /// handler both run on wake, in either order.
-    @State private var timedOutWhileAway = false
     /// Shown in the lock picker after "Change Lock" cut a command short.
     @State private var changeLockNote: String?
-    /// An accidental double tap must not send two commands.
-    @State private var lastTapAt: Date = .distantPast
     /// Set when the scene actually reaches `.background`, consumed on the
     /// next `.active`. A real background resume is `.background ->
     /// .inactive -> .active` (two onChange calls, never one direct
@@ -71,19 +60,10 @@ struct ContentView: View {
         var tint: Color { path == .bluetooth ? .blue : .secondary }
     }
 
-    private enum OperationResult: Equatable {
-        case idle
-        case inProgress(unlocking: Bool)
-        case success
-        case failure(String)
-    }
-
-    private var isOperating: Bool {
-        switch operationResult {
-        case .inProgress: return true
-        case .idle, .success, .failure: return false
-        }
-    }
+    private typealias OperationResult = CommandMachine.Op
+    private var operationResult: OperationResult { machine.op }
+    private var lockState: LockState { machine.door }
+    private var isOperating: Bool { machine.isOperating }
 
     var body: some View {
         VStack(spacing: 24) {
@@ -102,7 +82,7 @@ struct ContentView: View {
         }
         .padding()
         .onAppear {
-            phase = AugustClient.shared.isReady ? .ready : .needsLogin
+            phase = August.shared.isReady ? .ready : .needsLogin
             openUnlock()
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -130,16 +110,9 @@ struct ContentView: View {
                 // background (see `run(_:)`): let it report, don't replace
                 // it — unless it is past its deadline (the phone slept and
                 // its timers with it): then it has failed, and the next tap
-                // is the user's call, not an automatic unlock.
-                if isOperating, let started = commandStartedAt,
-                    CommandDeadline(startedAt: started).isExpired(at: Date())
-                {
-                    timeOutCommand()
-                } else if timedOutWhileAway {
-                    timedOutWhileAway = false
-                } else if !isOperating {
-                    openUnlock()
-                }
+                // is the user's call, not an automatic unlock. Before the
+                // unlock screen there is nothing to send.
+                if phase == .ready { perform(machine.resume(at: Date())) }
             default:
                 break
             }
@@ -158,17 +131,20 @@ struct ContentView: View {
         }
     }
 
-    /// Ends the command in flight as timed out. The command's own task is
-    /// cancelled, so its late reply writes nothing; a cloud request August
-    /// already holds may still move the door.
-    private func timeOutCommand() {
-        guard isOperating else { return }
-        timedOutWhileAway = wasBackgrounded
-        operationTask?.cancel()
-        operationTask = nil
-        operationResult = .failure(CommandDeadline.timedOutMessage)
-        lockState = .unknown
-        UINotificationFeedbackGenerator().notificationOccurred(.error)
+    /// Runs what the machine asked for: a new command (cancelling the one in
+    /// flight) or a cancel. The machine already holds the new state.
+    private func perform(_ effect: CommandMachine.Effect) {
+        switch effect {
+        case .send(let unlocking):
+            run { try await performOperation(unlocking: unlocking) }
+        case .cancel:
+            operationTask?.cancel()
+            operationTask = nil
+            deadlineTask?.cancel()
+            if case .failure = machine.op { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+        case .none:
+            break
+        }
     }
 
     private func exitIfExpired() {
@@ -185,10 +161,7 @@ struct ContentView: View {
     /// (see `run(_:)`).
     private func openUnlock() {
         guard phase == .ready else { return }
-        run {
-            lockState = .unknown
-            try await performOperation(unlocking: true)
-        }
+        perform(machine.open(at: Date()))
     }
 
     // MARK: - Login
@@ -225,11 +198,11 @@ struct ContentView: View {
         errorMessage = nil
         defer { isBusy = false }
         do {
-            let authenticated = try await AugustClient.shared.login(email: email, password: password)
+            let authenticated = try await August.shared.login(email: email, password: password)
             if authenticated {
                 await resolveLock()
             } else {
-                try await AugustClient.shared.sendVerificationCode()
+                try await August.shared.sendVerificationCode()
                 phase = .needsCode
             }
         } catch {
@@ -241,17 +214,17 @@ struct ContentView: View {
     /// auto-select the only lock on a single-lock account (today's
     /// zero-tap behavior), or ask when there's more than one.
     private func resolveLock() async {
-        if AugustClient.shared.hasSelectedLock {
+        if August.shared.hasSelectedLock {
             enterReady()
             return
         }
         do {
-            let locks = try await AugustClient.shared.fetchLocks()
+            let locks = try await August.shared.fetchLocks()
             switch locks.count {
             case 0:
                 errorMessage = AugustError.noLocks.errorDescription
             case 1:
-                AugustClient.shared.selectLock(locks[0])
+                August.shared.selectLock(locks[0])
                 enterReady()
             default:
                 availableLocks = locks
@@ -305,7 +278,7 @@ struct ContentView: View {
         errorMessage = nil
         defer { isBusy = false }
         do {
-            try await AugustClient.shared.validateCode(code)
+            try await August.shared.validateCode(code)
             await resolveLock()
         } catch {
             errorMessage = error.localizedDescription
@@ -327,11 +300,7 @@ struct ContentView: View {
             }
             ForEach(availableLocks) { lock in
                 Button(lock.name) {
-                    AugustClient.shared.selectLock(lock)
-                    // lockState described the *previous* lock (relevant when
-                    // reached via "Change Lock") — clear it so the screen
-                    // doesn't show that lock's state until this one's arrives.
-                    lockState = .unknown
+                    August.shared.selectLock(lock)
                     enterReady()
                 }
                 .buttonStyle(.bordered)
@@ -345,7 +314,7 @@ struct ContentView: View {
 
     private var unlockScreen: some View {
         VStack(spacing: 32) {
-            if let lockName = AugustClient.shared.lockName {
+            if let lockName = August.shared.lockName {
                 Text(lockName)
                     .font(.headline)
                     .foregroundStyle(.secondary)
@@ -391,12 +360,11 @@ struct ContentView: View {
                     Task { await presentLockPicker() }
                 }
                 Button("Sign Out") {
-                    cancelCommand()
-                    AugustClient.shared.signOut()
+                    perform(machine.cancelForChange())
+                    August.shared.signOut()
                     email = ""
                     password = ""
                     code = ""
-                    lockState = .unknown
                     lastTiming = nil
                     phase = .needsLogin
                 }
@@ -416,9 +384,9 @@ struct ContentView: View {
         errorMessage = nil
         lastTiming = nil
         changeLockNote = isOperating ? "The previous command may still complete." : nil
-        cancelCommand()
+        perform(machine.cancelForChange())
         do {
-            availableLocks = try await AugustClient.shared.fetchLocks()
+            availableLocks = try await August.shared.fetchLocks()
             phase = availableLocks.isEmpty ? .ready : .pickLock
             if availableLocks.isEmpty {
                 errorMessage = AugustError.noLocks.errorDescription
@@ -466,53 +434,26 @@ struct ContentView: View {
         }
     }
 
-    /// Button tap: locks if August last reported unlocked, otherwise
-    /// unlocks — including when the state is unknown, since unlocking is
-    /// what this app is for. A tap while one is in flight cancels it and sends
-    /// the opposite: over Bluetooth a cancel before the command write means
-    /// the first command never reaches the lock. A cloud request August
-    /// already holds can't be recalled — see the Logbook. The new command is
-    /// shown at once, so a fast second tap reads it, not the cancelled one.
+    /// The button: the machine decides (lock, unlock, the opposite of a
+    /// command in flight, or nothing for a double tap).
     private func performToggle() {
-        let unlocking: Bool
-        // Dedup (Amit, 2026-11-01): a second tap within 0.75 s is the same
-        // tap, not a new command. A later tap always switches: over
-        // Bluetooth the cancel before the write drops the first command; in
-        // the cloud phase August runs both in turn (Logbook, 2026-10-23).
-        let now = Date()
-        guard now.timeIntervalSince(lastTapAt) >= 0.75 else { return }
-        lastTapAt = now
-        if case .inProgress(let inFlightUnlocking) = operationResult {
-            unlocking = !inFlightUnlocking
-            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        } else {
-            unlocking = lockState != .unlocked
-        }
-        operationResult = .inProgress(unlocking: unlocking)
-        run { try await performOperation(unlocking: unlocking) }
+        let replacing = isOperating
+        let effect = machine.tap(at: Date())
+        if case .send = effect, replacing { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
+        perform(effect)
     }
 
     private func performOperation(unlocking: Bool) async throws {
-        operationResult = .inProgress(unlocking: unlocking)
         let start = ContinuousClock.now
-        let reply = try await (unlocking ? AugustClient.shared.unlock() : AugustClient.shared.lock())
+        let reply = try await (unlocking ? August.shared.unlock() : August.shared.lock())
         try Task.checkCancellation()
         let elapsed = ContinuousClock.now - start
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        let sent = (August.shared as? FakeAugust).map { ", \($0.commandsSent) sent" } ?? ""
         lastTiming = LastTiming(
-            summary: "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s", path: reply.path)
-        lockState = reply.state
-        operationResult = .success
+            summary: "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s\(sent)", path: reply.path)
+        machine.replied(reply.state)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
-    }
-
-    /// Drops the command in flight without a result: its late reply writes
-    /// nothing. For "Change Lock" and "Sign Out".
-    private func cancelCommand() {
-        operationTask?.cancel()
-        operationTask = nil
-        deadlineTask?.cancel()
-        if isOperating { operationResult = .idle }
     }
 
     /// Runs one operation at a time, cancelling any still in flight. Every
@@ -524,18 +465,17 @@ struct ContentView: View {
     private func run(_ operation: @escaping () async throws -> Void) {
         operationTask?.cancel()
         deadlineTask?.cancel()
-        commandStartedAt = Date()
         var task: Task<Void, Never>?
         let keepAlive = BackgroundKeepAlive {
             task?.cancel()
-            if task == operationTask { operationResult = .idle }
+            if task == operationTask { machine.keepAliveExpired() }
         }
         task = Task {
             do {
                 try await operation()
             } catch {
                 if !Task.isCancelled {
-                    operationResult = .failure(error.localizedDescription)
+                    machine.failed(error.localizedDescription)
                     UINotificationFeedbackGenerator().notificationOccurred(.error)
                 }
             }
@@ -545,10 +485,7 @@ struct ContentView: View {
             exitIfExpired()
             try? await Task.sleep(for: .seconds(2))
             guard !Task.isCancelled else { return }
-            switch operationResult {
-            case .success, .failure: operationResult = .idle
-            case .idle, .inProgress: break
-            }
+            machine.settle()
         }
         operationTask = task
         // The deadline: `Task.sleep` counts on the continuous clock, so a
@@ -557,7 +494,7 @@ struct ContentView: View {
         deadlineTask = Task {
             try? await Task.sleep(for: .seconds(CommandDeadline.limit))
             guard !Task.isCancelled, task == operationTask else { return }
-            timeOutCommand()
+            perform(machine.deadlineFired(away: wasBackgrounded))
         }
     }
 }

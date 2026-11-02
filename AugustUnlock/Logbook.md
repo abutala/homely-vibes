@@ -529,3 +529,25 @@ where Bluetooth allows, add the new one otherwise); only a repeat is
 dropped. So a second tap within 0.75 s sends nothing. The status text stays
 as it was: the cloud-phase mechanics live here, not on the screen. Also
 seen: the garage's bridge answered `HTTP 560` after 24 s.
+
+**Same day, after the TRIAL:** the command logic left `ContentView` for a
+pure `CommandMachine`, built to mirror `formal/august_unlock_command.qnt`
+action for action, so the model's three pinned properties have a Swift
+test each plus a seeded random walk with simulated Bluetooth and cloud. The
+first model found a hole in itself, not in the app (formal/Logbook.md,
+2026-11-01); the Swift side was then written against the corrected model.
+Rule from Amit the same day: formal model and local tests first, the phone
+only confirms.
+
+**Same day, on the Simulator:** `ContentView` now talks to August through a
+protocol, so a UI test can launch the app against a scripted `FakeAugust`
+and watch the screens (`UITests/AppFlowTests.swift`). The six flows passed
+first time, except for one wrong assertion in the test (a 1 s reply is
+settled before the first wait). Nothing about the command machine changed:
+the Simulator confirmed the model, which is the order Amit asked for.
+The PR's reviewer then found a hole the model cannot see, because phase is
+a view concern: the return to the foreground sent an unlock from the sign-in
+screen too (the old `openUnlock()` guard was lost in the refactor). The
+Simulator test caught it before the fix ("2 sent" after sign-in), and
+`resume` now runs only on the unlock screen.
+

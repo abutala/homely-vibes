@@ -9,6 +9,7 @@ the implementation is in. Gotchas and findings: [Logbook.md](Logbook.md).
 | Model | Question it answers |
 |---|---|
 | [ring_token_lock.qnt](ring_token_lock.qnt) | Is the flock around the shared Ring refresh token airtight? Instances: `current` (before the sidecar inherited the lock), `orphanFixed` (the code now), `allFixed` (`auth` also locked: not built). |
+| [august_unlock_command.qnt](august_unlock_command.qnt) | Can an AugustUnlock command hold the screen after the phone naps, can a return to the app unlock by itself after a timeout, is Change Lock ever refused, and what does a cloud command the phone gave up on do? Instances: `beforeDeadline` (before #57), `deadlineOnly` (#57's first push), `withDeadline` (main), `resumeOnly` (main if a passed deadline does not fire on wake). |
 
 ## Setup and run
 
@@ -55,6 +56,7 @@ a test per modelled hazard, named for the model property it mirrors:
 | Model property | Test |
 |---|---|
 | `lockedWritersExclusive`, sidecar orphan | `lib/test_file_lock.py` and `RingBeams/test_beams_manager.py`, the `*_after_parent_is_killed` tests |
+| `noStuckCommand`, `noAutoUnlockAfterAwayTimeout`, `changeLockAlwaysPossible` | `AugustUnlock/Tests/AugustBLEProtocolTests/CommandMachineTests.swift` (the pure `CommandMachine` the app's view drives; a stress run with simulated Bluetooth and cloud) |
 
 Trace validation (replay real logs against the model) is the next step up.
 

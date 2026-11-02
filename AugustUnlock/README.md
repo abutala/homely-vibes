@@ -127,8 +127,19 @@ app to sign in" under the doors. See [Logbook.md](Logbook.md#2026-10-30--the-wid
   and name, and that lock's offline key, slot and serial. Standard practice for a
   personal-use app — this is the same trust model the official August app
   uses.
+- `CommandMachine.swift` — the command state machine as a pure value: what a
+  tap, an open, a return to the foreground, a reply or the deadline does. It
+  mirrors the Quint model [formal/august_unlock_command.qnt](../formal/august_unlock_command.qnt),
+  and its tests include a seeded random walk with simulated Bluetooth and
+  cloud replies, naps and returns.
+- `AugustService.swift` — the protocol `ContentView` talks to (`August.shared`):
+  `AugustClient` on a device, or `FakeAugust` when the launch environment sets
+  `AUGUST_FAKE=1`. The fake is scripted by `AUGUST_FAKE_SIGNED_IN`,
+  `AUGUST_FAKE_REPLY_SECONDS`, `AUGUST_FAKE_PATH` and `AUGUST_FAKE_FAIL`, and
+  counts the commands it got (the timing caption shows "N sent").
 - `ContentView.swift` — the whole UI: sign-in form → one-time verification
-  code entry → the unlock screen. A single-lock account skips straight to the
+  code entry → the unlock screen. It feeds `CommandMachine` the events and
+  runs the effects it returns (start a command, cancel one). A single-lock account skips straight to the
   button; a multi-lock account gets a one-time picker on first sign-in (and a
   "Change Lock" link on the main screen to redo it later). Every open — cold
   launch or back from the background — sends the unlock at once, with no
@@ -193,8 +204,20 @@ AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 ```
 
-`Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`,
-`BackgroundExitPolicy.swift` and `AugustUnlockWidget/DoorState.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
+`Package.swift` exists only for these tests: it builds the pure files alone
+(`AugustBLEProtocol.swift`, `BackgroundExitPolicy.swift`, `CommandDeadline.swift`,
+`CommandMachine.swift`). The command machine's properties are also pinned by
+`make formal` (see [formal/README.md](../formal/README.md)). The app builds from `AugustUnlock.xcodeproj`.
+
+The same properties run through the real screens on the Simulator against
+`FakeAugust` (`UITests/AppFlowTests.swift`): open-unlock, a tap while pending,
+the double-tap dedup, Change Lock mid-command, the 30 s timeout, and no
+auto-unlock on the return after a stall. About two minutes; the Simulator
+boots on its own:
+
+```bash
+xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnlockUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -only-testing:AugustUnlockUITests/AppFlowTests 2>&1 | tee /tmp/augustunlock-appflow.log
+```
 
 ## Security notes
 
