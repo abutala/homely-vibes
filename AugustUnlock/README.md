@@ -81,11 +81,14 @@ Long-press the Home Screen → **+** → AugustUnlock → **Doors**. One size, f
 width: an unlock button per lock, named as August names it, in lock-ID
 order. A tap sends unlock for that door and nothing else: the widget shows
 no state and never locks (unlock is a no-op on an unlocked door, so a
-repeat is harmless). Each tap runs in the widget itself, through the cloud
-(1–25 s), with the app's sign-in read from the Keychain; the app never
-opens. A tap gets 20 s; past that the request is dropped by the phone,
-though August may still run it. "Open the app to sign in" under the
-buttons means August rejected the sign-in; opening the app renews it.
+repeat is harmless). The button is the lock icon; the door name under it
+dims while the tap runs. Each tap runs in the widget itself, through the
+cloud (1–25 s), with the app's sign-in read from the Keychain, and the app
+stays closed. A tap on the name or on empty space is a tap on the widget's
+body, which opens the app, as on any widget. A tap gets 20 s; past that
+the request is dropped by the phone, though August may still run it.
+"Open the app to sign in" under the buttons means August rejected the
+sign-in; opening the app renews it.
 
 ## How it works
 
