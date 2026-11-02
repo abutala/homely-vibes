@@ -186,7 +186,9 @@ cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 The widget has a UI test on the Simulator (`UITests/WidgetTapTests.swift`):
 it adds the Doors widget through SpringBoard's gallery and checks the two
 buttons and the sign-in caption. The tap is an expected failure on the
-Simulator (see the Logbook, 2026-11-01); it needs a signed device build.
+Simulator (ad-hoc signature, no team; Logbook 2026-11-01 and 2026-11-02);
+the dispatch is proven on the phone through the widget's own log,
+`Library/Caches/widget.log` in the widget's data container.
 
 ```bash
 xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnlockUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -allowProvisioningUpdates 2>&1 | tee /tmp/augustunlock-uitest.log

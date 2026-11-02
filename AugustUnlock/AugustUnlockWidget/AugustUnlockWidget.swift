@@ -60,6 +60,10 @@ struct DoorsProvider: TimelineProvider {
     }
 }
 
+/// One full-width row, a door per half. Built up from Apple's sample button
+/// (default style, `.tint`), which is the shape that runs under this
+/// install; the earlier `.borderedProminent` button with a frame-filling
+/// label never ran (Logbook, 2026-11-02).
 struct DoorsView: View {
     let entry: DoorsEntry
 
@@ -67,9 +71,19 @@ struct DoorsView: View {
         VStack(spacing: 4) {
             HStack(spacing: 0) {
                 ForEach(Array(entry.names.enumerated()), id: \.offset) { position, name in
-                    button(position: position, name: name)
+                    VStack(spacing: 6) {
+                        if position == 0 {
+                            Button(intent: OpenFirstDoorIntent()) { doorIcon }
+                        } else {
+                            Button(intent: OpenSecondDoorIntent()) { doorIcon }
+                        }
+                        Text(name).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7)
+                            .invalidatableContent()
+                    }
+                    .frame(maxWidth: .infinity)
                 }
             }
+            .tint(.primary)
             if let message = entry.message {
                 Text(message).font(.caption2).foregroundStyle(.red)
             }
@@ -77,21 +91,10 @@ struct DoorsView: View {
         .containerBackground(.fill.tertiary, for: .widget)
     }
 
-    /// Bordered is the one button style that stays interactive in this
-    /// install (`.plain` taps fall through to "open the app" — see the
-    /// Logbook). Each door's half of the widget is its button.
-    @ViewBuilder
-    private func button(position: Int, name: String) -> some View {
-        let label = VStack(spacing: 6) {
-            Image(systemName: "lock.open.fill").font(.system(size: 30))
-            Text(name).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .invalidatableContent()
-        if position == 0 {
-            Button(intent: OpenFirstDoorIntent()) { label }.buttonStyle(.borderedProminent)
-        } else {
-            Button(intent: OpenSecondDoorIntent()) { label }.buttonStyle(.borderedProminent)
-        }
+    /// Nothing but the image inside the button: `.invalidatableContent()` on
+    /// the label made the button inert here (Logbook, 2026-11-02), so the
+    /// running-tap cue sits on the name below it instead.
+    private var doorIcon: some View {
+        Image(systemName: "lock.open.fill").font(.system(size: 34)).padding(8)
     }
 }
