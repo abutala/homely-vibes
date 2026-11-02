@@ -82,7 +82,7 @@ struct ContentView: View {
         }
         .padding()
         .onAppear {
-            phase = AugustClient.shared.isReady ? .ready : .needsLogin
+            phase = August.shared.isReady ? .ready : .needsLogin
             openUnlock()
         }
         .onChange(of: scenePhase) { _, newPhase in
@@ -197,11 +197,11 @@ struct ContentView: View {
         errorMessage = nil
         defer { isBusy = false }
         do {
-            let authenticated = try await AugustClient.shared.login(email: email, password: password)
+            let authenticated = try await August.shared.login(email: email, password: password)
             if authenticated {
                 await resolveLock()
             } else {
-                try await AugustClient.shared.sendVerificationCode()
+                try await August.shared.sendVerificationCode()
                 phase = .needsCode
             }
         } catch {
@@ -213,17 +213,17 @@ struct ContentView: View {
     /// auto-select the only lock on a single-lock account (today's
     /// zero-tap behavior), or ask when there's more than one.
     private func resolveLock() async {
-        if AugustClient.shared.hasSelectedLock {
+        if August.shared.hasSelectedLock {
             enterReady()
             return
         }
         do {
-            let locks = try await AugustClient.shared.fetchLocks()
+            let locks = try await August.shared.fetchLocks()
             switch locks.count {
             case 0:
                 errorMessage = AugustError.noLocks.errorDescription
             case 1:
-                AugustClient.shared.selectLock(locks[0])
+                August.shared.selectLock(locks[0])
                 enterReady()
             default:
                 availableLocks = locks
@@ -277,7 +277,7 @@ struct ContentView: View {
         errorMessage = nil
         defer { isBusy = false }
         do {
-            try await AugustClient.shared.validateCode(code)
+            try await August.shared.validateCode(code)
             await resolveLock()
         } catch {
             errorMessage = error.localizedDescription
@@ -299,7 +299,7 @@ struct ContentView: View {
             }
             ForEach(availableLocks) { lock in
                 Button(lock.name) {
-                    AugustClient.shared.selectLock(lock)
+                    August.shared.selectLock(lock)
                     enterReady()
                 }
                 .buttonStyle(.bordered)
@@ -313,7 +313,7 @@ struct ContentView: View {
 
     private var unlockScreen: some View {
         VStack(spacing: 32) {
-            if let lockName = AugustClient.shared.lockName {
+            if let lockName = August.shared.lockName {
                 Text(lockName)
                     .font(.headline)
                     .foregroundStyle(.secondary)
@@ -360,7 +360,7 @@ struct ContentView: View {
                 }
                 Button("Sign Out") {
                     perform(machine.cancelForChange())
-                    AugustClient.shared.signOut()
+                    August.shared.signOut()
                     email = ""
                     password = ""
                     code = ""
@@ -385,7 +385,7 @@ struct ContentView: View {
         changeLockNote = isOperating ? "The previous command may still complete." : nil
         perform(machine.cancelForChange())
         do {
-            availableLocks = try await AugustClient.shared.fetchLocks()
+            availableLocks = try await August.shared.fetchLocks()
             phase = availableLocks.isEmpty ? .ready : .pickLock
             if availableLocks.isEmpty {
                 errorMessage = AugustError.noLocks.errorDescription
@@ -443,12 +443,13 @@ struct ContentView: View {
 
     private func performOperation(unlocking: Bool) async throws {
         let start = ContinuousClock.now
-        let reply = try await (unlocking ? AugustClient.shared.unlock() : AugustClient.shared.lock())
+        let reply = try await (unlocking ? August.shared.unlock() : August.shared.lock())
         try Task.checkCancellation()
         let elapsed = ContinuousClock.now - start
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
+        let sent = (August.shared as? FakeAugust).map { ", \($0.commandsSent) sent" } ?? ""
         lastTiming = LastTiming(
-            summary: "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s", path: reply.path)
+            summary: "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s\(sent)", path: reply.path)
         machine.replied(reply.state)
         UINotificationFeedbackGenerator().notificationOccurred(.success)
     }

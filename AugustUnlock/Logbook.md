@@ -538,3 +538,10 @@ first model found a hole in itself, not in the app (formal/Logbook.md,
 2026-11-01); the Swift side was then written against the corrected model.
 Rule from Amit the same day: formal model and local tests first, the phone
 only confirms.
+
+**Same day, on the Simulator:** `ContentView` now talks to August through a
+protocol, so a UI test can launch the app against a scripted `FakeAugust`
+and watch the screens (`UITests/AppFlowTests.swift`). The six flows passed
+first time, except for one wrong assertion in the test (a 1 s reply is
+settled before the first wait). Nothing about the command machine changed:
+the Simulator confirmed the model, which is the order Amit asked for.
