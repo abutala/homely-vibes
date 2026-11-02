@@ -6,6 +6,27 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ## Incidents
 
+### 2026-11-01 — The AugustUnlock command model reproduces the stuck screen
+
+[august_unlock_command.qnt](august_unlock_command.qnt) models one lock command with a
+phone nap. Two things it taught in the first hour:
+
+- **Random search cannot reach a 30-tick stall.** With the app's real 30 s limit, a
+  stall needs the simulator to pick `tick` 31 times in a row while the phone naps; it
+  never did, and the "before" instance came back `holds` for lack of reach. Time units
+  are abstract: the limit is 3 ticks in the model, which keeps every rule and makes the
+  stall reachable. A `// max-steps:` line per model tells the scripts the bound.
+- **A model lets the phone nap in the foreground; iOS does not.** The first version found a
+  "stuck" command on main: nap in the foreground, wake, and nothing fired the deadline
+  until the next tick. On a phone, screen-off backgrounds the scene, so a nap always ends
+  in the resume path, which checks the wall clock. The model now backgrounds on `sleep`,
+  and `wakeFiresDeadline` (assumption A2) is a switch: `resumeOnly` drops it and the
+  resume check alone keeps `noStuckCommand`.
+
+`noSurpriseMoves` is pinned `violated` in every instance: a cloud command the phone gave
+up on still runs at the lock (the four beeps of 2026-11-01). That is a property of
+August, not a bug in the model or the app; the pin keeps it visible.
+
 ### 2026-10-04 — The exhaustive run agrees with the simulator
 
 Apalache confirmed every row of [outcomes.txt](outcomes.txt). On the shipped code

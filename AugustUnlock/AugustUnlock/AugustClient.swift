@@ -37,27 +37,6 @@ struct AugustLock: Identifiable, Equatable {
     let name: String
 }
 
-enum LockState: Equatable {
-    case locked
-    case unlocked
-    /// Jammed, mid-motion, or a value August hasn't sent before.
-    case unknown
-
-    /// The status strings yalexs' `determine_lock_status()` (lock.py)
-    /// recognizes — August sends both the short and `kAugLockState_` forms.
-    /// Unlatched counts as unlocked: the door opens either way.
-    init(augustStatus: String?) {
-        switch augustStatus {
-        case "lock", "locked", "kAugLockState_Locked", "kAugLockState_SecureMode":
-            self = .locked
-        case "unlock", "unlocked", "kAugLockState_Unlocked", "unlatched", "kAugLockState_Unlatched":
-            self = .unlocked
-        default:
-            self = .unknown
-        }
-    }
-}
-
 /// Talks to August's cloud API directly from the device — no home server in
 /// the loop — and tries the lock over Bluetooth first when it has a loaded
 /// offline key (`AugustBLEOperation`). Mirrors the request shapes in August/august_client.py (this
