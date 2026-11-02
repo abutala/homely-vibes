@@ -539,3 +539,23 @@ stale "unlocked" record. Amit's call: stateless buttons that only unlock.
 Gone: `DoorRecord`, `DoorDisplay`, the per-door records and their tests,
 the lock command. Kept: the widget's own cloud client, the lock list from
 August, the 20 s tap deadline, bordered buttons (`.plain` is inert here).
+
+**Testing the widget on the Simulator (same day).** A UI test
+(`UITests/WidgetTapTests.swift`) adds the widget through SpringBoard and taps
+it. On the Simulator the tap opens the app, for a reason the Simulator's own
+log names: at archive time the widget process logs
+`[appintents:Metadata] Failed to fetch metadata for <intent>` and `linkd`
+logs `Unable to get teamId from <widget>`. The registry identifies a widget
+by its signing team; Simulator builds are signed "to run locally" with no
+team. Tried and ruled out: an entitlements file with `application-identifier`
+and `team-identifier` (the app then refuses to launch; a widget with them in
+its signature refuses to spawn), re-signing with this Mac's team
+certificate (same), `-allowProvisioningUpdates` (Xcode emits only
+`application-identifier`; `linkd` still wants the team). An intent name that
+shares a word with the module name (`UnlockFirstDoorIntent` in
+`AugustUnlockWidget`) gets a word-substituted mangled name in the metadata
+(`18AugustUnlockWidget0B15FirstDoorIntentV`); renamed to `Open…` to keep the
+metadata plain, though that was not the cause. So: the Simulator proves the
+layout (two buttons before any lock list, the caption) and the tap stays an
+expected failure there; the dispatch is proven only on the phone, where
+Sideloadly's signature carries the team.

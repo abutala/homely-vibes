@@ -73,7 +73,9 @@ enum WidgetCloud {
     private static func accessToken() async -> String? {
         if let token = keychainString("august_access_token") { return token }
         try? await Task.sleep(for: .milliseconds(300))
-        return keychainString("august_access_token")
+        let token = keychainString("august_access_token")
+        if token == nil { WidgetLog.note("no access token in the Keychain") }
+        return token
     }
 
     private static func keychainString(_ key: String) -> String? {
@@ -88,6 +90,23 @@ enum WidgetCloud {
             return nil
         }
         return String(data: data, encoding: .utf8)
+    }
+}
+
+/// The widget's own log, in its Caches folder, readable off the phone with
+/// `xcrun devicectl device copy from --domain-type appDataContainer
+/// --domain-identifier <widget bundle id> --source Library/Caches/widget.log`
+/// — no sudo, no tap from Amit. Last 60 lines kept.
+enum WidgetLog {
+    private static var url: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("widget.log")
+    }
+
+    static func note(_ message: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        var lines = (try? String(contentsOf: url, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
+        lines.append("\(stamp) \(message)")
+        try? lines.suffix(60).joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
     }
 }
 

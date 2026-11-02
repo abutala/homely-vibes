@@ -49,10 +49,12 @@ struct DoorsProvider: TimelineProvider {
             let locks = try await withDeadline(seconds: Self.fetchDeadline) { try await WidgetCloud.fetchLocks() }
             WidgetStore.locks = locks
             WidgetStore.signedOut = false
+            WidgetLog.note("timeline locks=\(locks.count)")
         } catch {
             if case WidgetCloud.Failure.signedOut = error { WidgetStore.signedOut = true }
+            WidgetLog.note("timeline fetch failed: \(error.localizedDescription); cached=\(WidgetStore.locks.count)")
         }
-        let names = Array(WidgetStore.locks.prefix(2).map(\.name))
+        let names = DoorNames.names(cached: WidgetStore.locks.map(\.name))
         let message = WidgetStore.signedOut ? WidgetCloud.Failure.signedOut.errorDescription : nil
         return DoorsEntry(date: .now, names: names, message: message)
     }
@@ -63,17 +65,13 @@ struct DoorsView: View {
 
     var body: some View {
         VStack(spacing: 4) {
-            if entry.names.isEmpty {
-                Text(entry.message ?? "Open the app once to load your doors").font(.footnote).foregroundStyle(.secondary)
-            } else {
-                HStack(spacing: 0) {
-                    ForEach(Array(entry.names.enumerated()), id: \.offset) { position, name in
-                        button(position: position, name: name)
-                    }
+            HStack(spacing: 0) {
+                ForEach(Array(entry.names.enumerated()), id: \.offset) { position, name in
+                    button(position: position, name: name)
                 }
-                if let message = entry.message {
-                    Text(message).font(.caption2).foregroundStyle(.red)
-                }
+            }
+            if let message = entry.message {
+                Text(message).font(.caption2).foregroundStyle(.red)
             }
         }
         .containerBackground(.fill.tertiary, for: .widget)
@@ -91,9 +89,9 @@ struct DoorsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .invalidatableContent()
         if position == 0 {
-            Button(intent: UnlockFirstDoorIntent()) { label }.buttonStyle(.borderedProminent)
+            Button(intent: OpenFirstDoorIntent()) { label }.buttonStyle(.borderedProminent)
         } else {
-            Button(intent: UnlockSecondDoorIntent()) { label }.buttonStyle(.borderedProminent)
+            Button(intent: OpenSecondDoorIntent()) { label }.buttonStyle(.borderedProminent)
         }
     }
 }

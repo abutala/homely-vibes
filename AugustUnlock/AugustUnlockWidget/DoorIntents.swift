@@ -7,8 +7,8 @@ import os
 /// and a parameter was ruled out separately, so the types stay as plain as
 /// this. The label and the command read the same `WidgetStore.locks` entry
 /// by position.
-struct UnlockFirstDoorIntent: AppIntent {
-    static let title: LocalizedStringResource = "Unlock First Door"
+struct OpenFirstDoorIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open First Door"
     static let isDiscoverable = false
     static let authenticationPolicy = IntentAuthenticationPolicy.requiresAuthentication
 
@@ -18,8 +18,8 @@ struct UnlockFirstDoorIntent: AppIntent {
     }
 }
 
-struct UnlockSecondDoorIntent: AppIntent {
-    static let title: LocalizedStringResource = "Unlock Second Door"
+struct OpenSecondDoorIntent: AppIntent {
+    static let title: LocalizedStringResource = "Open Second Door"
     static let isDiscoverable = false
     static let authenticationPolicy = IntentAuthenticationPolicy.requiresAuthentication
 
@@ -41,8 +41,10 @@ enum WidgetDoorAction {
 
     static func unlock(position: Int) async {
         let locks = WidgetStore.locks
+        WidgetLog.note("tap position=\(position) locks=\(locks.count)")
         guard locks.indices.contains(position) else {
             log.error("Widget tap at position \(position) has no lock; \(locks.count) cached")
+            WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
             return
         }
         let door = locks[position]
@@ -50,9 +52,11 @@ enum WidgetDoorAction {
         do {
             try await withDeadline(seconds: deadline) { try await WidgetCloud.unlock(lockID: door.id) }
             WidgetStore.signedOut = false
+            WidgetLog.note("unlock position=\(position) ok")
         } catch {
             if case WidgetCloud.Failure.signedOut = error { WidgetStore.signedOut = true }
             log.error("Widget unlock of \(door.name, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+            WidgetLog.note("unlock position=\(position) failed: \(error.localizedDescription)")
         }
         WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
     }

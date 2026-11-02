@@ -183,6 +183,15 @@ AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 ```
 
+The widget has a UI test on the Simulator (`UITests/WidgetTapTests.swift`):
+it adds the Doors widget through SpringBoard's gallery and checks the two
+buttons and the sign-in caption. The tap is an expected failure on the
+Simulator (see the Logbook, 2026-11-01); it needs a signed device build.
+
+```bash
+xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnlockUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -allowProvisioningUpdates 2>&1 | tee /tmp/augustunlock-uitest.log
+```
+
 `Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`,
 `BackgroundExitPolicy.swift` and `AugustUnlockWidget/DoorState.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
 
