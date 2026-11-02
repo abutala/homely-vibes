@@ -2,33 +2,6 @@ import AppIntents
 import WidgetKit
 import os
 
-/// One intent type per door position, with no parameters, run by the widget
-/// itself in the background. `.plain` button styles are inert in this install
-/// and a parameter was ruled out separately, so the types stay as plain as
-/// this. The label and the command read the same `WidgetStore.locks` entry
-/// by position.
-struct OpenFirstDoorIntent: AppIntent {
-    static let title: LocalizedStringResource = "Open First Door"
-    static let isDiscoverable = false
-    static let authenticationPolicy = IntentAuthenticationPolicy.requiresAuthentication
-
-    func perform() async throws -> some IntentResult {
-        await WidgetDoorAction.unlock(position: 0)
-        return .result()
-    }
-}
-
-struct OpenSecondDoorIntent: AppIntent {
-    static let title: LocalizedStringResource = "Open Second Door"
-    static let isDiscoverable = false
-    static let authenticationPolicy = IntentAuthenticationPolicy.requiresAuthentication
-
-    func perform() async throws -> some IntentResult {
-        await WidgetDoorAction.unlock(position: 1)
-        return .result()
-    }
-}
-
 /// A widget tap: send unlock for that door and log the reply. Stateless by
 /// design (Amit, 2026-11-01): the widget shows no state and never locks.
 /// Unlock is idempotent, so a repeat is a no-op at the door. Cloud only, so a
