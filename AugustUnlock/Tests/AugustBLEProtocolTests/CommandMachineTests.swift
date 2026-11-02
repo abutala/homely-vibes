@@ -110,7 +110,7 @@ final class CommandMachineTests: XCTestCase {
         var foreground = true
         var asleep = false
         /// Seconds until the transport answers the command in flight.
-        var replyIn: Int?
+        var answerIn: Int?
         var replyOk = true
         var autoUnlockAfterAway = 0
         var changeLockRefused = 0
@@ -123,9 +123,9 @@ final class CommandMachineTests: XCTestCase {
             case 2: tick()
             case 3: tick()
             case 4:
-                if !asleep && m.isOperating, replyIn == nil {
+                if !asleep && m.isOperating, answerIn == nil {
                     // Bluetooth failed: the cloud takes longer.
-                    replyIn = 5 + Int(rng.next(upperBound: 25))
+                    answerIn = 5 + Int(rng.next(upperBound: 25))
                     log.append("cloud")
                 }
             case 5:
@@ -165,13 +165,13 @@ final class CommandMachineTests: XCTestCase {
                 apply(m.deadlineFired(away: !foreground), "deadline")
                 return
             }
-            if let left = replyIn, m.isOperating {
+            if let left = answerIn, m.isOperating {
                 if left <= 1 {
-                    replyIn = nil
+                    answerIn = nil
                     if replyOk { m.replied(.unlocked) } else { m.failed("no reply") }
                     log.append(replyOk ? "ok" : "fail")
                 } else {
-                    replyIn = left - 1
+                    answerIn = left - 1
                 }
             }
         }
@@ -181,10 +181,10 @@ final class CommandMachineTests: XCTestCase {
             switch effect {
             case .send:
                 // Bluetooth answers in 1–4 s; the cloud fallback may follow.
-                replyIn = 1 + Int(now.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 4))
+                answerIn = 1 + Int(now.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 4))
                 replyOk = Int(now.timeIntervalSinceReferenceDate) % 7 != 0
             case .cancel:
-                replyIn = nil
+                answerIn = nil
             case .none:
                 break
             }

@@ -127,8 +127,14 @@ app to sign in" under the doors. See [Logbook.md](Logbook.md#2026-10-30--the-wid
   and name, and that lock's offline key, slot and serial. Standard practice for a
   personal-use app — this is the same trust model the official August app
   uses.
+- `CommandMachine.swift` — the command state machine as a pure value: what a
+  tap, an open, a return to the foreground, a reply or the deadline does. It
+  mirrors the Quint model [formal/august_unlock_command.qnt](../formal/august_unlock_command.qnt),
+  and its tests include a seeded random walk with simulated Bluetooth and
+  cloud replies, naps and returns.
 - `ContentView.swift` — the whole UI: sign-in form → one-time verification
-  code entry → the unlock screen. A single-lock account skips straight to the
+  code entry → the unlock screen. It feeds `CommandMachine` the events and
+  runs the effects it returns (start a command, cancel one). A single-lock account skips straight to the
   button; a multi-lock account gets a one-time picker on first sign-in (and a
   "Change Lock" link on the main screen to redo it later). Every open — cold
   launch or back from the background — sends the unlock at once, with no
@@ -193,8 +199,10 @@ AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 ```
 
-`Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`,
-`BackgroundExitPolicy.swift` and `AugustUnlockWidget/DoorState.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
+`Package.swift` exists only for these tests: it builds the pure files alone
+(`AugustBLEProtocol.swift`, `BackgroundExitPolicy.swift`, `CommandDeadline.swift`,
+`CommandMachine.swift`). The command machine's properties are also pinned by
+`make formal` (see [formal/README.md](../formal/README.md)). The app builds from `AugustUnlock.xcodeproj`.
 
 ## Security notes
 
