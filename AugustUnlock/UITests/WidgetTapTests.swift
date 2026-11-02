@@ -17,14 +17,18 @@ final class WidgetTapTests: XCTestCase {
         XCUIDevice.shared.press(.home)
         XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 5))
 
-        if !springboard.buttons["Door 1"].waitForExistence(timeout: 2) {
+        if !springboard.staticTexts["Door 1"].waitForExistence(timeout: 2) {
             try addWidget()
         }
-        let door = springboard.buttons["Door 1"]
-        XCTAssertTrue(door.waitForExistence(timeout: 20), springboard.debugDescription)
-
-        XCTAssertTrue(springboard.buttons["Door 2"].exists, "two buttons before any lock list")
+        XCTAssertTrue(springboard.staticTexts["Door 1"].waitForExistence(timeout: 20), springboard.debugDescription)
+        XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "two doors before any lock list")
         XCTAssertTrue(springboard.staticTexts["Open the app to sign in"].exists, springboard.debugDescription)
+
+        // The button is the lock icon alone; the name under it is a sibling
+        // (the cue cannot live inside the button, Logbook 2026-11-02).
+        let doors = springboard.buttons.matching(identifier: "Unlock")
+        XCTAssertEqual(doors.count, 2, springboard.debugDescription)
+        let door = doors.element(boundBy: 0)
 
         // On the Simulator the intent registry (linkd) rejects the widget for
         // want of a team identifier, so the tap falls through and opens the
