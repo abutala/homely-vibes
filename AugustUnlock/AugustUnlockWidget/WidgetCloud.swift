@@ -42,12 +42,10 @@ enum WidgetCloud {
         }
     }
 
-    /// Returns the state the lock reported back, not the state requested.
-    static func operate(lockID: String, unlocking: Bool) async throws -> DoorRecord.State {
-        let action = unlocking ? "unlock" : "lock"
-        let data = try await send(method: "PUT", path: "/remoteoperate/\(lockID)/\(action)")
-        let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        return DoorRecord.State(augustStatus: json?["status"] as? String)
+    /// A 2xx means August accepted the command; the reply's state is not
+    /// shown, so it is not read.
+    static func unlock(lockID: String) async throws {
+        _ = try await send(method: "PUT", path: "/remoteoperate/\(lockID)/unlock")
     }
 
     private static func send(method: String, path: String) async throws -> Data {
@@ -75,7 +73,9 @@ enum WidgetCloud {
     private static func accessToken() async -> String? {
         if let token = keychainString("august_access_token") { return token }
         try? await Task.sleep(for: .milliseconds(300))
-        return keychainString("august_access_token")
+        let token = keychainString("august_access_token")
+        if token == nil { WidgetLog.note("no access token in the Keychain") }
+        return token
     }
 
     private static func keychainString(_ key: String) -> String? {
@@ -93,8 +93,25 @@ enum WidgetCloud {
     }
 }
 
-/// The widget's own memory: the lock list and each door's `DoorRecord`, in
-/// the extension's UserDefaults. The app never reads or writes it.
+/// The widget's own log, in its Caches folder, readable off the phone with
+/// `xcrun devicectl device copy from --domain-type appDataContainer
+/// --domain-identifier <widget bundle id> --source Library/Caches/widget.log`
+/// — no sudo, no tap from Amit. Last 60 lines kept.
+enum WidgetLog {
+    private static var url: URL {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("widget.log")
+    }
+
+    static func note(_ message: String) {
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        var lines = (try? String(contentsOf: url, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
+        lines.append("\(stamp) \(message)")
+        try? lines.suffix(60).joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
+    }
+}
+
+/// The widget's own memory: the lock list and the sign-in flag, in the
+/// extension's UserDefaults. The app never reads or writes it.
 enum WidgetStore {
     private static let defaults = UserDefaults.standard
     private static let locksKey = "locks"
@@ -105,23 +122,9 @@ enum WidgetStore {
         set { defaults.set(newValue, forKey: "signedOut") }
     }
 
-    /// When the last tap started; its reloads skip the lock-list fetch.
-    static var lastTap: Date {
-        get { defaults.object(forKey: "lastTap") as? Date ?? .distantPast }
-        set { defaults.set(newValue, forKey: "lastTap") }
-    }
-
     static var locks: [WidgetCloud.Lock] {
         get { decode([WidgetCloud.Lock].self, locksKey) ?? [] }
         set { encode(newValue, locksKey) }
-    }
-
-    static func record(for lockID: String) -> DoorRecord {
-        decode(DoorRecord.self, "door_\(lockID)") ?? DoorRecord(at: .distantPast)
-    }
-
-    static func write(_ record: DoorRecord, for lockID: String) {
-        encode(record, "door_\(lockID)")
     }
 
     private static func decode<T: Decodable>(_ type: T.Type, _ key: String) -> T? {

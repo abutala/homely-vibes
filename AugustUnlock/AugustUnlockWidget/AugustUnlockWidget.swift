@@ -2,10 +2,11 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// One full-width row: a coloured circle per door, named as August names it.
-/// Each tap runs in the widget (`DoorIntents.swift`); the app never opens.
-/// The widget shares no code or state with the app; it only reads the app's
-/// sign-in (`WidgetCloud`).
+/// One full-width row: an unlock button per door, named as August names it.
+/// No state is shown and nothing locks (Amit, 2026-11-01). Each tap runs in
+/// the widget (`DoorIntents.swift`); the app never opens. The widget shares
+/// no code or state with the app; it only reads the app's sign-in
+/// (`WidgetCloud`).
 @main
 struct AugustUnlockWidget: Widget {
     var body: some WidgetConfiguration {
@@ -13,138 +14,94 @@ struct AugustUnlockWidget: Widget {
             DoorsView(entry: entry)
         }
         .configurationDisplayName("Doors")
-        .description("Tap a door to unlock it. Tap again to lock it.")
+        .description("Tap a door to unlock it.")
         .supportedFamilies([.systemMedium])
     }
 }
 
 struct DoorsEntry: TimelineEntry {
-    struct Door {
-        let name: String
-        let display: DoorDisplay
-    }
-
     let date: Date
-    /// At most two, in `WidgetStore.locks` order.
-    let doors: [Door]
+    /// At most two, in `WidgetStore.locks` order (by lock ID).
+    let names: [String]
     let message: String?
 }
 
-/// A timeline re-fetches the lock list, so a renamed or added lock shows up,
-/// capped at `fetchDeadline`. The reloads a tap fires (to show "running" and
-/// to show the result) skip the fetch for `tapQuiet`, so a tap's feedback
-/// never waits on the network. "Open the app to sign in" follows
-/// `WidgetStore.signedOut`, which a 401 from a fetch or a tap sets and any
-/// good reply clears. Between reloads the only changes are expiries, so the
-/// timeline holds the next one.
+/// A timeline re-fetches the lock list, capped at `fetchDeadline`. The
+/// policy is `.never`: the buttons are stateless, so the only reasons to
+/// re-fetch are a tap (`reloadTimelines` after it) and the system's own
+/// refreshes; a renamed or added lock shows up on the next of those.
+/// "Open the app to sign in" follows `WidgetStore.signedOut`, which a 401
+/// sets and any good reply clears; with no cached doors, any other fetch
+/// error is shown instead, so the widget never asks for the app's help.
 struct DoorsProvider: TimelineProvider {
     static let fetchDeadline: TimeInterval = 4
-    static let tapQuiet: TimeInterval = 60
 
     func placeholder(in context: Context) -> DoorsEntry {
-        DoorsEntry(date: .now, doors: [], message: nil)
+        DoorsEntry(date: .now, names: ["Door", "Door"], message: nil)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (DoorsEntry) -> Void) {
-        Task { completion(await refresh().entry) }
+        Task { completion(await refresh()) }
     }
 
     func getTimeline(in context: Context, completion: @escaping (Timeline<DoorsEntry>) -> Void) {
-        Task {
-            let (first, message) = await refresh()
-            let now = first.date
-            var entries = [first]
-            let changes = shownLocks().compactMap { WidgetStore.record(for: $0.id).nextChange() }.filter { $0 > now }
-            if let next = changes.min() {
-                entries.append(entry(at: next, message: message))
-            }
-            completion(Timeline(entries: entries, policy: .atEnd))
-        }
+        Task { completion(Timeline(entries: [await refresh()], policy: .never)) }
     }
 
-    /// Fetches the lock list unless a tap just ran, then builds the entry for now.
-    private func refresh() async -> (entry: DoorsEntry, message: String?) {
-        var failure: String?
-        let tapped = Date().timeIntervalSince(WidgetStore.lastTap) < Self.tapQuiet
-        if !tapped || WidgetStore.locks.isEmpty {
-            do {
-                WidgetStore.locks = try await withDeadline(seconds: Self.fetchDeadline) {
-                    try await WidgetCloud.fetchLocks()
-                }
-                WidgetStore.signedOut = false
-            } catch WidgetCloud.Failure.signedOut {
-                WidgetStore.signedOut = true
-            } catch {
-                failure = error.localizedDescription
+    private func refresh() async -> DoorsEntry {
+        do {
+            let locks = try await withDeadline(seconds: Self.fetchDeadline) { try await WidgetCloud.fetchLocks() }
+            WidgetStore.locks = locks
+            WidgetStore.signedOut = false
+            WidgetLog.note("timeline locks=\(locks.count)")
+        } catch {
+            if case WidgetCloud.Failure.signedOut = error { WidgetStore.signedOut = true }
+            WidgetLog.note("timeline fetch failed: \(error.localizedDescription); cached=\(WidgetStore.locks.count)")
+            if !WidgetStore.signedOut, WidgetStore.locks.isEmpty {
+                return DoorsEntry(date: .now, names: DoorNames.names(cached: []), message: error.localizedDescription)
             }
         }
-        let message = WidgetStore.signedOut
-            ? WidgetCloud.Failure.signedOut.localizedDescription
-            : WidgetStore.locks.isEmpty ? failure : nil
-        return (entry(at: Date(), message: message), message)
-    }
-
-    private func shownLocks() -> [WidgetCloud.Lock] {
-        Array(WidgetStore.locks.prefix(2))
-    }
-
-    private func entry(at date: Date, message: String?) -> DoorsEntry {
-        let doors = shownLocks().map { lock in
-            DoorsEntry.Door(name: lock.name, display: DoorDisplay(WidgetStore.record(for: lock.id).effective(at: date)))
-        }
-        return DoorsEntry(date: date, doors: doors, message: message)
+        let names = DoorNames.names(cached: WidgetStore.locks.map(\.name))
+        let message = WidgetStore.signedOut ? WidgetCloud.Failure.signedOut.errorDescription : nil
+        return DoorsEntry(date: .now, names: names, message: message)
     }
 }
 
+/// One full-width row, a door per half. Built up from Apple's sample button
+/// (default style, `.tint`), which is the shape that runs under this
+/// install; the earlier `.borderedProminent` button with a frame-filling
+/// label never ran (Logbook, 2026-11-02).
 struct DoorsView: View {
     let entry: DoorsEntry
 
-    /// Each door is one button that fills its half of the widget: a tap
-    /// anywhere outside a button is a widget-body tap, which opens the app.
     var body: some View {
-        Group {
-            if entry.doors.isEmpty {
-                Text(entry.message ?? "Loading doors…").font(.footnote).foregroundStyle(.secondary)
-            } else {
-                VStack(spacing: 4) {
-                    HStack(spacing: 0) {
-                        ForEach(Array(entry.doors.enumerated()), id: \.offset) { position, door in
-                            button(position: position, door: door)
+        VStack(spacing: 4) {
+            HStack(spacing: 0) {
+                ForEach(Array(entry.names.enumerated()), id: \.offset) { position, name in
+                    VStack(spacing: 6) {
+                        if position == 0 {
+                            Button(intent: OpenFirstDoorIntent()) { doorIcon }.accessibilityLabel(name)
+                        } else {
+                            Button(intent: OpenSecondDoorIntent()) { doorIcon }.accessibilityLabel(name)
                         }
+                        Text(name).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7)
+                            .invalidatableContent()
                     }
-                    if let message = entry.message {
-                        Text(message).font(.caption2).foregroundStyle(.red)
-                    }
+                    .frame(maxWidth: .infinity)
                 }
+            }
+            .tint(.primary)
+            if let message = entry.message {
+                Text(message).font(.caption2).foregroundStyle(.red)
             }
         }
         .containerBackground(.fill.tertiary, for: .widget)
     }
 
-    /// Bordered is the one button style that stays interactive in this
-    /// install (`.plain` taps fall through to "open the app" — see the
-    /// Logbook); a clear tint leaves only our circle visible.
-    @ViewBuilder
-    private func button(position: Int, door: DoorsEntry.Door) -> some View {
-        let label = VStack(spacing: 6) {
-            ZStack {
-                Circle().fill(door.display.color)
-                Image(systemName: door.display.symbol)
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white)
-            }
-            .frame(width: 76, height: 76)
-            Text(door.name).font(.caption).bold().foregroundStyle(.primary).lineLimit(1)
-            Text(door.display.caption).font(.caption2).foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .invalidatableContent()
-        if position == 0 {
-            Button(intent: ToggleFirstDoorIntent()) { label }
-                .buttonStyle(.borderedProminent).tint(.clear)
-        } else {
-            Button(intent: ToggleSecondDoorIntent()) { label }
-                .buttonStyle(.borderedProminent).tint(.clear)
-        }
+    /// Nothing but the image inside the button: `.invalidatableContent()` on
+    /// the label made the button inert here (Logbook, 2026-11-02), so the
+    /// running-tap cue sits on the name below it instead.
+    private var doorIcon: some View {
+        Image(systemName: "lock.open.fill").font(.system(size: 34)).padding(8)
     }
 }

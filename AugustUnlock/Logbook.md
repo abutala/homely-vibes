@@ -551,3 +551,103 @@ screen too (the old `openUnlock()` guard was lost in the refactor). The
 Simulator test caught it before the fix ("2 sent" after sign-in), and
 `resume` now runs only on the unlock screen.
 
+## 2026-11-01 — The widget is two unlock buttons, nothing more
+
+On the phone both widget buttons acted on the lock the app had picked: the
+taps were not reaching the buttons and opened the app instead, whose
+open-unlock then ran. The toggle logic on top could also send LOCK from a
+stale "unlocked" record. Amit's call: stateless buttons that only unlock.
+Gone: `DoorRecord`, `DoorDisplay`, the per-door records and their tests,
+the lock command. Kept: the widget's own cloud client, the lock list from
+August, the 20 s tap deadline, bordered buttons (`.plain` is inert here).
+
+**Testing the widget on the Simulator (same day).** A UI test
+(`UITests/WidgetTapTests.swift`) adds the widget through SpringBoard and taps
+it. On the Simulator the tap opens the app, for a reason the Simulator's own
+log names: at archive time the widget process logs
+`[appintents:Metadata] Failed to fetch metadata for <intent>` and `linkd`
+logs `Unable to get teamId from <widget>`. The registry identifies a widget
+by its signing team; Simulator builds are signed "to run locally" with no
+team. Tried and ruled out: an entitlements file with `application-identifier`
+and `team-identifier` (the app then refuses to launch; a widget with them in
+its signature refuses to spawn), re-signing with this Mac's team
+certificate (same), `-allowProvisioningUpdates` (Xcode emits only
+`application-identifier`; `linkd` still wants the team). An intent name that
+shares a word with the module name (`UnlockFirstDoorIntent` in
+`AugustUnlockWidget`) gets a word-substituted mangled name in the metadata
+(`18AugustUnlockWidget0B15FirstDoorIntentV`); renamed to `Open…` to keep the
+metadata plain, though that was not the cause. So: the Simulator proves the
+layout (two buttons before any lock list, the caption) and the tap stays an
+expected failure there; the dispatch is proven only on the phone, where
+Sideloadly's signature carries the team.
+
+## 2026-11-02 — The widget's buttons run again: built up from Apple's sample
+
+A day of probes (intents compiled into both targets per Apple's doc, then the
+widget built under the app's module name so both bundles register the same
+type) changed nothing on the phone: every tap still opened the app. A TRIAL
+showed why the probes could not work: the widget-only builds of 2026-11-01
+had already failed, so neither change was the cause; and the "metadata
+lookup failed" diagnosis was the Simulator's error read into the phone,
+whose `linkd` lines are identical for a working widget (Notes). The phone's
+live syslog (`uvx pymobiledevice3 syslog live`, Info level, no sudo) shows
+only that the tap was not claimed by any button: WidgetRenderer logs
+`Launching with no widgetURL`, no intent runner starts.
+
+Amit's rule, same day (memory `apple_sample_first_not_reverse_engineering`):
+start from Apple's own sample and build simple to difficult. The ladder, one
+Sideloadly install each, the observation a line in the widget's own log
+(`Library/Caches/widget.log`, read with `xcrun devicectl device copy from
+--domain-type appDataContainer --domain-identifier <widget bundle id>`):
+
+- **A — Apple's button, verbatim shape** from [Adding interactivity to
+  widgets and Live Activities](https://developer.apple.com/documentation/widgetkit/adding-interactivity-to-widgets-and-live-activities):
+  `Button(intent: PingIntent()) { Image(systemName: "bolt.fill") }` in an
+  `HStack` with `.tint(.white).padding()`, default button style, the intent
+  in both targets, `perform()` only logs. Two taps, two `ping` lines, app
+  closed. So Sideloadly's signature, iOS 27.0.1 and the free team all
+  dispatch intents; the cause was in our view.
+- **B** — the same shape with `OpenFirstDoorIntent`/`OpenSecondDoorIntent`
+  and the real unlock behind them: `tap position=0`, `tap position=1`,
+  `unlock position=0 ok`, `unlock position=1 failed: Timed out` (the garage
+  bridge's cloud slowness; the stateless button simply tries again).
+- **C** — the intended look on that shape: a 34 pt lock icon as the button
+  label, the door name under it, each door its half, system background.
+  Amit: "all operations are correct".
+- **D** — `.invalidatableContent()` on the icon inside the button, Apple's
+  cue that a tap is running. **The taps opened the app again.** That is the
+  cause, found by the ladder: a button whose label carries
+  `.invalidatableContent()` is inert under this install, and every failing
+  build since 2026-10-30 had exactly that (the label `VStack` with
+  `.invalidatableContent()` inside `Button(intent:)`), while the 2026-10-28
+  A/B probe and Apple's sample did not. Apple's article puts the modifier on
+  the views that *receive updated data*, never on the button.
+- **E** — the modifier moved to the door name under the button (a sibling,
+  outside it); the step-A `PingIntent` scaffold removed. Shipped: the app
+  stays closed, both doors unlock (`tap position=1` … `unlock position=1 ok`
+  in the widget log), and the name dims while the tap runs.
+
+Learnings, for the next widget:
+
+1. A system feature that misbehaves gets Apple's sample first, as-is, then
+   our pieces one per build. The sample found the baseline in one install;
+   the probes found nothing in ten. And the ladder's last rung named the
+   cause as a by-product: one modifier, in a place Apple's sample never puts
+   it.
+2. The widget's own log file is the only reliable observation of a tap: the
+   system log looks the same for a live and an inert button up to the moment
+   of the tap, and the archive keeps no Info-level lines.
+3. The phone's system log without sudo: `uvx pymobiledevice3 syslog collect`
+   (the archive, Default level) and `syslog live` (Info and Debug). Cabled;
+   no tunnel needed.
+4. The Simulator dispatches widget intents after all. With the cue off the
+   button, the UI test's tap ran `OpenFirstDoorIntent.perform()` on the
+   iPhone 17 Pro Simulator (its log: `perform() finished`, `Successfully ran
+   action`), ad-hoc signature and all; `linkd`'s "Unable to get teamId"
+   lines come after, from the donation, and are harmless. The 2026-10-30
+   and 2026-11-01 claims that the Simulator cannot run a tap were this
+   same bug seen on the Simulator. `WidgetTapTests` is strict now, and the
+   rung-by-rung ladder could have run there: FV + Simulator first holds.
+5. Sideloadly sometimes opens with "Apple Silicon" selected as the device;
+   it refuses that install (Patreon-only), so nothing lands on the Mac, but
+   the phone must be re-selected by hand before Start.

@@ -78,24 +78,17 @@ Keychain (a second August sign-in).
 ## Home Screen widget
 
 Long-press the Home Screen → **+** → AugustUnlock → **Doors**. One size, full
-width: a coloured circle per door, named as August names the lock. A tap runs
-in the widget itself; the app never opens.
-
-- A tap unlocks that door. A tap on a green circle locks it.
-- A tap while that door's command is still running sends the opposite.
-- "Unlocked" is trusted for 3 minutes: after that the circle goes gray and a
-  tap unlocks again, since the door may have auto-locked.
-- While a command runs the circle shows an ellipsis; a command with no reply
-  in 20 s ends gray.
-- Each door's half of the widget is its button. A tap on the gap between
-  them is a tap on the widget itself, which opens the app (and so unlocks the
-  app's picked lock).
-
-The widget shares no code or state with the app (`AugustUnlockWidget/`). It
-reads the app's sign-in from the Keychain and never writes it, fetches the
-lock list itself, and sends every command through the cloud (5–9 s; it has
-no Bluetooth). When the app's token has expired the widget shows "Open the
-app to sign in" under the doors. See [Logbook.md](Logbook.md#2026-10-30--the-widget-pr-broke-the-app-the-widget-is-now-a-separate-island).
+width: an unlock button per lock, named as August names it, in lock-ID
+order. A tap sends unlock for that door and nothing else: the widget shows
+no state and never locks (unlock is a no-op on an unlocked door, so a
+repeat is harmless). The button is the lock icon; the door name under it
+dims while the tap runs. Each tap runs in the widget itself, through the
+cloud (1–25 s), with the app's sign-in read from the Keychain, and the app
+stays closed. A tap on the name or on empty space is a tap on the widget's
+body, which opens the app, as on any widget. A tap gets 20 s; past that
+the request is dropped by the phone, though August may still run it.
+"Open the app to sign in" under the buttons means August rejected the
+sign-in; opening the app renews it.
 
 ## How it works
 
@@ -196,7 +189,7 @@ the remembered peripheral connected without a scan):
 
 The app quits itself after 5 minutes in the background (`BackgroundExitPolicy.swift`).
 
-The Bluetooth protocol, the exit policy and the widget's door record have unit
+The Bluetooth protocol, the exit policy, the command machine and the widget's door names have unit
 tests; the protocol's run against bytes produced by yalexs-ble's own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
 AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 
@@ -204,9 +197,20 @@ AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 ```
 
+The widget has a UI test on the Simulator (`UITests/WidgetTapTests.swift`):
+it adds the Doors widget through SpringBoard's gallery and checks the two
+buttons and the sign-in caption, then taps a button and checks that the app
+stays closed: the Simulator runs the widget's intent (Logbook 2026-11-02).
+On the phone the proof is the widget's own log, `Library/Caches/widget.log`
+in the widget's data container.
+
+```bash
+xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnlockUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -allowProvisioningUpdates 2>&1 | tee /tmp/augustunlock-uitest.log
+```
+
 `Package.swift` exists only for these tests: it builds the pure files alone
 (`AugustBLEProtocol.swift`, `BackgroundExitPolicy.swift`, `CommandDeadline.swift`,
-`CommandMachine.swift`). The command machine's properties are also pinned by
+`CommandMachine.swift`, `AugustUnlockWidget/DoorNames.swift`). The command machine's properties are also pinned by
 `make formal` (see [formal/README.md](../formal/README.md)). The app builds from `AugustUnlock.xcodeproj`.
 
 The same properties run through the real screens on the Simulator against

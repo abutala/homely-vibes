@@ -284,6 +284,14 @@ final class AugustClient {
         try await operate(action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked)
     }
 
+    /// Any lock on the account, through the cloud (only the selected lock has
+    /// an offline key on this phone). For the widget's intents when they run
+    /// in the app process.
+    func unlock(lockID: String) async throws -> OperationReply {
+        let state = try await cloudOperate(lockID: lockID, action: "unlock")
+        return OperationReply(state: state, path: .cloud)
+    }
+
     func lock() async throws -> OperationReply {
         try await operate(action: "lock", opcode: AugustBLE.lockOpcode, success: .locked)
     }

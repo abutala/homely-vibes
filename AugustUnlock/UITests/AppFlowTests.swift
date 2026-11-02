@@ -81,9 +81,13 @@ final class AppFlowTests: XCTestCase {
         app.secureTextFields["Password"].tap()
         app.secureTextFields["Password"].typeText("fake")
         app.buttons["Sign In"].tap()
-        // iOS offers to save the password; the sheet covers the picker.
-        let notNow = app.buttons["Not Now"]
-        if notNow.waitForExistence(timeout: 2) { notNow.tap() }
+        // iOS offers to save the password; the sheet covers the picker, and a
+        // tap while it animates in is lost, so tap until it is gone.
+        let savePassword = app.sheets["Save Password?"]
+        for _ in 0..<3 where savePassword.waitForExistence(timeout: 2) {
+            app.buttons["Not Now"].tap()
+            if savePassword.waitForNonExistence(timeout: 3) { break }
+        }
         XCTAssertTrue(app.buttons["Front Door"].waitForExistence(timeout: 3), app.debugDescription)
         app.buttons["Front Door"].tap()
         XCTAssertTrue(status("Unlocked \u{2014} tap to lock").waitForExistence(timeout: 5), app.debugDescription)
