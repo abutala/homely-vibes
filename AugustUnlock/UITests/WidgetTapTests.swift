@@ -25,11 +25,12 @@ final class WidgetTapTests: XCTestCase {
         XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "two doors before any lock list")
         XCTAssertTrue(springboard.staticTexts["Open the app to sign in"].exists, springboard.debugDescription)
 
-        // The button is the lock icon alone; the name under it is a sibling
-        // (the cue cannot live inside the button, Logbook 2026-11-02).
-        let doors = springboard.buttons.matching(identifier: "Unlock")
-        XCTAssertEqual(doors.count, 2, springboard.debugDescription)
-        let door = doors.element(boundBy: 0)
+        // The button is the lock icon alone, labelled with the door's name
+        // for VoiceOver; the name under it is a sibling text (the cue cannot
+        // live inside the button, Logbook 2026-11-02).
+        let door = springboard.buttons["Door 1"]
+        XCTAssertTrue(door.exists, springboard.debugDescription)
+        XCTAssertTrue(springboard.buttons["Door 2"].exists, springboard.debugDescription)
 
         // The Simulator dispatches the intent (`OpenFirstDoorIntent.perform()
         // finished` in its log, 2026-11-02); a tap that opens the app is the

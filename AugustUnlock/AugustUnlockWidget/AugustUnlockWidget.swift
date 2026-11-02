@@ -80,9 +80,9 @@ struct DoorsView: View {
                 ForEach(Array(entry.names.enumerated()), id: \.offset) { position, name in
                     VStack(spacing: 6) {
                         if position == 0 {
-                            Button(intent: OpenFirstDoorIntent()) { doorIcon }
+                            Button(intent: OpenFirstDoorIntent()) { doorIcon }.accessibilityLabel(name)
                         } else {
-                            Button(intent: OpenSecondDoorIntent()) { doorIcon }
+                            Button(intent: OpenSecondDoorIntent()) { doorIcon }.accessibilityLabel(name)
                         }
                         Text(name).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7)
                             .invalidatableContent()
