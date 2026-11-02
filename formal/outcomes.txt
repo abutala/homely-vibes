@@ -1,4 +1,6 @@
-# Expected outcome of every (instance, property) pair in ring_token_lock.qnt.
+# Expected outcome of every (instance, property) pair, over every model in this
+# folder. The scripts find a row's model by the module that declares its instance,
+# and the step bound by the model's `// max-steps: N` line.
 # Read by check.sh (randomized search) and verify.sh (exhaustive, Apalache).
 # instance      property                expected
 
@@ -17,3 +19,31 @@ allFixed        mutualExclusion         holds
 current         noInvalidGrant          violated
 orphanFixed     noInvalidGrant          violated
 allFixed        noInvalidGrant          holds
+
+# august_unlock_command.qnt — one lock command at a time in AugustUnlock.
+# beforeDeadline is the app before #57: it must stall (A2 of 2026-11-01) and
+# refuse Change Lock (A1). deadlineOnly is #57's first push: a return after a
+# timeout while away unlocked by itself. withDeadline is main; resumeOnly is
+# main if a passed deadline does not fire on wake (assumption A2 false).
+beforeDeadline  noStuckCommand                violated
+deadlineOnly    noStuckCommand                holds
+withDeadline    noStuckCommand                holds
+resumeOnly      noStuckCommand                holds
+
+beforeDeadline  noAutoUnlockAfterAwayTimeout  holds
+deadlineOnly    noAutoUnlockAfterAwayTimeout  violated
+withDeadline    noAutoUnlockAfterAwayTimeout  holds
+resumeOnly      noAutoUnlockAfterAwayTimeout  holds
+
+beforeDeadline  changeLockAlwaysPossible      violated
+deadlineOnly    changeLockAlwaysPossible      holds
+withDeadline    changeLockAlwaysPossible      holds
+resumeOnly      changeLockAlwaysPossible      holds
+
+# The known gap (assumption A1): a cloud command the phone gave up on still
+# runs at the lock. Violated by design in every instance; pinned so it stays
+# documented and a model that stops showing it fails.
+beforeDeadline  noSurpriseMoves               violated
+deadlineOnly    noSurpriseMoves               violated
+withDeadline    noSurpriseMoves               violated
+resumeOnly      noSurpriseMoves               violated

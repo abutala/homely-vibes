@@ -3,7 +3,7 @@
 # rows of outcomes.txt. A "holds" row here is a proof over every execution of
 # the model; a "violated" row is a counterexample the solver constructed.
 #
-# MAX_STEPS must exceed the longest run of the model. No actor acts twice, so a
+# MAX_STEPS must exceed the longest run of a model that sets no `// max-steps:` line. No actor acts twice, so a
 # run is at most 12 steps (rs 4, bp 3, sc 3, au 2); 20 therefore covers every
 # execution. Raise it whenever an action or actor is added.
 #
@@ -41,8 +41,9 @@ failed=0
 
 # Same rule as check.sh: read the verdict from the output, never the exit code.
 verify() { # instance invariant expected(holds|violated)
-    out=$(npx quint verify ring_token_lock.qnt --main="$1" --invariant="$2" \
-        --max-steps="$MAX_STEPS" 2>&1) || true
+    model=$(model_of "$1"); steps=$(steps_of "$model")
+    out=$(npx quint verify "$model" --main="$1" --invariant="$2" \
+        --max-steps="${steps:-$MAX_STEPS}" 2>&1) || true
     case "$out" in
         *"No violation found"*) got=holds ;;
         *"reached a deadlock"*) got=deadlock ;;
@@ -57,6 +58,11 @@ verify() { # instance invariant expected(holds|violated)
         failed=1
     fi
 }
+
+# A row's model is the file whose module declares its instance; its step bound
+# is that file's `// max-steps: N` line (default 20).
+model_of() { grep -l "^module $1 " ./*.qnt | head -1; }
+steps_of() { sed -n 's#^// max-steps: *\([0-9]*\).*#\1#p' "$1" | head -1; }
 
 rows=$(mktemp)
 trap 'rm -f "$rows"' EXIT
