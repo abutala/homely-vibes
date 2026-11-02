@@ -26,9 +26,13 @@ struct DoorsEntry: TimelineEntry {
     let message: String?
 }
 
-/// A timeline re-fetches the lock list, so a renamed or added lock shows up,
-/// capped at `fetchDeadline`. "Open the app to sign in" follows
-/// `WidgetStore.signedOut`, which a 401 sets and any good reply clears.
+/// A timeline re-fetches the lock list, capped at `fetchDeadline`. The
+/// policy is `.never`: the buttons are stateless, so the only reasons to
+/// re-fetch are a tap (`reloadTimelines` after it) and the system's own
+/// refreshes; a renamed or added lock shows up on the next of those.
+/// "Open the app to sign in" follows `WidgetStore.signedOut`, which a 401
+/// sets and any good reply clears; with no cached doors, any other fetch
+/// error is shown instead, so the widget never asks for the app's help.
 struct DoorsProvider: TimelineProvider {
     static let fetchDeadline: TimeInterval = 4
 
@@ -53,6 +57,9 @@ struct DoorsProvider: TimelineProvider {
         } catch {
             if case WidgetCloud.Failure.signedOut = error { WidgetStore.signedOut = true }
             WidgetLog.note("timeline fetch failed: \(error.localizedDescription); cached=\(WidgetStore.locks.count)")
+            if !WidgetStore.signedOut, WidgetStore.locks.isEmpty {
+                return DoorsEntry(date: .now, names: DoorNames.names(cached: []), message: error.localizedDescription)
+            }
         }
         let names = DoorNames.names(cached: WidgetStore.locks.map(\.name))
         let message = WidgetStore.signedOut ? WidgetCloud.Failure.signedOut.errorDescription : nil

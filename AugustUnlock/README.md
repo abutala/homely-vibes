@@ -195,7 +195,7 @@ xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnloc
 ```
 
 `Package.swift` exists only for these tests: it builds `AugustBLEProtocol.swift`,
-`BackgroundExitPolicy.swift` and `AugustUnlockWidget/DoorState.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
+`BackgroundExitPolicy.swift`, `CommandDeadline.swift` and `AugustUnlockWidget/DoorNames.swift` alone. The app builds from `AugustUnlock.xcodeproj`.
 
 ## Security notes
 
