@@ -14,7 +14,6 @@ no credentials.
 |-------|---------|---------|----------|
 | Unit — controller engine | `test_alert_engine.py` | Predicate logic, state machine, mute, CV filter, zone-end dispatch | <0.2s |
 | Unit — hose timer | `test_hose_timer.py` | Action-field parse, run start/end detection, anomaly dispatch, hose→suppression-key stamp | <0.2s |
-| Unit — stale zone | `test_stale_zone_checker.py` | Fresh/stale/never-run/disabled zones, hose-valve path, daily dedup, hourly gate | <0.2s |
 | Unit — zone thresholds | `test_zone_thresholds.py` | `_get_zone_threshold` math, `_send_zone_outcome` Report-vs-Anomaly routing, optionally against a SCP'd prod DB | <0.2s (skips DB tests if `prod_controller` unset) |
 | Scenario — synthetic timeline | `test_alert_simulation.py` | End-to-end engine behavior across multi-day YAML scenarios | ~5s |
 | Replay — production DB | `rfmanager alerts replay` | The engine re-evaluated against real `water_readings` + `watering_events`. Output only, no Pushover. | seconds |
@@ -82,7 +81,6 @@ silent; sustained-flow rule scenarios still exercise fully.
 **Coverage gaps** (verified separately):
 
 - **Hose-timer dispatch + suppression** — [test_hose_timer.py](test_hose_timer.py) covers them. The synthetic harness only drives `AlertEngine.evaluate`; `HoseTimerProcessor` is a separate code path that needs its own mock-client harness.
-- **Stale-zone monitor** — [test_stale_zone_checker.py](test_stale_zone_checker.py) covers time-jump semantics that are awkward to express in the synthetic event timeline.
 - **Hose-timer activity → Flume rule suppression** — `test_hose_timer.py::TestHoseActivitySuppression` writes the shared metadata key and verifies the cross-component contract.
 
 ## What scenario tests assert
@@ -167,8 +165,8 @@ Workflow:
 ## Test invocations cheat-sheet
 
 ```bash
-# Fast unit pass (all engine + hose-timer + stale-zone)
-uv run python -m pytest RachioFlume/test_alert_engine.py RachioFlume/test_hose_timer.py RachioFlume/test_stale_zone_checker.py -v 2>&1 | tee /tmp/rf_unit.log
+# Fast unit pass (all engine + hose-timer)
+uv run python -m pytest RachioFlume/test_alert_engine.py RachioFlume/test_hose_timer.py -v 2>&1 | tee /tmp/rf_unit.log
 
 # Scenario pass (synthetic timeline)
 uv run python -m pytest RachioFlume/test_alert_simulation.py -v 2>&1 | tee /tmp/rf_scenario.log

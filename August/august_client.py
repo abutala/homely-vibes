@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional
 import json
 from dataclasses import dataclass
 import aiohttp
@@ -81,6 +81,20 @@ class LockState:
     lock_status: LockStatus
     battery_level: float
     door_state: LockDoorStatus
+
+
+def battery_summary(statuses: Iterable[LockState], threshold_pct: int) -> tuple[str, int]:
+    """Body and priority of the scheduled battery report: P-1 (quiet) unless a
+    lock reads below the threshold, then P1. A level of -1 means August sent none.
+    """
+    lines, low = [], False
+    for status in statuses:
+        level = status.battery_level
+        lines.append(
+            f"{status.lock_name}: {level:.0f}%" if level >= 0 else f"{status.lock_name}: unknown"
+        )
+        low = low or 0 <= level < threshold_pct
+    return "\n".join(lines), 1 if low else -1
 
 
 class AugustClient:

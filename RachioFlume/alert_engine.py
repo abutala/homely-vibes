@@ -582,7 +582,7 @@ class AlertEngine:
             feed_entry(
                 _RACHIO_OUTAGE_NAME,
                 self.db.get_last_collection_timestamp("rachio"),
-                "Zone tracking and stale-zone data are FROZEN — "
+                "Zone tracking and the weekly report are FROZEN — "
                 "check Rachio API, auth, or collector.",
             )
         )
@@ -719,7 +719,7 @@ class AlertEngine:
                     fire_message=(
                         f"Battery reports {status} (as of {valve_seen:%Y-%m-%d %H:%M}). "
                         "Replace the valve's AA cells — a flat battery stops it watering "
-                        "and the zone then goes quiet until the stale-zone check notices."
+                        "and the zone then shows as not run in the weekly report."
                     ),
                     clear_message="Battery back to GOOD.",
                     now=now,

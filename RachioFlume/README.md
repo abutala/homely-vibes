@@ -15,14 +15,13 @@ A Python integration that connects Rachio irrigation controllers with Flume wate
   - **Zone anomaly detection**: Per-zone baselines under `rachio_flume.alerts.zone_anomaly.zone_thresholds`, keyed by device label then zone identifier (controller: stringified `zone_number`; hose-timer: valve name). For hose timers the key may be the bare valve name **or** a `"<prefix> - <valve name>"` form (e.g. `"Z13 FS - Upper Deck Planters"`) — the suffix after `" - "` is matched against the live valve name via `resolve_hose_threshold`. Threshold formula: `avg_gpm + max(absolute_gpm, percent_above/100 × avg_gpm)`.
   - **Default flow rules** (whole-house, Flume-only): Pipe Break / High Flow / Mid Flow / Leak — P1 when a rule first holds, then P2 every window while it holds, P0 "all clear" once it has failed for `clear_after_minutes` (10) in a row. Every knob is per rule in YAML: `min_gpm`, `duration_minutes`, `max_cv` (spread check; `null` skips it — set on Pipe Break and High Flow so a ramping burst still pages) and `trim_fraction` (Leak drops 5% of the lowest and of the highest minutes first).
   - **Irrigation exclusion**: a flow rule waits until its own window is clear of irrigation (controller OR hose timer) plus `irrigation_tail_minutes`. Symmetric.
-  - **Stale-zone monitor** (`stale_zone_checker.py`): **P2** alert if any enabled controller zone or **known hose-timer valve — connected or not** — hasn't run within `stale_zone_days` (default **15**). Widened from 10 days because 10 still fired on ordinary seasonal gaps; the wider window is what earns the emergency priority — a zone that has missed a fortnight is a real watering failure, not a blip. A disconnected valve is exactly the failure mode that stops it running, so it is never filtered out; the alert body notes `DISCONNECTED` (battery/BLE) and roster-staleness (valve dropped from the API response) as extra actionable lines. Daily dedup; hourly evaluation gate.
   - **Flume data-outage watchdog**: P2 when no water readings have landed for `flume_outage.stale_after_minutes` (default 60) — healthy meters report every minute, so a gap means the whole leak-detection stack is blind (expired auth, API outage, dead collector). Re-fires every `flume_outage.retrigger_minutes` (default 360) while stale; never suppressed by irrigation; P0 once on recovery.
   - **Rachio data-outage watchdog**: P1 when a Rachio feed stops **polling successfully** (not merely: hasn't watered). The controller feed (`last_rachio_collection`) and each hose base station (`hose::poll::<label>::last_success`) are watched independently — either API path can die alone. Fires after `rachio_outage.stale_after_minutes` (default 180 ≈ 36 failed 5-min polls); hose message flags that runs during the outage are unrecoverable (no history API). Re-fires every `rachio_outage.retrigger_minutes` (default 360); never suppressed by irrigation; P0 on recovery. Runs inside the collector, so a fully dead collector is covered instead by rfmanager's P2 fatal handler + run-one-constantly respawn.
   - **Device-offline health check**: P1 when the **controller** reports `status` OFFLINE or a **hose valve** reports disconnected, sustained for `device_offline.debounce_minutes` (default 60) — the debounce absorbs transient WiFi/BLE dropouts. Re-fires every `device_offline.retrigger_minutes` (default 1440); P0 on recovery. Observations older than the outage window are skipped (feed death belongs to the outage watchdog).
   - **Hose-valve battery health check**: P1 when a valve reports `batteryStatus` `LOW` or `REPLACE`. Rachio exposes a four-value enum — `GOOD` / `LOW` / `REPLACE` / `UNKNOWN` — and **no percentage anywhere in the API** ([getValve schema](https://rachio.readme.io/reference/valveservice_getvalve)), so there is no level to threshold and nothing to tune but the repeat cadence (`valve_battery.retrigger_minutes`, default 1440). `UNKNOWN` never fires: that is the valve saying it hasn't reported in, which is the offline check's job, and paging on it would fire on every BLE dropout. An unrecognized value logs a warning rather than paging, so a firmware that adds an enum member can't spontaneously start waking you up. No debounce (unlike `connected`, the status doesn't flap with range); stale roster rows are skipped, same as the offline check. P0 once on recovery.
   - Mute support; P0 "all clear" for sustained-flow rules after `clear_after_minutes` of failing.
 - **Synthetic Simulator** (`simulate_alerts.py`): Replay scenarios through the alert engine without hitting real APIs or Pushover; wired into `test_alert_simulation.py`. See [TESTABILITY.md](TESTABILITY.md).
-- **HTML Email Report**: Period fixed-width table (via `<pre>` monospace; prod cron sends it weekly) covering every zone — controllers and hose valves in one unified table. Per-zone anomaly threshold + alert-session count are surfaced alongside runtime / gallons / GPM. A zone or valve with no run in the period still gets a row, with its reason in place of the numbers: `skipped: weather 10/21` (a Rachio `*_SKIP` event on a schedule that holds the zone), `in no active schedule`, or `no run recorded` (plus `offline` for a disconnected hose valve). Notes wrap under the name column so the body stays 40 characters wide. A `SKIPPED RUNS` list names each skipped schedule, its reason and its zones; disabled controller zones go on one `Disabled:` line.
+- **HTML Email Report**: Period fixed-width table (via `<pre>` monospace; prod cron sends it weekly) covering every zone — controllers and hose valves in one unified table. Per-zone anomaly threshold + alert-session count are surfaced alongside runtime / gallons / GPM. A zone or valve with no run in the period still gets a row, with its reason in place of the numbers: `skipped: weather 10/21` (a Rachio `*_SKIP` event on a schedule that holds the zone), `in no active schedule`, or `no run recorded` (plus `offline` for a disconnected hose valve). Notes wrap under the name column so the body stays 40 characters wide. A `SKIPPED RUNS` list gives one row per skipped run: date, reason, schedule (cut at 40 characters; the zone rows already name each skipped zone); disabled controller zones go on one `Disabled:` line.
 - **Continuous Monitoring**: Automated data collection service
 - **SQLite Storage**: Persistent data storage with session tracking
 
@@ -150,7 +149,6 @@ overridable per-house in `config/local.yaml`. The block is split by scope:
   irrigation stopped a flow rule still treats as irrigation.
 - **`clear_after_minutes`** — how long a flow rule must fail in a row before
   its P0 "all clear".
-- **`stale_zone_days`** — threshold for the stale-zone monitor (P2).
 - **`valve_battery.retrigger_minutes`** — how often the hose-valve battery
   alert repeats itself while the battery is still low.
 
@@ -178,12 +176,6 @@ Key behaviors:
   so it is never before the real stop. Controller OR hose timer, symmetric.
   HoseTimerProcessor writes `alert::__hose__::last_active`; AlertEngine writes
   `alert::__rachio__::irrigating_until` and reads both.
-- **Stale-zone monitor** — separate `StaleZoneChecker` fires **P2** if any
-  enabled controller zone or known hose-timer valve (connected or not) hasn't
-  run within `stale_zone_days` (default **15**). Daily dedup per zone; hourly
-  evaluation gate.
-  Catches: schedule accidentally disabled, hose-timer hub offline, dead
-  valve battery, etc.
 - **Report failures escalate to Pushover** — weekly-email failure (e.g.
   Gmail auth error) fires P1 Pushover so you know immediately.
 
@@ -362,8 +354,8 @@ Z8 BD      14.9    56   3.7   1.8    1
 Z13 BUD    20.0     5   0.3   0.8    -
 
 SKIPPED RUNS:
-  10/21 Back Trees: weather (Z6 Z10 Z11)
-  10/24 Back Beds: climate (Z5 Z8)
+  10/21 weather Back Trees
+  10/24 climate Back Beds
 
 Disabled: Zone 14, Zone 15, Zone 16
 

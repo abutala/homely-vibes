@@ -383,7 +383,6 @@ class RachioFlumeAlertsConfig:
     - zone_anomaly: scoped to Rachio events (per-zone, at run end).
     - default_flow_rules: whole-house sustained-flow rules (Flume only);
       each waits until its own window is clear of irrigation.
-    - stale_zone_days: P2 if any zone/valve hasn't run in N days.
     - flume_outage: P2 watchdog when Flume readings stop entirely.
     - rachio_outage: P1 watchdog when Rachio polling stops succeeding.
     - device_offline: P1 when a controller/valve reports offline.
@@ -395,7 +394,6 @@ class RachioFlumeAlertsConfig:
     clear_after_minutes: int  # a flow rule clears after failing this long in a row
     zone_anomaly: ZoneAnomalyConfig
     default_flow_rules: list[AlertRuleConfig]
-    stale_zone_days: int
     flume_outage: FlumeOutageConfig
     rachio_outage: RachioOutageConfig
     device_offline: DeviceOfflineConfig

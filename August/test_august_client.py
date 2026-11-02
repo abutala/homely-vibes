@@ -15,6 +15,7 @@ from August.august_client import (
     AugustMonitor,
     LockState,
     apply_working_api_key,
+    battery_summary,
     load_cached_install_id,
 )
 
@@ -39,6 +40,28 @@ class TestLockState:
         assert lock_state.lock_status == LockStatus.LOCKED
         assert lock_state.battery_level == 85.0
         assert lock_state.door_state == LockDoorStatus.CLOSED
+
+
+def _lock(name: str, battery: float) -> LockState:
+    return LockState(name, name, 0.0, LockStatus.LOCKED, battery, LockDoorStatus.CLOSED)
+
+
+class TestBatterySummary:
+    """The scheduled battery report: quiet (P-1) unless a lock is low."""
+
+    def test_healthy_locks_send_quietly(self) -> None:
+        message, priority = battery_summary([_lock("Front", 78), _lock("Garage", 70)], 20)
+        assert message == "Front: 78%\nGarage: 70%"
+        assert priority == -1
+
+    def test_a_low_lock_raises_the_priority(self) -> None:
+        _, priority = battery_summary([_lock("Front", 78), _lock("Garage", 19)], 20)
+        assert priority == 1
+
+    def test_an_unknown_level_is_not_low(self) -> None:
+        message, priority = battery_summary([_lock("Front", -1)], 20)
+        assert message == "Front: unknown"
+        assert priority == -1
 
 
 class TestAugustClient:
