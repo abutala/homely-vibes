@@ -34,6 +34,7 @@ enum AppDoorAction {
         WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
         let start = ContinuousClock.now
         var ok = false
+        if TestHooks.slowWidgetTap { try? await Task.sleep(for: .seconds(5)) }
         do {
             guard !lockID.isEmpty else { throw AugustError.noLocks }
             let reply = try await AugustClient.shared.unlock(

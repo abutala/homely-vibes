@@ -11,6 +11,7 @@ final class AppFlowTests: XCTestCase {
         app = XCUIApplication()
         app.launchEnvironment = [
             "AUGUST_FAKE": "1", "AUGUST_FAKE_SIGNED_IN": "1", "AUGUST_FAKE_REPLY_SECONDS": "\(reply)",
+            "AUGUST_SLOW_WIDGET_TAP": "0",
         ].merging(extra) { $1 }
         app.launch()
     }
