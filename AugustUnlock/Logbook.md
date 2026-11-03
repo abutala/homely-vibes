@@ -838,3 +838,39 @@ nothing against it. The right shape is a race, not a budget: start the
 cloud after the setup budget but let Bluetooth keep going, first result
 wins, the other is cancelled (unlock and lock are idempotent). That is its
 own change (TRIAL first); this PR keeps the 6 s budget.
+
+## 2026-11-03 — The race that was not: a longer Bluetooth wait for the screen instead
+
+After the door run, the plan was to race Bluetooth against the cloud:
+Bluetooth at once, the cloud after the setup budget, first result wins.
+The scoped TRIAL (`scratchpad/trial6`) withdrew it before any code, on
+two findings. One was mine: the design kept Bluetooth's setup budget at
+6 s and started the cloud at 6 s, so the two never overlapped. The other
+is the real one: a cloud command the phone cancels still runs at August
+(the PUT is synchronous and relayed server-side; Logbook 2026-10-23), so
+after a Bluetooth win the ghost command could land after the opposite
+command on the kept link: an open door under a screen that says "Locked".
+Today that gap exists only after a cloud fallback; the race would have
+made it follow every slow Bluetooth win.
+
+What ships instead: the screen's own taps wait 12 s for Bluetooth (the
+person is at the door; the door run's connect completed at 9.4 s, its
+setup at 9.8 s) and 6 s for the result (the work after the session has
+taken 1.4 s at most); the widget keeps 6 s and 12 s. The 30 s deadline
+stays (Amit, 2026-11-01), so the cloud keeps 12 s after both Bluetooth
+budgets run out; `CommandDeadline` holds all three numbers and a test
+pins the sum. The price: after a 12 s Bluetooth miss the cloud has 18 s,
+and two of the seven cloud unlocks measured today (19.9 s and 21.1 s)
+would not fit; today's 6 s budget lets them. Also: a cancel that empties
+the link's queue during setup now arms a 1 s grace, so a lone cancel does
+not leave a pending connect and a kept link; and a setup failure's log
+line says whether the scan ever saw the lock advertise, which is the
+bridge signal.
+
+Refuted on the way: a "near" signal to pick the budget. The door run saw
+no advertisement for 9 s while waiting was right, a miss came 23 s after
+an ok, and any history signal re-creates the loop. Open, with a kill
+criterion: the widget stays in the loop (a 6 s miss sends a cloud PUT,
+the bridge holds the lock for the next tap); if three of ten door visits
+show a widget tap falling back after a cloud use within ten minutes, the
+widget gets ~10 s of Bluetooth and a cloud leg near 15 s.

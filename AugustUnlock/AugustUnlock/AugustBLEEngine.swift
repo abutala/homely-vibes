@@ -24,6 +24,10 @@ nonisolated final class AugustBLEEngine {
         /// one, and an earlier one firing must not close the link early.
         case keep(serial: Int)
         case close(epoch: Int)
+        /// After a cancel emptied the queue while the link was still being
+        /// built: the opposite command usually follows within a second and
+        /// wants the pending connect; if nothing comes, the link closes.
+        case grace(epoch: Int)
     }
 
     enum Input {
@@ -92,6 +96,7 @@ nonisolated final class AugustBLEEngine {
     }
 
     static let keepSeconds = 5.0
+    static let graceSeconds = 1.0
     /// yalexs-ble's wait after the last frame before a write: a lock sent
     /// commands too fast can crash and need a battery pull.
     static let cooldownSeconds = 0.25
@@ -274,8 +279,11 @@ nonisolated final class AugustBLEEngine {
             if link == .ready { return beginHead(at: now) }
             return startHead(at: now)
         }
-        guard link == .ready else { return [] }
-        return keepOrClose()
+        switch link {
+        case .ready: return keepOrClose()
+        case .none, .closing: return []
+        default: return [.schedule(.grace(epoch: epoch), Self.graceSeconds)]
+        }
     }
 
     private func keepOrClose() -> [Output] {
@@ -375,6 +383,11 @@ nonisolated final class AugustBLEEngine {
             return close()
         case .close(let epoch):
             guard epoch == self.epoch, link == .closing else { return [] }
+            return [.disconnect]
+        case .grace(let epoch):
+            guard epoch == self.epoch, queue.isEmpty, link != .none, link != .closing else { return [] }
+            if link == .ready { return keepOrClose() }
+            dropLink()
             return [.disconnect]
         }
     }

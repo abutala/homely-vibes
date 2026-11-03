@@ -3,6 +3,13 @@ import XCTest
 @testable import AugustBLEProtocol
 
 final class CommandDeadlineTests: XCTestCase {
+    func testTheScreensBluetoothBudgetsLeaveTheCloudItsWindow() {
+        // Cloud unlocks on this account take 1–25 s; a miss on Bluetooth
+        // must still leave the cloud a real chance before the deadline.
+        XCTAssertGreaterThanOrEqual(CommandDeadline.cloudWindowAfterBluetooth, 12)
+        XCTAssertLessThan(CommandDeadline.screenBluetoothSetup + CommandDeadline.screenBluetoothOperation, CommandDeadline.limit)
+    }
+
     private let start = Date(timeIntervalSinceReferenceDate: 1000)
 
     func testLimitIsThirtySeconds() {
