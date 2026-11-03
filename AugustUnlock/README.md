@@ -82,10 +82,10 @@ Long-press the Home Screen → **+** → AugustUnlock → **Doors**. One size, f
 width: an unlock button per lock, named as August names it, in lock-ID
 order. A tap sends unlock for that door and nothing else: the widget shows
 no state and never locks (unlock is a no-op on an unlocked door, so a
-repeat is harmless). The button is the lock icon. While a tap runs, both
-door names dim (the system's cue; the widget cannot redraw until the tap
-ends). When it ends, the tapped door's name says "Unlocked" or "Failed"
-for a few seconds, then the name again. Each tap runs in the app's own
+repeat is harmless). The button is the lock icon. The widget cannot
+redraw while a tap runs, so nothing moves until it ends; then the tapped
+door's name says "Unlocked" or "Failed" for about ten seconds, then the
+name again. Each tap runs in the app's own
 process in the background (the app never comes forward), so it takes the
 same path as the app's button: Bluetooth when the lock has a loaded key
 (~1–3 s), the cloud otherwise or when Bluetooth fails (1–25 s). A second
@@ -224,6 +224,10 @@ the key carry-over, the cloud's timing and the phone's reload deferral
 reads the tap's state from the Keychain, which the Simulator shares between
 the two bundles only through the `keychain-access-groups` entitlement both
 targets carry (Sideloadly ignores it and gives both the same group anyway).
+The app declares the `bluetooth-central` background mode (`Info.plist`,
+merged into the generated one): without it a backgrounded app gets no
+Bluetooth events, so a widget tap's key exchange stalled (Logbook
+2026-11-03).
 On the phone the proof is `app.log` above and the widget's own log,
 `Library/Caches/widget.log` in the widget's data container.
 

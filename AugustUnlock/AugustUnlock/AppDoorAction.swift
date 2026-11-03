@@ -14,9 +14,10 @@ enum AppDoorAction {
     /// too short. The Bluetooth attempt before it is bounded on its own.
     static let cloudDeadline: TimeInterval = 25
     /// Bluetooth setup from a background process is slower than from the
-    /// screen (iOS lengthens the connection interval): the screen's 3 s
-    /// timed out during the key exchange. The cloud fallback keeps its own
-    /// deadline, so this costs the tap at most 6 s on a miss.
+    /// screen: the key exchange stalled at 3 s and at 6 s until the app
+    /// declared the `bluetooth-central` background mode, without which a
+    /// backgrounded app gets no Bluetooth events. The cloud fallback keeps
+    /// its own deadline, so this costs the tap at most 6 s on a miss.
     static let bluetoothSetupBudget: TimeInterval = 6
 
     /// `lockID` is the lock the widget showed under this button; empty when

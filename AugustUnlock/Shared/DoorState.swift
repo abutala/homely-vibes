@@ -15,8 +15,10 @@ struct DoorState: Codable, Equatable {
     /// The last result per position, keyed by the position's text (JSON).
     var results: [String: Result] = [:]
 
-    /// How long a result stays on the widget.
-    static let hold: TimeInterval = 4
+    /// How long a result stays on the widget. WidgetKit draws a reload some
+    /// seconds after it is asked for, so a short hold was gone before it
+    /// was drawn (phone, 2026-11-03).
+    static let hold: TimeInterval = 12
     /// A tap older than this is over whatever happened: the process that ran
     /// it may have died before it wrote the result.
     static let runningLimit: TimeInterval = 45

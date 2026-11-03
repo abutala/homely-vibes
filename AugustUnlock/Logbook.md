@@ -739,3 +739,25 @@ Bluetooth session between commands (the "interrupt, then lock" case) is
 PR B, after this log shows what those failures look like; yalexs-ble keeps
 its link 5.1 s after a command and the lock drops an idle link at 30 s, so
 that window is seconds, not the 30 s the design first said.
+
+**Third run (01:04 UTC), and Amit: "no dude."** Bluetooth from the widget
+still stalled in the key exchange, now at 6.4 s; the cloud took 7.9 s. No
+outcome was seen on the widget, and both names blinked. Three answers:
+
+1. **The stall is iOS, not the radio budget.** Apple, [Core Bluetooth
+   Background Processing](https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html):
+   an app without a Core Bluetooth background mode is "unable to perform
+   Bluetooth-related tasks, nor is it aware of any Bluetooth-related
+   events" while not in the foreground; the events queue until it comes
+   forward. The connect is done by the system, which is why "connected"
+   looked fine; the key exchange needs the delegate, which never fired.
+   The TRIAL's P4 said this; I logged it as "partial" and tried budgets.
+   The app now declares `UIBackgroundModes = bluetooth-central`, which
+   wakes the app for `CBCentralManagerDelegate`/`CBPeripheralDelegate`
+   calls. Phone-only to prove; the Simulator has no radio.
+2. **The outcome was drawn too late to be seen.** WidgetKit draws a reload
+   some seconds after it is asked for; a 4 s hold measured from the write
+   was over before the draw. The hold is 12 s.
+3. **Both names blinked** because I put `.invalidatableContent()` back
+   after the per-door redraw proved impossible mid-tap. Amit: no. There is
+   no cue during a tap now; the outcome after it is the feedback.

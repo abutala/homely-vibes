@@ -55,9 +55,8 @@ struct DoorsProvider: TimelineProvider {
     /// writes its result and reloads this timeline when it ends
     /// (`AppDoorAction`); a reload asked for while the tap runs is deferred
     /// by WidgetKit until it returns (measured on the phone, Logbook
-    /// 2026-11-03), so the only cue during a tap is the system's dimming of
-    /// `.invalidatableContent()` views, which is every marked view, not the
-    /// tapped door's alone.
+    /// 2026-11-03), and the one cue WidgetKit offers during a tap,
+    /// `.invalidatableContent()`, dims every marked view, so there is none.
     func getTimeline(in context: Context, completion: @escaping (Timeline<DoorsEntry>) -> Void) {
         Task {
             let now = Date()
@@ -120,8 +119,9 @@ struct DoorsView: View {
     }
 
     /// The door's name, or what its tap did: the result sits here, beside
-    /// the button, never inside it (Logbook, 2026-11-02); the dimming while
-    /// a tap runs is the system's, on both names.
+    /// the button, never inside it (Logbook, 2026-11-02). No cue while a
+    /// tap runs: the only one WidgetKit offers dims both names (Amit,
+    /// 2026-11-03: no).
     private func caption(_ name: String, _ mark: DoorState.Mark) -> some View {
         let (text, color): (String, Color) = switch mark {
         case .none: (name, .primary)
@@ -130,7 +130,6 @@ struct DoorsView: View {
         case .failed: ("Failed", .red)
         }
         return Text(text).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(color)
-            .invalidatableContent()
     }
 
     /// Nothing but the image inside the button.
