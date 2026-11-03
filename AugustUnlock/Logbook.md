@@ -715,7 +715,18 @@ Three causes, none visible on the Simulator (no Bluetooth, no August cloud):
 
 Nothing above is in the 2026-11-02 learnings' Simulator-first rule's
 favour or against it: the Simulator proved the mechanism and the phone
-proved the data. Both runs were needed. Measured on the
+proved the data. Both runs were needed.
+
+**Second run (00:40 UTC):** Bluetooth first, as intended, and the first
+logged timeout next to a lock: `BLE unlock failed in 3197 ms: Bluetooth
+setup timed out while exchanging keys; using the cloud`, then the cloud in
+19.9 s and "Unlocked" on the widget. The link connected; the key exchange
+did not finish within the 3 s setup budget, which was measured in the
+foreground app (session at 1.3–1.7 s). A background process gets slower
+Bluetooth from iOS (longer connection intervals), and the fallback costs
+~20 s, so a widget tap now gives Bluetooth setup 8 s; the screen keeps
+3 s. One sample; the next taps' stage timings in `app.log` say whether
+8 s is enough or the stall is the lock's. Measured on the
 Simulator: the tapped door shows "Failed" (no sign-in there) and clears;
 the other door does not move; the seven app flows still pass.
 

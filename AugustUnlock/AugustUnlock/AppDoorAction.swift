@@ -13,6 +13,10 @@ enum AppDoorAction {
     /// path took 21 s on the phone (app.log, 2026-11-03), so 20 was too
     /// short for it.
     static let deadline: TimeInterval = 25
+    /// Bluetooth setup from a background process is slower than from the
+    /// screen (iOS lengthens the connection interval); the cloud fallback
+    /// costs ~20 s, so this can be generous.
+    static let bluetoothSetupBudget: TimeInterval = 8
 
     /// `lockID` is the lock the widget showed under this button; empty when
     /// the widget had no lock list yet.
@@ -32,7 +36,7 @@ enum AppDoorAction {
         do {
             guard !lockID.isEmpty else { throw AugustError.noLocks }
             let reply = try await withDeadline(seconds: deadline) {
-                try await AugustClient.shared.unlock(lockID: lockID)
+                try await AugustClient.shared.unlock(lockID: lockID, bluetoothSetupBudget: bluetoothSetupBudget)
             }
             ok = true
             AppLog.note("widget unlock position=\(position) ok via \(reply.path.rawValue) in \(start.duration(to: .now))")
