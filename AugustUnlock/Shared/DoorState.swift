@@ -20,8 +20,10 @@ struct DoorState: Codable, Equatable {
     /// was drawn (phone, 2026-11-03).
     static let hold: TimeInterval = 12
     /// A tap older than this is over whatever happened: the process that ran
-    /// it may have died before it wrote the result.
-    static let runningLimit: TimeInterval = 45
+    /// it may have died before it wrote the result. Longer than two taps
+    /// back to back at their worst (6 s Bluetooth + 25 s cloud each), since
+    /// the second door's tap waits at the gate for the first.
+    static let runningLimit: TimeInterval = 90
 
     enum Mark: Equatable {
         case none, running, ok, failed
