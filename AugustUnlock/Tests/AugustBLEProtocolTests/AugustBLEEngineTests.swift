@@ -72,7 +72,7 @@ final class AugustBLEEngineTests: XCTestCase {
         XCTAssertEqual(timing.connected, 600)
         XCTAssertNotNil(timing.session)
         XCTAssertNotNil(timing.written)
-        XCTAssertEqual(done.dropFirst().first, .schedule(.keep(epoch: 1), 5))
+        XCTAssertEqual(done.dropFirst().first, .schedule(.keep(serial: 1), 5))
     }
 
     func testTheWidgetsCommandDoesNotKeepTheLink() {
@@ -117,7 +117,7 @@ final class AugustBLEEngineTests: XCTestCase {
         openLink()
         // Inside the cooldown: the write is still pending when the cancel lands.
         XCTAssertEqual(send(.notifyEnabled(read, error: nil), after: 0.05), [.schedule(.cooldown(1), 0.2)])
-        XCTAssertEqual(send(.cancel(1)), [.complete(1, .cancelled), .schedule(.keep(epoch: 1), 5)])
+        XCTAssertEqual(send(.cancel(1)), [.complete(1, .cancelled), .schedule(.keep(serial: 1), 5)])
         // Its cooldown timer is stale now.
         XCTAssertEqual(send(.timer(.cooldown(1)), after: 0.2), [])
         let out = send(command(2, AugustBLE.unlockOpcode), after: 0.1)
@@ -157,13 +157,36 @@ final class AugustBLEEngineTests: XCTestCase {
         writeFirstCommand()
         _ = send(.frame(read, ack1), after: 0.05)
         _ = send(.frame(read, op1), after: 0.05)
-        let closing = send(.timer(.keep(epoch: 1)), after: 5)
+        let closing = send(.timer(.keep(serial: 1)), after: 5)
         XCTAssertEqual(closing, [.write(secureWrite, engineShutdown()), .schedule(.close(epoch: 1), 0.3)])
         XCTAssertEqual(send(command(2, AugustBLE.lockOpcode), after: 0.1), [], "arrives while closing: waits")
         XCTAssertEqual(send(.timer(.close(epoch: 1)), after: 0.2), [.disconnect])
         let out = send(.disconnected(nil), after: 0.1)
         XCTAssertEqual(out.first, .startLink, "a new link for the waiting command")
         XCTAssertTrue(out.contains(.schedule(.setup(2), 3)))
+    }
+
+    func testAnEarlierKeepTimerDoesNotCloseAfterALaterCommand() {
+        openLink()
+        writeFirstCommand()
+        _ = send(.frame(read, ack1), after: 0.05)
+        _ = send(.frame(read, op1), after: 0.05)
+        _ = send(command(2, AugustBLE.lockOpcode), after: 1.5)
+        _ = send(.timer(.cooldown(2)), after: 1)
+        _ = send(.frame(read, ack2), after: 0.05)
+        let done = send(.frame(read, op2), after: 0.05)
+        XCTAssertEqual(done.last, .schedule(.keep(serial: 2), 5))
+        XCTAssertEqual(send(.timer(.keep(serial: 1)), after: 2.3), [], "the first command's keep timer must not close the link")
+        XCTAssertEqual(send(.timer(.keep(serial: 2)), after: 2.7).first, .write(secureWrite, engineShutdown()))
+    }
+
+    func testALateDisconnectOfADroppedLinkIsIgnored() {
+        _ = send(command(1, AugustBLE.unlockOpcode))
+        _ = send(.connected, after: 0.6)
+        _ = send(.timer(.setup(1)), after: 2.4)
+        // The radio reports the failed link's disconnect late: nothing to do.
+        XCTAssertEqual(send(.disconnected(nil), after: 0.1), [])
+        XCTAssertEqual(send(command(2, AugustBLE.lockOpcode), after: 0.1).first, .startLink)
     }
 
     func testACommandJustBeforeTheKeepTimerKeepsTheLink() {
@@ -173,7 +196,7 @@ final class AugustBLEEngineTests: XCTestCase {
         _ = send(.frame(read, op1), after: 0.05)
         let out = send(command(2, AugustBLE.lockOpcode), after: 4.99)
         XCTAssertEqual(out, [.schedule(.operation(2), 12), .write(write, lock2)])
-        XCTAssertEqual(send(.timer(.keep(epoch: 1)), after: 0.01), [], "the old keep timer is stale while a command runs")
+        XCTAssertEqual(send(.timer(.keep(serial: 1)), after: 0.01), [], "the old keep timer is stale while a command runs")
     }
 
     func testBackgroundDropsAnIdleLinkAndWaitsForARunningOne() {
@@ -213,7 +236,7 @@ final class AugustBLEEngineTests: XCTestCase {
         _ = send(.notifyEnabled(secureRead, error: nil), after: 0.1)
         _ = send(.frame(secureRead, reply1), after: 0.1)
         _ = send(.frame(secureRead, reply2), after: 0.1)
-        XCTAssertEqual(send(.notifyEnabled(read, error: nil), after: 0.05), [.schedule(.keep(epoch: 1), 5)])
+        XCTAssertEqual(send(.notifyEnabled(read, error: nil), after: 0.05), [.schedule(.keep(serial: 1), 5)])
         XCTAssertEqual(send(.timer(.setup(1)), after: 1), [], "the cancelled command's setup timer is stale")
         // In the background the same link closes at once.
         engine = AugustBLEEngine(offlineKey: offlineKey, slot: 4, nonce: { self.nonce }, inBackground: true)
@@ -266,7 +289,7 @@ final class AugustBLEEngineTests: XCTestCase {
         jam[3] = AugustBLE.simpleChecksum(jam)
         _ = send(.frame(read, ack1), after: 0.05)
         let out = send(.frame(read, lockSide.apply(jam)), after: 0.05)
-        XCTAssertEqual(out, [.complete(1, .operationFailed(0x1E)), .schedule(.keep(epoch: 1), 5)])
+        XCTAssertEqual(out, [.complete(1, .operationFailed(0x1E)), .schedule(.keep(serial: 1), 5)])
     }
 
     func testAStaleOperationTimerDoesNothing() {

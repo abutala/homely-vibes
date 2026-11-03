@@ -335,7 +335,8 @@ final class AugustClient {
     /// `keepLink` false (the widget's taps) ends the Bluetooth link after the
     /// command; the app's own taps keep it a few seconds for the next one.
     func unlock(
-        lockID: String, bluetoothSetupBudget: TimeInterval = 3, cloudDeadline: TimeInterval? = nil, keepLink: Bool = true
+        lockID: String, bluetoothSetupBudget: TimeInterval = AugustClient.bluetoothSetupBudget, cloudDeadline: TimeInterval? = nil,
+        keepLink: Bool = true
     ) async throws -> OperationReply {
         try await operate(
             lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked,
@@ -357,8 +358,13 @@ final class AugustClient {
     /// otherwise or if Bluetooth fails — unlock and lock are idempotent, so a
     /// cloud retry after a Bluetooth command that did land is harmless. A jam
     /// the lock reports over Bluetooth is final and is not retried.
+    /// The Bluetooth setup budget, screen and widget alike: this morning's
+    /// connects took under 1 s, the evening's 3.3 s (app.log, 2026-11-03),
+    /// and a miss costs a 20 s cloud round trip.
+    static let bluetoothSetupBudget: TimeInterval = 6
+
     private func operate(
-        lockID: String, action: String, opcode: UInt8, success: LockState, setupBudget: TimeInterval = 3,
+        lockID: String, action: String, opcode: UInt8, success: LockState, setupBudget: TimeInterval = bluetoothSetupBudget,
         cloudDeadline: TimeInterval? = nil, keepLink: Bool = true
     ) async throws -> OperationReply {
         try await gate.enter()

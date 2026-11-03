@@ -20,7 +20,9 @@ nonisolated final class AugustBLEEngine {
         case setup(Token)
         case operation(Token)
         case cooldown(Token)
-        case keep(epoch: Int)
+        /// A keep timer is the latest one only: each completion arms a new
+        /// one, and an earlier one firing must not close the link early.
+        case keep(serial: Int)
         case close(epoch: Int)
     }
 
@@ -105,6 +107,7 @@ nonisolated final class AugustBLEEngine {
 
     private var link = LinkState.none
     private var epoch = 0
+    private var keepSerial = 0
     private var handshake: AugustBLEHandshake?
     private var channel: AugustBLEPlainChannel?
     private var linkStartedAt: Double?
@@ -276,7 +279,8 @@ nonisolated final class AugustBLEEngine {
 
     private func keepOrClose() -> [Output] {
         if inBackground { return close() }
-        return [.schedule(.keep(epoch: epoch), Self.keepSeconds)]
+        keepSerial += 1
+        return [.schedule(.keep(serial: keepSerial), Self.keepSeconds)]
     }
 
     private func complete(_ outcome: Outcome, at now: Double) -> [Output] {
@@ -363,8 +367,8 @@ nonisolated final class AugustBLEEngine {
         case .cooldown(let token):
             guard let head = queue.first, head.token == token, !head.written else { return [] }
             return writeHead(at: now)
-        case .keep(let epoch):
-            guard epoch == self.epoch, link == .ready, queue.isEmpty else { return [] }
+        case .keep(let serial):
+            guard serial == keepSerial, link == .ready, queue.isEmpty else { return [] }
             return close()
         case .close(let epoch):
             guard epoch == self.epoch, link == .closing else { return [] }
@@ -385,6 +389,10 @@ nonisolated final class AugustBLEEngine {
     }
 
     private func disconnected(_ reason: String?, at now: Double) -> [Output] {
+        // A link already dropped (a failure's disconnect, reported late by
+        // the radio) has nothing left to tell; a new command may be waiting
+        // on a fresh link that the adapter starts once the old one is gone.
+        guard link != .none else { return [] }
         let wasClosing = link == .closing
         let stage = stageName
         dropLink()

@@ -139,7 +139,9 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
                 if central == nil {
                     central = CBCentralManager(delegate: self, queue: Self.queue, options: [CBCentralManagerOptionShowPowerAlertKey: false])
                 }
-                if central?.state == .poweredOn { findAndConnect() } else { wantsLink = true }
+                // The last link may still be going down: the radio reports
+                // that disconnect first, then the new connect starts.
+                if central?.state == .poweredOn, peripheral == nil { findAndConnect() } else { wantsLink = true }
             case .discover:
                 peripheral?.discoverServices([CBUUID(string: AugustBLE.serviceUUID)])
             case .setNotify(let uuid):
@@ -153,11 +155,13 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
                 }
                 peripheral.writeValue(Data(bytes), for: characteristic, type: .withResponse)
             case .disconnect:
+                note("disconnect (peripheral state \(peripheral?.state.rawValue ?? -1))")
                 wantsLink = false
                 central?.stopScan()
-                if let peripheral { central?.cancelPeripheralConnection(peripheral) }
-                peripheral = nil
                 characteristics = [:]
+                // The peripheral stays current until the radio reports the
+                // disconnect, so that report reaches the engine.
+                if let peripheral { central?.cancelPeripheralConnection(peripheral) }
             case .schedule(let timer, let seconds):
                 Self.queue.asyncAfter(deadline: .now() + seconds) { [weak self] in
                     guard let self else { return }
@@ -188,7 +192,10 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
         if let known = Self.knownPeripheralID(localName),
             let peripheral = central.retrievePeripherals(withIdentifiers: [known]).first
         {
+            note("retrieved, state \(peripheral.state.rawValue); connecting")
             connect(peripheral)
+        } else {
+            note("no remembered peripheral; scanning")
         }
         central.scanForPeripherals(withServices: nil)
     }
@@ -197,6 +204,13 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
         self.peripheral = peripheral
         peripheral.delegate = self
         central?.connect(peripheral)
+    }
+
+    /// The connect path, stage by stage, in `app.log`: the engine's timeout
+    /// names only the stage it ended in.
+    private func note(_ message: String) {
+        let since = linkStartedAt.map { Int(((now - $0) * 1000).rounded()) } ?? 0
+        AppLog.note("BLE link \(localName): \(message) at \(since) ms")
     }
 
     /// A scan can replace a remembered peripheral that never answered; the
@@ -208,10 +222,12 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         switch central.state {
         case .poweredOn:
+            note("powered on")
             if wantsLink { findAndConnect() }
         case .unknown, .resetting:
             break
         default:
+            note("bluetooth state \(central.state.rawValue)")
             // Bluetooth off: nothing may connect when it comes back unless a
             // new command asks (the engine has dropped the link by then).
             wantsLink = false
@@ -229,6 +245,7 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
         guard name == localName, peripheral.identifier != self.peripheral?.identifier else { return }
         if let stale = self.peripheral { central.cancelPeripheralConnection(stale) }
         found = linkStartedAt.map { Int(((now - $0) * 1000).rounded()) }
+        note("found by scan, rssi \(RSSI); connecting")
         connect(peripheral)
     }
 
@@ -236,19 +253,28 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
         guard isCurrent(peripheral) else { return }
         central.stopScan()
         Self.remember(peripheral.identifier, for: localName)
+        note("connected")
         apply(engine.handle(.connected, at: now))
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         guard isCurrent(peripheral) else { return }
+        note("connect failed: \(error?.localizedDescription ?? "no reason")")
         self.peripheral = nil
         apply(engine.handle(.connectFailed(error?.localizedDescription ?? "no reason"), at: now))
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        note("disconnected\(isCurrent(peripheral) ? "" : " (an earlier link)"): \(error?.localizedDescription ?? "by us")")
         guard isCurrent(peripheral) else { return }
         self.peripheral = nil
         characteristics = [:]
+        if wantsLink {
+            // The link the engine already dropped is gone; the new command's
+            // connect was waiting for exactly this.
+            if central.state == .poweredOn { findAndConnect() }
+            return
+        }
         apply(engine.handle(.disconnected(error?.localizedDescription), at: now))
     }
 
