@@ -12,17 +12,18 @@ enum AppDoorAction {
     /// Under the budget iOS gives a background intent.
     static let deadline: TimeInterval = 20
 
-    static func unlock(position: Int) async {
+    /// `lockID` is the lock the widget showed under this button; empty when
+    /// the widget had no lock list yet.
+    static func unlock(position: Int, lockID: String) async {
         DoorStateStore.update { $0.start(position, at: Date()) }
-        AppLog.note("widget tap position=\(position) door state keychain=\(DoorStateStore.lastStatus)")
+        AppLog.note("widget tap position=\(position) lock=\(lockID.suffix(4)) door state keychain=\(DoorStateStore.lastStatus)")
         WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
         let start = ContinuousClock.now
         var ok = false
         do {
+            guard !lockID.isEmpty else { throw AugustError.noLocks }
             let reply = try await withDeadline(seconds: deadline) {
-                let locks = try await AugustClient.shared.knownLocks()
-                guard locks.indices.contains(position) else { throw AugustError.noLocks }
-                return try await AugustClient.shared.unlock(lockID: locks[position].id)
+                try await AugustClient.shared.unlock(lockID: lockID)
             }
             ok = true
             AppLog.note("widget unlock position=\(position) ok via \(reply.path.rawValue) in \(start.duration(to: .now))")

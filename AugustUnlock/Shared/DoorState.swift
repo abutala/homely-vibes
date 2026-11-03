@@ -45,10 +45,11 @@ struct DoorState: Codable, Equatable {
         }
     }
 
-    /// When the next showing mark clears on its own, if any is showing at
-    /// `now`: the latest held result, or a running tap at its limit.
-    func clearDate(at now: Date) -> Date? {
+    /// Every moment after `now` at which a showing mark clears on its own: a
+    /// held result at its hold, a running tap at its limit. One timeline
+    /// entry per moment, so each door clears on its own time.
+    func clearDates(at now: Date) -> [Date] {
         let ends = results.values.map { $0.at + Self.hold } + running.values.map { $0 + Self.runningLimit }
-        return ends.filter { $0 > now }.max()
+        return Array(Set(ends.filter { $0 > now })).sorted()
     }
 }

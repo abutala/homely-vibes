@@ -85,7 +85,7 @@ final class AugustClient {
     func signOut() {
         for key in [
             "august_email", "august_password", "august_access_token",
-            "august_lock_id", "august_lock_name", Self.bluetoothKeysKey, Self.locksKey,
+            "august_lock_id", "august_lock_name", Self.bluetoothKeysKey,
         ] {
             KeychainStore.remove(key)
         }
@@ -212,34 +212,8 @@ final class AugustClient {
         let locks = raw.sorted { $0.key < $1.key }.compactMap { id, fields in
             (fields["LockName"] as? String).map { AugustLock(id: id, name: $0) }
         }
-        Self.store(locks)
         locks.forEach { refreshBluetoothKeyOnce(lockID: $0.id) }
         return locks
-    }
-
-    /// The account's locks as last fetched, in lock-ID order: the widget's
-    /// positions. Fetched when nothing is stored yet.
-    func knownLocks() async throws -> [AugustLock] {
-        if let data = KeychainStore.get(Self.locksKey)?.data(using: .utf8),
-            let stored = try? JSONDecoder().decode([StoredLock].self, from: data), !stored.isEmpty
-        {
-            return stored.map { AugustLock(id: $0.id, name: $0.name) }
-        }
-        return try await fetchLocks()
-    }
-
-    private struct StoredLock: Codable {
-        let id: String
-        let name: String
-    }
-
-    private static let locksKey = "august_locks"
-
-    private static func store(_ locks: [AugustLock]) {
-        guard let data = try? JSONEncoder().encode(locks.map { StoredLock(id: $0.id, name: $0.name) }),
-            let text = String(data: data, encoding: .utf8)
-        else { return }
-        KeychainStore.set(text, forKey: locksKey)
     }
 
     func selectLock(_ lock: AugustLock) {

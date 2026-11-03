@@ -24,6 +24,10 @@ struct DoorsEntry: TimelineEntry {
     let date: Date
     /// At most two, in `WidgetStore.locks` order (by lock ID).
     let names: [String]
+    /// The lock ID behind each name, empty for a door with no lock yet: the
+    /// button carries it, so a tap opens the door it shows, whatever list
+    /// the app holds.
+    let locks: [String]
     /// One per name: what the tapped door shows while and just after a tap.
     let marks: [DoorState.Mark]
     let message: String?
@@ -40,7 +44,7 @@ struct DoorsProvider: TimelineProvider {
     static let fetchDeadline: TimeInterval = 4
 
     func placeholder(in context: Context) -> DoorsEntry {
-        DoorsEntry(date: .now, names: ["Door", "Door"], marks: [.none, .none], message: nil)
+        DoorsEntry(date: .now, names: ["Door", "Door"], locks: ["", ""], marks: [.none, .none], message: nil)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (DoorsEntry) -> Void) {
@@ -57,11 +61,11 @@ struct DoorsProvider: TimelineProvider {
         Task {
             let now = Date()
             let entry = await refresh(at: now)
-            var entries = [entry]
-            if let clear = DoorStateStore.load().clearDate(at: now) {
-                entries.append(DoorsEntry(date: clear, names: entry.names, marks: entry.marks.map { _ in .none }, message: entry.message))
+            let state = DoorStateStore.load()
+            let later = state.clearDates(at: now).map { date in
+                DoorsEntry(date: date, names: entry.names, locks: entry.locks, marks: state.marks(count: DoorNames.count, at: date), message: entry.message)
             }
-            completion(Timeline(entries: entries, policy: .never))
+            completion(Timeline(entries: [entry] + later, policy: .never))
         }
     }
 
@@ -78,12 +82,12 @@ struct DoorsProvider: TimelineProvider {
             if case WidgetCloud.Failure.signedOut = error { WidgetStore.signedOut = true }
             WidgetLog.note("timeline fetch failed: \(error.localizedDescription); cached=\(WidgetStore.locks.count)")
             if !WidgetStore.signedOut, WidgetStore.locks.isEmpty {
-                return DoorsEntry(date: now, names: DoorNames.names(cached: []), marks: marks, message: error.localizedDescription)
+                return DoorsEntry(date: now, names: DoorNames.names(cached: []), locks: DoorNames.ids(cached: []), marks: marks, message: error.localizedDescription)
             }
         }
         let names = DoorNames.names(cached: WidgetStore.locks.map(\.name))
         let message = WidgetStore.signedOut ? WidgetCloud.Failure.signedOut.errorDescription : nil
-        return DoorsEntry(date: now, names: names, marks: marks, message: message)
+        return DoorsEntry(date: now, names: names, locks: DoorNames.ids(cached: WidgetStore.locks.map(\.id)), marks: marks, message: message)
     }
 }
 
@@ -99,11 +103,8 @@ struct DoorsView: View {
             HStack(spacing: 0) {
                 ForEach(Array(entry.names.enumerated()), id: \.offset) { position, name in
                     VStack(spacing: 6) {
-                        if position == 0 {
-                            Button(intent: OpenFirstDoorIntent()) { doorIcon }.accessibilityLabel(name)
-                        } else {
-                            Button(intent: OpenSecondDoorIntent()) { doorIcon }.accessibilityLabel(name)
-                        }
+                        Button(intent: OpenDoorIntent(position: position, lockID: entry.locks[position])) { doorIcon }
+                            .accessibilityLabel(name)
                         caption(name, entry.marks[position])
                     }
                     .frame(maxWidth: .infinity)

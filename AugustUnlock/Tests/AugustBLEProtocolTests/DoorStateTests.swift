@@ -20,8 +20,8 @@ final class DoorStateTests: XCTestCase {
         XCTAssertEqual(state.marks(count: 2, at: t0), [.ok, .none])
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.hold - 0.1), [.ok, .none])
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.hold), [.none, .none])
-        XCTAssertEqual(state.clearDate(at: t0), t0 + DoorState.hold)
-        XCTAssertNil(state.clearDate(at: t0 + DoorState.hold))
+        XCTAssertEqual(state.clearDates(at: t0), [t0 + DoorState.hold])
+        XCTAssertEqual(state.clearDates(at: t0 + DoorState.hold), [])
     }
 
     func testAFailureShowsAndANewTapReplacesIt() {
@@ -30,7 +30,7 @@ final class DoorStateTests: XCTestCase {
         XCTAssertEqual(state.marks(count: 2, at: t0 + 1), [.none, .failed])
         state.start(1, at: t0 + 1)
         XCTAssertEqual(state.marks(count: 2, at: t0 + 1), [.none, .running])
-        XCTAssertEqual(state.clearDate(at: t0 + 1), t0 + 1 + DoorState.runningLimit)
+        XCTAssertEqual(state.clearDates(at: t0 + 1), [t0 + 1 + DoorState.runningLimit])
     }
 
     func testTwoDoorsKeepTheirOwnState() {
@@ -39,7 +39,9 @@ final class DoorStateTests: XCTestCase {
         state.start(1, at: t0)
         state.finish(0, ok: true, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0), [.ok, .running])
-        XCTAssertEqual(state.clearDate(at: t0), t0 + DoorState.runningLimit)
+        // Door 1 clears at its own hold; door 2's limit is a later entry.
+        XCTAssertEqual(state.clearDates(at: t0), [t0 + DoorState.hold, t0 + DoorState.runningLimit])
+        XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.hold), [.none, .running])
     }
 
     func testATapWhoseProcessDiedExpires() {
@@ -47,7 +49,7 @@ final class DoorStateTests: XCTestCase {
         state.start(0, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.runningLimit - 1), [.running, .none])
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.runningLimit), [.none, .none])
-        XCTAssertNil(state.clearDate(at: t0 + DoorState.runningLimit))
+        XCTAssertEqual(state.clearDates(at: t0 + DoorState.runningLimit), [])
     }
 
     func testRoundTripsThroughJSON() throws {

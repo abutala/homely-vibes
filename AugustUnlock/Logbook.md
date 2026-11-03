@@ -681,14 +681,19 @@ settled by one-rung Simulator probes:
    gives both bundles the same default group, which is how the token read
    already works on the phone.
 
-The rest followed the verdict: per-lock offline keys (one Keychain map by
-lock ID, refreshed for every lock the account lists) so the second door is
-not cloud-only; one `CommandGate` so the screen and a widget tap in the
+The rest followed the verdict and the PR's reviewers: one `OpenDoorIntent`
+whose parameters are the door's position and the lock ID the widget shows,
+so a tap opens the door under the finger whatever lock list the app holds
+(the app keeps no list of its own for this); per-lock offline keys (one
+Keychain map by lock ID, refreshed for every lock the account lists) so the
+second door is not cloud-only; one `CommandGate` so the screen and a widget tap in the
 same process never open two Bluetooth links to a lock; the tap's own 20 s
 deadline; `.invalidatableContent()` gone — it dims every marked view for any
 tap, which was the "both doors blink". The tap writes `running` and reloads
 the widget's timeline, runs, writes the result and reloads again; the
-provider adds a second entry at result + 4 s that clears it. Measured on the
+provider adds one entry per clearing moment (a result at its 4 s hold, a
+tap at its 30 s limit in case its process died), each door on its own
+time. Measured on the
 Simulator: the tapped door shows "Failed" (no sign-in there) and clears;
 the other door does not move; the seven app flows still pass.
 
