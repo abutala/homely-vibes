@@ -127,10 +127,11 @@ sign-in; opening the app renews it.
   real handshake and commands with yalexs-ble's own wires.
 - `AugustBLELink.swift` — the CoreBluetooth side of one lock's link, one
   per lock for the process: it turns every callback into an engine input
-  with the time, runs the engine's outputs and arms its timers. A command
-  has 6 s to reach a session (this morning's connects took under 1 s, the
-  evening's 3.3 s) and 12 s from there for the result (yalexs-ble's own
-  operation timeout). On any failure but a
+  with the time, runs the engine's outputs and arms its timers. The
+  screen's command has 12 s to reach a session (a connect took 9.4 s
+  while the Wi-Fi bridge held the lock; `CommandDeadline` keeps the sum
+  inside the 30 s deadline) and 6 s from there for the result; a widget
+  tap has 6 s and 12 s. On any failure but a
   jam the lock reports — no lock in range, Bluetooth off or not allowed, a
   lost link, a rejected key, a timeout — the app uses the cloud instead
   (unlock and lock are idempotent, so a double send is harmless). A

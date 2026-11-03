@@ -13,12 +13,11 @@ enum AppDoorAction {
     /// cloud path took 21 s on the phone (app.log, 2026-11-03), so 20 was
     /// too short. The Bluetooth attempt before it is bounded on its own.
     static let cloudDeadline: TimeInterval = 25
-    /// Bluetooth setup from a background process is slower than from the
-    /// screen: the key exchange stalled at 3 s and at 6 s until the app
-    /// declared the `bluetooth-central` background mode, without which a
-    /// backgrounded app gets no Bluetooth events. The cloud fallback keeps
-    /// its own deadline, so this costs the tap at most 6 s on a miss.
+    /// The widget's Bluetooth budgets: a background process has 20–25 s or
+    /// so, and the cloud leg keeps its own deadline, so a miss costs the tap
+    /// at most 6 s. (The screen waits longer: `CommandDeadline`.)
     static let bluetoothSetupBudget: TimeInterval = 6
+    static let bluetoothOperationBudget: TimeInterval = 12
 
     /// `lockID` is the lock the widget showed under this button; empty when
     /// the widget had no lock list yet.
@@ -38,7 +37,8 @@ enum AppDoorAction {
         do {
             guard !lockID.isEmpty else { throw AugustError.noLocks }
             let reply = try await AugustClient.shared.unlock(
-                lockID: lockID, bluetoothSetupBudget: bluetoothSetupBudget, cloudDeadline: cloudDeadline, keepLink: false)
+                lockID: lockID, bluetoothSetupBudget: bluetoothSetupBudget, bluetoothOperationBudget: bluetoothOperationBudget,
+                cloudDeadline: cloudDeadline, keepLink: false)
             ok = true
             AppLog.note("widget unlock position=\(position) ok via \(reply.path.rawValue) in \(start.duration(to: .now))")
         } catch {

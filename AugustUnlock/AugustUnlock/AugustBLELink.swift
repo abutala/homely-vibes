@@ -190,7 +190,9 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
                     timing.found = found
                     continuation.resume(returning: timing)
                 case .cancelled: continuation.resume(throwing: CancellationError())
-                case .setupTimedOut(let stage): continuation.resume(throwing: AugustBLEError.setupTimedOut(stage: stage))
+                case .setupTimedOut(let stage):
+                    note("setup timed out while \(stage); scan saw the lock: \(found == nil ? "no" : "yes")")
+                    continuation.resume(throwing: AugustBLEError.setupTimedOut(stage: stage))
                 case .operationTimedOut(let acknowledged): continuation.resume(throwing: AugustBLEError.operationTimedOut(acknowledged: acknowledged))
                 case .operationFailed(let code): continuation.resume(throwing: AugustBLEProtocolError.operationFailed(code))
                 case .link(let detail): continuation.resume(throwing: AugustBLEError.link(detail))

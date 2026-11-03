@@ -231,7 +231,7 @@ final class AugustBLEEngineTests: XCTestCase {
     func testALinkWhoseOnlyCommandWasCancelledDuringSetupKeepsOrCloses() {
         _ = send(command(1, AugustBLE.unlockOpcode))
         _ = send(.connected, after: 0.6)
-        XCTAssertEqual(send(.cancel(1), after: 0.1), [.complete(1, .cancelled)], "the link keeps coming up")
+        XCTAssertEqual(send(.cancel(1), after: 0.1), [.complete(1, .cancelled), .schedule(.grace(epoch: 1), 1)], "the link keeps coming up for a second")
         _ = send(.characteristicsReady(true), after: 0.1)
         _ = send(.notifyEnabled(secureRead, error: nil), after: 0.1)
         _ = send(.frame(secureRead, reply1), after: 0.1)
@@ -256,6 +256,22 @@ final class AugustBLEEngineTests: XCTestCase {
         // Session open, plain notify still pending: the operation deadline owns it now.
         XCTAssertEqual(send(.timer(.setup(1)), after: 0.1), [])
         XCTAssertEqual(send(.notifyEnabled(read, error: nil), after: 0.3), [.write(write, unlock1)])
+    }
+
+    func testACancelDuringSetupWithNoReplacementClosesAfterAGrace() {
+        _ = send(command(1, AugustBLE.unlockOpcode))
+        XCTAssertEqual(send(.cancel(1), after: 0.8), [.complete(1, .cancelled), .schedule(.grace(epoch: 1), 1)])
+        // Nothing came: the pending connect is dropped.
+        XCTAssertEqual(send(.timer(.grace(epoch: 1)), after: 1), [.disconnect])
+        XCTAssertEqual(send(.connected, after: 0.5), [], "a late connect of the dropped link does nothing")
+    }
+
+    func testTheOppositeCommandWithinTheGraceKeepsThePendingConnect() {
+        _ = send(command(1, AugustBLE.unlockOpcode))
+        _ = send(.cancel(1), after: 0.8)
+        XCTAssertEqual(send(command(2, AugustBLE.lockOpcode), after: 0.1).first, .schedule(.setup(2), 3), "the link keeps coming up for it")
+        XCTAssertEqual(send(.timer(.grace(epoch: 1)), after: 0.9), [], "the grace timer is stale once a command waits")
+        XCTAssertEqual(send(.connected, after: 1), [.discover])
     }
 
     func testAQueuedCommandStartsItsBudgetsWhenItBecomesHead() {
