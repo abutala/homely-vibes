@@ -100,7 +100,12 @@ struct ContentView: View {
                 wasBackgrounded = true
                 exitPolicy.didBackground(at: Date())
                 armExitTimer()
-            case .active where wasBackgrounded:
+                // A kept Bluetooth link would block the official app and the
+                // widget: it closes once any running command has its result.
+                AugustBLELink.applicationDidEnterBackground()
+            case .active:
+                AugustBLELink.applicationDidBecomeActive()
+                guard wasBackgrounded else { break }
                 wasBackgrounded = false
                 exitTimer?.cancel()
                 let expired = exitPolicy.shouldExit(at: Date(), operationInFlight: isOperating)
@@ -466,9 +471,11 @@ struct ContentView: View {
         operationTask?.cancel()
         deadlineTask?.cancel()
         var task: Task<Void, Never>?
-        let keepAlive = BackgroundKeepAlive {
-            task?.cancel()
-            if task == operationTask { machine.keepAliveExpired() }
+        let keepAlive = BackgroundTask(name: "AugustOperation") {
+            Task { @MainActor in
+                task?.cancel()
+                if task == operationTask { machine.keepAliveExpired() }
+            }
         }
         task = Task {
             do {
@@ -496,30 +503,6 @@ struct ContentView: View {
             guard !Task.isCancelled, task == operationTask else { return }
             perform(machine.deadlineFired(away: wasBackgrounded))
         }
-    }
-}
-
-/// A UIKit background task: iOS otherwise suspends a backgrounded app within
-/// seconds, and a lock/unlock reply still in flight comes back as "network
-/// connection lost". `end()` is idempotent because both the operation
-/// finishing and iOS expiring the time call it.
-@MainActor
-private final class BackgroundKeepAlive {
-    private var id = UIBackgroundTaskIdentifier.invalid
-
-    init(onExpire: @escaping @MainActor () -> Void) {
-        id = UIApplication.shared.beginBackgroundTask(withName: "AugustOperation") { [weak self] in
-            MainActor.assumeIsolated {
-                onExpire()
-                self?.end()
-            }
-        }
-    }
-
-    func end() {
-        guard id != .invalid else { return }
-        UIApplication.shared.endBackgroundTask(id)
-        id = .invalid
     }
 }
 

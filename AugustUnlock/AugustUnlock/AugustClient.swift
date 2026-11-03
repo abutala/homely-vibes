@@ -39,7 +39,7 @@ struct AugustLock: Identifiable, Equatable {
 
 /// Talks to August's cloud API directly from the device — no home server in
 /// the loop — and tries the lock over Bluetooth first when it has a loaded
-/// offline key (`AugustBLEOperation`). Mirrors the request shapes in August/august_client.py (this
+/// offline key (`AugustBLELink`). Mirrors the request shapes in August/august_client.py (this
 /// repo's Python client, built on the `yalexs` library) since there is no
 /// official or third-party Swift SDK for August/Yale locks.
 final class AugustClient {
@@ -325,17 +325,20 @@ final class AugustClient {
     }
 
     /// Any lock on the account, Bluetooth first when it has a loaded key.
-    /// The widget's taps come here, in the app's process, which runs in the
-    /// background: iOS gives it slower Bluetooth, and the first such tap
-    /// timed out at 3 s during the key exchange (app.log, 2026-11-03). The
-    /// cloud fallback costs ~20 s, so a background tap can afford a longer
-    /// setup budget than the screen's 3 s.
+    /// The widget's taps come here too, in the app's process. The setup
+    /// budget is `bluetoothSetupBudget` for both; the cloud leg's deadline
+    /// is the caller's.
     /// `cloudDeadline` bounds the cloud leg alone, from the moment it
     /// starts, so a Bluetooth attempt never eats the cloud's time.
-    func unlock(lockID: String, bluetoothSetupBudget: TimeInterval = 3, cloudDeadline: TimeInterval? = nil) async throws -> OperationReply {
+    /// `keepLink` false (the widget's taps) ends the Bluetooth link after the
+    /// command; the app's own taps keep it a few seconds for the next one.
+    func unlock(
+        lockID: String, bluetoothSetupBudget: TimeInterval = AugustClient.bluetoothSetupBudget, cloudDeadline: TimeInterval? = nil,
+        keepLink: Bool = true
+    ) async throws -> OperationReply {
         try await operate(
             lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked,
-            setupBudget: bluetoothSetupBudget, cloudDeadline: cloudDeadline)
+            setupBudget: bluetoothSetupBudget, cloudDeadline: cloudDeadline, keepLink: keepLink)
     }
 
     func lock() async throws -> OperationReply {
@@ -353,16 +356,21 @@ final class AugustClient {
     /// otherwise or if Bluetooth fails — unlock and lock are idempotent, so a
     /// cloud retry after a Bluetooth command that did land is harmless. A jam
     /// the lock reports over Bluetooth is final and is not retried.
+    /// The Bluetooth setup budget, screen and widget alike: this morning's
+    /// connects took under 1 s, the evening's 3.3 s (app.log, 2026-11-03),
+    /// and a miss costs a 20 s cloud round trip.
+    static let bluetoothSetupBudget: TimeInterval = 6
+
     private func operate(
-        lockID: String, action: String, opcode: UInt8, success: LockState, setupBudget: TimeInterval = 3,
-        cloudDeadline: TimeInterval? = nil
+        lockID: String, action: String, opcode: UInt8, success: LockState, setupBudget: TimeInterval = bluetoothSetupBudget,
+        cloudDeadline: TimeInterval? = nil, keepLink: Bool = true
     ) async throws -> OperationReply {
         try await gate.enter()
         defer { gate.leave() }
         if let credentials = bluetoothCredentials(for: lockID) {
             let start = ContinuousClock.now
             do {
-                let timing = try await AugustBLEOperation.run(opcode: opcode, credentials: credentials, setupBudget: setupBudget)
+                let timing = try await AugustBLELink.run(opcode: opcode, credentials: credentials, setupBudget: setupBudget, keepLink: keepLink)
                 Self.note("BLE \(action) -> ok in \(Self.ms(since: start)) ms (\(timing.description))")
                 return OperationReply(state: success, path: .bluetooth)
             } catch is CancellationError {

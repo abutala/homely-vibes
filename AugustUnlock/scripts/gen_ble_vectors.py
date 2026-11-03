@@ -64,6 +64,15 @@ def handshake(secure: SecureSession) -> bytearray:
     secure._write_checksum(cmd2)
     secure._encrypt_command(cmd2, "initialization")
     show("cmd2_wire", cmd2)
+
+    reply2 = bytearray(18)
+    reply2[0] = 0x04
+    reply2[0x10:0x12] = bytes([0x0F, SLOT])
+    secure._write_checksum(reply2)
+    lock_side2 = Cipher(algorithms.AES(bytes(session_key)), modes.ECB()).encryptor()  # nosec
+    reply2_wire = lock_side2.update(bytes(reply2[0:16])) + bytes(reply2[16:18])
+    show("reply2_wire", reply2_wire)
+    secure._validate_response(secure.decrypt(reply2_wire))
     return session_key
 
 
@@ -80,13 +89,37 @@ def plain_channel(plain: Session, session_key: bytearray) -> None:
         plain._encrypt_command(command, name)
         show(f"{name}_wire", command)
 
-    ack = bytearray(18)
-    ack[0:2] = bytes([0xAA, Commands.UNLOCK])
-    ack[0x10] = 0x02
-    ack[3] = util._simple_checksum(ack)
-    result = bytearray.fromhex("bb0a003b0000000000000000000000000000")
+    def ack_frame(opcode: int) -> bytearray:
+        ack = bytearray(18)
+        ack[0:2] = bytes([0xAA, opcode])
+        ack[0x10] = 0x02
+        ack[3] = util._simple_checksum(ack)
+        return ack
+
+    def result_frame(opcode: int) -> bytearray:
+        result = bytearray(18)
+        result[0:2] = bytes([0xBB, opcode])
+        result[3] = util._simple_checksum(result)
+        return result
+
+    # The lock's chain across one session: an unlock's ack and op-response, a
+    # status push the lock sends on its own, then a lock's ack and op-response.
+    # The engine tests (AugustBLEEngineTests.swift) feed these in order; a
+    # skipped frame garbles the next one, which the negative test checks.
+    assert result_frame(Commands.UNLOCK) == bytearray.fromhex(
+        "bb0a003b0000000000000000000000000000"
+    )
+    push = bytearray(18)
+    push[0:2] = bytes([0xBB, 0x2F])
+    push[3] = util._simple_checksum(push)
     lock_side = Cipher(algorithms.AES(bytes(session_key)), modes.CBC(bytes(16))).encryptor()  # nosec
-    for name, frame in (("ack", ack), ("op", result)):
+    for name, frame in (
+        ("ack", ack_frame(Commands.UNLOCK)),
+        ("op", result_frame(Commands.UNLOCK)),
+        ("push", push),
+        ("ack2", ack_frame(Commands.LOCK)),
+        ("op2", result_frame(Commands.LOCK)),
+    ):
         wire = lock_side.update(bytes(frame[0:16])) + bytes(frame[16:18])
         show(f"{name}_wire", wire)
         decrypted = plain.decrypt(wire)

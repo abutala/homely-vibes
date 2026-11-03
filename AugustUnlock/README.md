@@ -20,8 +20,8 @@ you're standing at the door), `AugustClient.swift` talks to
 the request shapes already proven out in [`August/august_client.py`](../August/august_client.py)
 (this repo's Python August integration, built on the `yalexs` library).
 
-Bluetooth needs no server either: `AugustBLEProtocol.swift` and
-`AugustBLEOperation.swift` port the minimum of
+Bluetooth needs no server either: `AugustBLEProtocol.swift`,
+`AugustBLEEngine.swift` and `AugustBLELink.swift` port the minimum of
 [`yalexs-ble`](https://github.com/Yale-Libs/yalexs-ble) (the community
 protocol Home Assistant uses) to CoreBluetooth. See
 [How it works](#how-it-works).
@@ -82,10 +82,12 @@ Long-press the Home Screen → **+** → AugustUnlock → **Doors**. One size, f
 width: an unlock button per lock, named as August names it, in lock-ID
 order. A tap sends unlock for that door and nothing else: the widget shows
 no state and never locks (unlock is a no-op on an unlocked door, so a
-repeat is harmless). The button is the lock icon. The widget cannot
-redraw while a tap runs, so nothing moves until it ends; then the tapped
-door's name says "Unlocked" or "Failed" for about ten seconds, then the
-name again. Each tap runs in the app's own
+repeat is harmless). The button is the lock icon. The tapped door's name
+reads "Unlocking…" the moment you tap (the button is a toggle, which
+WidgetKit redraws at once; the other door does not move); when the tap
+ends it says "Unlocked" or "Failed" for about ten seconds, then the name
+again. A second tap on a door still unlocking does nothing, though its
+cue may flicker until the result. Each tap runs in the app's own
 process in the background (the app never comes forward), so it takes the
 same path as the app's button: Bluetooth when the lock has a loaded key
 (~1–3 s), the cloud otherwise or when Bluetooth fails (1–25 s). A second
@@ -112,16 +114,28 @@ sign-in; opening the app renews it.
   key is 8 random bytes of ours plus 8 from the lock; the command channel is
   AES-CBC with a zero IV whose chain runs across frames, so each direction
   keeps one CommonCrypto context for the whole connection.
-- `AugustBLEOperation.swift` — one lock/unlock over CoreBluetooth: find the
-  lock by its advertised name (the serial's first 2 and last 5 characters),
-  connect, run the key exchange, send the command, wait for the lock's
-  result, disconnect. It has 3 s to reach a session and 12 s from there for
-  the result (yalexs-ble's own operation timeout). On any failure but a jam the lock reports — no lock in range,
-  Bluetooth off or not allowed, a lost link, a rejected key, a timeout — the
-  app uses the cloud instead (unlock and lock are idempotent, so a double
-  send is harmless). A reported jam is shown, not retried. Later opens also
-  connect straight to the peripheral remembered from the last connection,
-  while the scan runs.
+- `AugustBLEEngine.swift` — the Bluetooth path as a pure state machine, no
+  CoreBluetooth: connect, discover, key exchange, the command, the ack and
+  the result, and the link's life after it. A link stays open 5 s after a
+  command for the app's own next tap (the "tap while unlocking, to lock
+  instead" case rides the same link, with no connect and no key exchange);
+  a cancelled command that was already written runs to its result on the
+  link, unreported, and the next command follows it. The link closes on a
+  timeout, a failed write, link loss, Bluetooth off, the app going to the
+  background, or a widget tap (its process is in the background and a kept
+  link would block the official app). `swift test` drives it through the
+  real handshake and commands with yalexs-ble's own wires.
+- `AugustBLELink.swift` — the CoreBluetooth side of one lock's link, one
+  per lock for the process: it turns every callback into an engine input
+  with the time, runs the engine's outputs and arms its timers. A command
+  has 6 s to reach a session (this morning's connects took under 1 s, the
+  evening's 3.3 s) and 12 s from there for the result (yalexs-ble's own
+  operation timeout). On any failure but a
+  jam the lock reports — no lock in range, Bluetooth off or not allowed, a
+  lost link, a rejected key, a timeout — the app uses the cloud instead
+  (unlock and lock are idempotent, so a double send is harmless). A
+  reported jam is shown, not retried. Later opens connect straight to the
+  peripheral remembered from the last connection, while the scan runs.
 - `KeychainStore.swift` — thin wrapper over `SecItem*` for on-device storage
   of the August email/password, install ID, access token, selected lock ID
   and name, and that lock's offline key, slot and serial. Standard practice for a
@@ -204,7 +218,7 @@ the remembered peripheral connected without a scan):
 
 The app quits itself after 5 minutes in the background (`BackgroundExitPolicy.swift`).
 
-The Bluetooth protocol, the exit policy, the command machine, the command gate, the widget's door names and door state have unit
+The Bluetooth protocol and engine, the exit policy, the command machine, the command gate, the widget's door names and door state have unit
 tests; the protocol's run against bytes produced by yalexs-ble's own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
 AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 
@@ -215,8 +229,10 @@ cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 The widget has a UI test on the Simulator (`UITests/WidgetTapTests.swift`):
 it adds the Doors widget through SpringBoard's gallery and checks the two
 buttons and the sign-in caption, then taps a button with the app quit and
-checks that the tapped door shows its result, holds it and clears it, and
-that the app stays closed. The tap runs in the app's process (Logbook
+checks that the tapped door reads "Unlocking…" at once and alone (the tap
+is slowed 5 s with `AUGUST_SLOW_WIDGET_TAP=1` on the app's launch, a marker
+the tap's background launch reads), then its result, holds it and clears
+it, and that the app stays closed. The tap runs in the app's process (Logbook
 2026-11-02); the Simulator's app has no sign-in, so the result is "Failed"
 within milliseconds. The Simulator has no Bluetooth and no August cloud:
 the key carry-over, the cloud's timing and the phone's reload deferral
@@ -236,9 +252,9 @@ xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnloc
 ```
 
 `Package.swift` exists only for these tests: it builds the pure files alone
-(`AugustBLEProtocol.swift`, `BackgroundExitPolicy.swift`, `CommandDeadline.swift`,
-`CommandMachine.swift`, `CommandGate.swift`, `AugustUnlockWidget/DoorNames.swift`,
-`Shared/DoorState.swift`). The command machine's properties are also pinned by
+(`AugustBLEProtocol.swift`, `AugustBLEEngine.swift`, `BackgroundExitPolicy.swift`,
+`CommandDeadline.swift`, `CommandMachine.swift`, `CommandGate.swift`,
+`AugustUnlockWidget/DoorNames.swift`, `Shared/DoorState.swift`). The command machine's properties are also pinned by
 `make formal` (see [formal/README.md](../formal/README.md)). The app builds from `AugustUnlock.xcodeproj`.
 
 The same properties run through the real screens on the Simulator against

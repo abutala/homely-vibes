@@ -17,6 +17,7 @@ final class WidgetTapTests: XCTestCase {
     private let app = XCUIApplication()
 
     func testWidgetTapStaysInWidget() throws {
+        app.launchEnvironment = ["AUGUST_SLOW_WIDGET_TAP": "1"]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         XCUIDevice.shared.press(.home)
@@ -32,22 +33,22 @@ final class WidgetTapTests: XCTestCase {
         XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "two doors before any lock list")
         XCTAssertTrue(springboard.staticTexts["Open the app to sign in"].exists, springboard.debugDescription)
 
-        // The button is the lock icon alone, labelled with the door's name
-        // for VoiceOver; the name under it is a sibling text (the cue cannot
-        // live inside the button, Logbook 2026-11-02).
-        let door = springboard.buttons["Door 1"]
+        // Each door is a toggle (a switch to accessibility), labelled with its name.
+        let door = springboard.switches["Door 1"]
         XCTAssertTrue(door.exists, springboard.debugDescription)
-        XCTAssertTrue(springboard.buttons["Door 2"].exists, springboard.debugDescription)
+        XCTAssertTrue(springboard.switches["Door 2"].exists, springboard.debugDescription)
 
         // The Simulator dispatches the intent (`OpenFirstDoorIntent.perform()
         // finished` in its log, 2026-11-02); a tap that opens the app is the
         // inert-button bug, not a Simulator limit (Logbook, 2026-11-02).
         door.tap()
-        // The tap runs in the app's process, in the background; the widget
-        // reads its result from the Keychain (a failure here, within
-        // milliseconds: the Simulator's app has no sign-in, so "Unlocking…"
-        // is only seen on the phone), holds it, then clears it.
-        XCTAssertTrue(springboard.staticTexts["Failed"].waitForExistence(timeout: 5), springboard.debugDescription)
+        // The toggle flips at once: the tapped door alone reads "Unlocking…"
+        // while the (slowed) tap runs in the app's background process.
+        XCTAssertTrue(springboard.staticTexts["Unlocking\u{2026}"].waitForExistence(timeout: 2), springboard.debugDescription)
+        XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "the other door must not move")
+        // Then the widget reads its result from the Keychain (a failure
+        // here: the Simulator's app has no sign-in), holds it, then clears it.
+        XCTAssertTrue(springboard.staticTexts["Failed"].waitForExistence(timeout: 15), springboard.debugDescription)
         XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "the other door must not move")
         XCTAssertTrue(springboard.staticTexts["Door 1"].waitForExistence(timeout: DoorStateHold + 10), "the result must clear")
         XCTAssertFalse(app.wait(for: .runningForeground, timeout: 1), "a widget tap opened the app")

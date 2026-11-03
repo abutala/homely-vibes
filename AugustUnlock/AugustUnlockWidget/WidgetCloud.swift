@@ -65,44 +65,16 @@ enum WidgetCloud {
     /// The app writes its token with delete-then-add, so a read can land in
     /// the gap and find nothing; one retry after a moment rides it out.
     private static func accessToken() async -> String? {
-        if let token = keychainString("august_access_token") { return token }
+        if let token = KeychainStore.get("august_access_token") { return token }
         try? await Task.sleep(for: .milliseconds(300))
-        let token = keychainString("august_access_token")
+        let token = KeychainStore.get("august_access_token")
         if token == nil { WidgetLog.note("no access token in the Keychain") }
         return token
     }
-
-    private static func keychainString(_ key: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else {
-            return nil
-        }
-        return String(data: data, encoding: .utf8)
-    }
 }
 
-/// The widget's own log, in its Caches folder, readable off the phone with
-/// `xcrun devicectl device copy from --domain-type appDataContainer
-/// --domain-identifier <widget bundle id> --source Library/Caches/widget.log`
-/// — no sudo, no tap from Amit. Last 60 lines kept.
-enum WidgetLog {
-    private static var url: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("widget.log")
-    }
-
-    static func note(_ message: String) {
-        let stamp = ISO8601DateFormatter().string(from: Date())
-        var lines = (try? String(contentsOf: url, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
-        lines.append("\(stamp) \(message)")
-        try? lines.suffix(60).joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
-    }
-}
+/// `Library/Caches/widget.log` in the widget's container, last 60 lines.
+let WidgetLog = LineLog(file: "widget.log", keep: 60, category: "widget")
 
 /// The widget's own memory: the lock list and the sign-in flag, in the
 /// extension's UserDefaults. The app never reads or writes it.

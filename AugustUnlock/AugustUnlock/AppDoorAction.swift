@@ -30,14 +30,15 @@ enum AppDoorAction {
             AppLog.note("widget tap position=\(position) ignored: still running")
             return
         }
-        AppLog.note("widget tap position=\(position) lock=\(lockID.suffix(4)) door state keychain=\(DoorStateStore.lastStatus)")
+        AppLog.note("widget tap position=\(position) lock=\(lockID.suffix(4)) door state keychain=\(KeychainStore.lastStatus)")
         WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
         let start = ContinuousClock.now
         var ok = false
+        if TestHooks.slowWidgetTap { try? await Task.sleep(for: .seconds(5)) }
         do {
             guard !lockID.isEmpty else { throw AugustError.noLocks }
             let reply = try await AugustClient.shared.unlock(
-                lockID: lockID, bluetoothSetupBudget: bluetoothSetupBudget, cloudDeadline: cloudDeadline)
+                lockID: lockID, bluetoothSetupBudget: bluetoothSetupBudget, cloudDeadline: cloudDeadline, keepLink: false)
             ok = true
             AppLog.note("widget unlock position=\(position) ok via \(reply.path.rawValue) in \(start.duration(to: .now))")
         } catch {
@@ -51,26 +52,6 @@ enum AppDoorAction {
     private static let log = Logger(subsystem: "AugustUnlock", category: "widget")
 }
 
-/// The app's own log file, beside the widget's: `Library/Caches/app.log`,
-/// readable off the phone with `xcrun devicectl device copy from
-/// --domain-type appDataContainer --domain-identifier <app bundle id>
-/// --source Library/Caches/app.log`. The timing lines `os_log` keeps only in
-/// a buffer the phone soon overwrites live here too. Last 200 lines kept.
-enum AppLog {
-    private static var url: URL {
-        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("app.log")
-    }
-
-    /// Lines come from several tasks at once (key refreshes, a tap, the
-    /// screen); each read-append-write is one step.
-    private static let lock = OSAllocatedUnfairLock()
-
-    static func note(_ message: String) {
-        lock.withLock {
-            let stamp = ISO8601DateFormatter().string(from: Date())
-            var lines = (try? String(contentsOf: url, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
-            lines.append("\(stamp) \(message)")
-            try? lines.suffix(200).joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
-        }
-    }
-}
+/// `Library/Caches/app.log` in the app's container, last 200 lines: every
+/// timing line `os_log` keeps only in a buffer the phone soon overwrites.
+let AppLog = LineLog(file: "app.log", keep: 200, category: "timing")

@@ -72,7 +72,7 @@ struct DoorsProvider: TimelineProvider {
     private func refresh(at now: Date) async -> DoorsEntry {
         let state = DoorStateStore.load()
         let marks = state.marks(count: DoorNames.count, at: now)
-        WidgetLog.note("door state keychain=\(DoorStateStore.lastStatus) running=\(state.running.keys.sorted()) results=\(state.results.count)")
+        WidgetLog.note("door state keychain=\(KeychainStore.lastStatus) running=\(state.running.keys.sorted()) results=\(state.results.count)")
         do {
             let locks = try await withDeadline(seconds: Self.fetchDeadline) { try await WidgetCloud.fetchLocks() }
             WidgetStore.locks = locks
@@ -103,9 +103,16 @@ struct DoorsView: View {
             HStack(spacing: 0) {
                 ForEach(Array(entry.names.enumerated()), id: \.offset) { position, name in
                     VStack(spacing: 6) {
-                        Button(intent: OpenDoorIntent(position: position, lockID: entry.locks[position])) { doorIcon }
-                            .accessibilityLabel(name)
-                        caption(name, entry.marks[position])
+                        // A toggle, not a button: WidgetKit redraws a tapped toggle's
+                        // own state at once, before the intent runs, so the tapped
+                        // door alone reads "Unlocking…" during the tap. The reload
+                        // after the tap draws the true mark. The intent ignores the
+                        // toggle's value.
+                        Toggle(isOn: entry.marks[position] == .running, intent: OpenDoorIntent(position: position, lockID: entry.locks[position])) {
+                            caption(name, entry.marks[position])
+                        }
+                        .toggleStyle(DoorToggleStyle())
+                        .accessibilityLabel(name)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -118,10 +125,9 @@ struct DoorsView: View {
         .containerBackground(.fill.tertiary, for: .widget)
     }
 
-    /// The door's name, or what its tap did: the result sits here, beside
-    /// the button, never inside it (Logbook, 2026-11-02). No cue while a
-    /// tap runs: the only one WidgetKit offers dims both names (Amit,
-    /// 2026-11-03: no).
+    /// The door's name, or what its tap did. The "Unlocking…" during the tap
+    /// is the toggle's own on-state (`DoorToggleStyle`), the result after it
+    /// comes from the timeline.
     private func caption(_ name: String, _ mark: DoorState.Mark) -> some View {
         let (text, color): (String, Color) = switch mark {
         case .none: (name, .primary)
@@ -132,8 +138,21 @@ struct DoorsView: View {
         return Text(text).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(color)
     }
 
-    /// Nothing but the image inside the button.
-    private var doorIcon: some View {
-        Image(systemName: "lock.open.fill").font(.system(size: 34)).padding(8)
+}
+
+/// The door as a toggle: the lock icon, and under it the label, or
+/// "Unlocking…" while the toggle is on (the tap's optimistic state). Only
+/// the image sits where a tap lands, as with the button that worked
+/// (Logbook 2026-11-02).
+struct DoorToggleStyle: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: "lock.open.fill").font(.system(size: 34)).padding(8)
+            if configuration.isOn {
+                Text("Unlocking\u{2026}").font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(.secondary)
+            } else {
+                configuration.label
+            }
+        }
     }
 }

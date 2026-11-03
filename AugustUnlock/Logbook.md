@@ -761,3 +761,80 @@ outcome was seen on the widget, and both names blinked. Three answers:
 3. **Both names blinked** because I put `.invalidatableContent()` back
    after the per-door redraw proved impossible mid-tap. Amit: no. There is
    no cue during a tap now; the outcome after it is the feedback.
+
+## 2026-11-03 — PR B: the tapped door blinks by itself, and the Bluetooth link outlives a command
+
+Amit's scope, one PR: the widget's pressed button alone blinks, a status
+after it, each button its own lock, Bluetooth in the widget, and Bluetooth
+that survives a "tap while unlocking, to lock instead". PR #62 had the last
+three; a scoped TRIAL (`scratchpad/trial5`) then found two things before
+any code:
+
+1. **Only a `Toggle` can blink one door.** WidgetKit cannot redraw a widget
+   while its intent runs, so a `Button` has no per-door cue; Apple:
+   "`Toggle` updates its appearance optimistically and indicates its new
+   state immediately — without waiting for the result of the performed
+   action." Each door is now `Toggle(isOn: mark == .running, intent:)`
+   with a custom `ToggleStyle` (the icon; "Unlocking…" while on). Proven on
+   the Simulator with a slowed tap (`AUGUST_SLOW_WIDGET_TAP`, a marker file
+   the tap's background launch can read): "Unlocking…" on the tapped door
+   1.3 s after the tap, the other door still, then the result, then the
+   name. Known wart: a second tap on a running door flips the cue off until
+   the reload; the tap itself is ignored.
+2. **A link kept only until the next cancel helps nobody.** The first
+   design dropped the link on a cancel after the write; the write lands
+   1.2–1.5 s after a tap on a cold link and the screen's override comes at
+   0.75 s or later, so the interrupt case would have rebuilt the link every
+   time. Now a cancelled command that was written runs to its result on the
+   link, unreported, and the opposite follows on the same link after a 1 s
+   gap (yalexs never sends the opposite that fast; the gap stays until ten
+   fast pairs at the door say it can go). A cancel before the write drops
+   only the command.
+
+The Bluetooth path is two files now. `AugustBLEEngine` is a pure state
+machine: inputs are the radio's events and the timers, each with the time;
+outputs are writes, notifies, timers and completions. Sixteen `swift test`
+scenarios drive it through the real handshake and commands with the wires
+`gen_ble_vectors.py` prints from yalexs-ble's own classes (extended for the
+init reply, a status push and a second command on the same chain): the
+interrupt, a cancel in the cooldown, a push between commands, a skipped
+push (CBC garbles one frame, then recovers, as yalexs says), the keep
+timer against a late command, the close race, the background, link loss,
+Bluetooth off, a jam, stale timers. `AugustBLELink` is the CoreBluetooth
+adapter, one per lock for the process; `AugustBLEOperation` is gone. The
+old single-link teardown lives on as the engine's `closing` state.
+
+Rules the TRIAL pinned: a command's budgets start when it reaches the head
+of the link's queue; every timer carries the command's token or the link's
+epoch; "in background" is engine state (a command that ends there closes
+the link; the widget's process starts in it; the screen's `.background`
+closes idle links inside a background task); the widget's tap never keeps
+a link, since a kept link blocks the official app; the lock's own idle
+drop is 30 s, far past the 5 s keep.
+
+Maintainability, same PR (Amit: "we've churned this app a lot"): one
+`KeychainStore` in `Shared/` for the app, the widget and the door state
+(three readers before); one `LineLog` for `app.log` and `widget.log` (two
+copies before); the screen's background keep-alive and the link's share
+`BackgroundTask`.
+
+**The door run (03:57 UTC).** The kept link works: after an unlock over
+Bluetooth, the lock command was written 214 ms after it started and done
+at 2263 ms, with no connect and no key exchange (`BLE lock -> ok in 2263
+ms (found -, connected -, session -, written 214, done 2262)`). What is
+slow is the connect: 9396 ms to the remembered peripheral, and in those
+nine seconds the scan never saw the lock advertise once. A lock connected
+to another central does not advertise, and this lock sits behind the
+Wi-Fi bridge, which connects to it for every cloud command; this morning,
+with no cloud traffic, the same connect took 611 ms. So every cloud
+fallback makes the next Bluetooth connect wait for the bridge, and a
+two-minute pause was not enough. The lock dropped the link itself 4 s
+after the last command. Amit's taps during the wait cancelled two
+commands before the write (each dropped cleanly; the third got the link).
+
+What this says about budgets: the connect wait is the lock coming free,
+and for this lock the cloud takes 8–25 s, so a longer Bluetooth wait costs
+nothing against it. The right shape is a race, not a budget: start the
+cloud after the setup budget but let Bluetooth keep going, first result
+wins, the other is cancelled (unlock and lock are idempotent). That is its
+own change (TRIAL first); this PR keeps the 6 s budget.
