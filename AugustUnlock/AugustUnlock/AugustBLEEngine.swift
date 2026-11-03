@@ -152,7 +152,8 @@ nonisolated final class AugustBLEEngine {
         case .connectFailed(let reason):
             guard link == .connecting else { return [] }
             dropLink()
-            return failAll(.link("connect failed: \(reason)"))
+            // `.disconnect` stops the scan too: nothing may connect uncalled.
+            return failAll(.link("connect failed: \(reason)")) + [.disconnect]
         case .disconnected(let reason):
             return disconnected(reason, at: now)
         case .characteristicsReady(let ok):

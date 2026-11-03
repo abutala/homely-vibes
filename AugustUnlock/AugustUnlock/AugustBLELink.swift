@@ -97,6 +97,9 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
     private var characteristics: [CBUUID: CBCharacteristic] = [:]
     private var continuations: [AugustBLEEngine.Token: CheckedContinuation<AugustBLETiming, Error>] = [:]
     private var wantsLink = false
+    /// True from the engine's `startLink` to `connected` or `.disconnect`:
+    /// a lock seen by the scan outside that window is left alone.
+    private var connecting = false
     private var found: Int?
     private var linkStartedAt: Double?
 
@@ -157,6 +160,7 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
             case .disconnect:
                 note("disconnect (peripheral state \(peripheral?.state.rawValue ?? -1))")
                 wantsLink = false
+                connecting = false
                 central?.stopScan()
                 characteristics = [:]
                 // The peripheral stays current until the radio reports the
@@ -189,6 +193,7 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
     private func findAndConnect() {
         guard let central else { return }
         wantsLink = false
+        connecting = true
         if let known = Self.knownPeripheralID(localName),
             let peripheral = central.retrievePeripherals(withIdentifiers: [known]).first
         {
@@ -242,7 +247,7 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
         advertisementData: [String: Any], rssi RSSI: NSNumber
     ) {
         let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name
-        guard name == localName, peripheral.identifier != self.peripheral?.identifier else { return }
+        guard connecting, name == localName, peripheral.identifier != self.peripheral?.identifier else { return }
         if let stale = self.peripheral { central.cancelPeripheralConnection(stale) }
         found = linkStartedAt.map { Int(((now - $0) * 1000).rounded()) }
         note("found by scan, rssi \(RSSI); connecting")
@@ -251,6 +256,7 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         guard isCurrent(peripheral) else { return }
+        connecting = false
         central.stopScan()
         Self.remember(peripheral.identifier, for: localName)
         note("connected")

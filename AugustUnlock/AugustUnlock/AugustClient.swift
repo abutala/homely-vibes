@@ -325,11 +325,9 @@ final class AugustClient {
     }
 
     /// Any lock on the account, Bluetooth first when it has a loaded key.
-    /// The widget's taps come here, in the app's process, which runs in the
-    /// background: iOS gives it slower Bluetooth, and the first such tap
-    /// timed out at 3 s during the key exchange (app.log, 2026-11-03). The
-    /// cloud fallback costs ~20 s, so a background tap can afford a longer
-    /// setup budget than the screen's 3 s.
+    /// The widget's taps come here too, in the app's process. The setup
+    /// budget is `bluetoothSetupBudget` for both; the cloud leg's deadline
+    /// is the caller's.
     /// `cloudDeadline` bounds the cloud leg alone, from the moment it
     /// starts, so a Bluetooth attempt never eats the cloud's time.
     /// `keepLink` false (the widget's taps) ends the Bluetooth link after the
