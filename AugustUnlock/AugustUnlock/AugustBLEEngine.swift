@@ -166,6 +166,9 @@ nonisolated final class AugustBLEEngine {
             }
             if uuid == AugustBLE.readUUID, link == .opening {
                 link = .ready
+                // Every command may have been cancelled while the link was
+                // built: a ready link with nothing to do keeps or closes.
+                if queue.isEmpty { return keepOrClose() }
                 return beginHead(at: now)
             }
             return []

@@ -153,6 +153,7 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
                 }
                 peripheral.writeValue(Data(bytes), for: characteristic, type: .withResponse)
             case .disconnect:
+                wantsLink = false
                 central?.stopScan()
                 if let peripheral { central?.cancelPeripheralConnection(peripheral) }
                 peripheral = nil
@@ -211,6 +212,9 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
         case .unknown, .resetting:
             break
         default:
+            // Bluetooth off: nothing may connect when it comes back unless a
+            // new command asks (the engine has dropped the link by then).
+            wantsLink = false
             peripheral = nil
             characteristics = [:]
             apply(engine.handle(.centralState(poweredOn: false), at: now))

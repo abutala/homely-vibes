@@ -205,6 +205,29 @@ final class AugustBLEEngineTests: XCTestCase {
         XCTAssertEqual(out, [.complete(1, .setupTimedOut(stage: "discovering characteristics")), .disconnect])
     }
 
+    func testALinkWhoseOnlyCommandWasCancelledDuringSetupKeepsOrCloses() {
+        _ = send(command(1, AugustBLE.unlockOpcode))
+        _ = send(.connected, after: 0.6)
+        XCTAssertEqual(send(.cancel(1), after: 0.1), [.complete(1, .cancelled)], "the link keeps coming up")
+        _ = send(.characteristicsReady(true), after: 0.1)
+        _ = send(.notifyEnabled(secureRead, error: nil), after: 0.1)
+        _ = send(.frame(secureRead, reply1), after: 0.1)
+        _ = send(.frame(secureRead, reply2), after: 0.1)
+        XCTAssertEqual(send(.notifyEnabled(read, error: nil), after: 0.05), [.schedule(.keep(epoch: 1), 5)])
+        XCTAssertEqual(send(.timer(.setup(1)), after: 1), [], "the cancelled command's setup timer is stale")
+        // In the background the same link closes at once.
+        engine = AugustBLEEngine(offlineKey: offlineKey, slot: 4, nonce: { self.nonce }, inBackground: true)
+        _ = send(command(1, AugustBLE.unlockOpcode))
+        _ = send(.connected, after: 0.6)
+        _ = send(.cancel(1), after: 0.1)
+        _ = send(.characteristicsReady(true), after: 0.1)
+        _ = send(.notifyEnabled(secureRead, error: nil), after: 0.1)
+        _ = send(.frame(secureRead, reply1), after: 0.1)
+        _ = send(.frame(secureRead, reply2), after: 0.1)
+        let out = send(.notifyEnabled(read, error: nil), after: 0.05)
+        XCTAssertEqual(out, [.write(secureWrite, engineShutdown()), .schedule(.close(epoch: 1), 0.3)])
+    }
+
     func testAQueuedCommandStartsItsBudgetsWhenItBecomesHead() {
         _ = send(command(1, AugustBLE.unlockOpcode))
         XCTAssertEqual(send(command(2, AugustBLE.lockOpcode), after: 0.5), [])
