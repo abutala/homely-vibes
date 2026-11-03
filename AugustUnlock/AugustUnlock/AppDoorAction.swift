@@ -24,13 +24,12 @@ enum AppDoorAction {
     /// the widget had no lock list yet.
     static func unlock(position: Int, lockID: String) async {
         // A repeat tap on a door whose unlock is still running would only
-        // wait at the gate and then time out; the first tap answers both.
-        let already = DoorStateStore.load().marks(count: position + 1, at: Date())
-        if already.indices.contains(position), already[position] == .running {
+        // queue a duplicate command; the first tap answers both. The check
+        // and the start are one locked step.
+        guard DoorStateStore.update({ $0.start(position, at: Date()) }) else {
             AppLog.note("widget tap position=\(position) ignored: still running")
             return
         }
-        DoorStateStore.update { $0.start(position, at: Date()) }
         AppLog.note("widget tap position=\(position) lock=\(lockID.suffix(4)) door state keychain=\(DoorStateStore.lastStatus)")
         WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
         let start = ContinuousClock.now

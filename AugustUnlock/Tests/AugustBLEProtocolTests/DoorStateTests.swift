@@ -9,13 +9,13 @@ final class DoorStateTests: XCTestCase {
 
     func testOnlyTheTappedDoorRuns() {
         var state = DoorState()
-        state.start(1, at: t0)
+        _ = state.start(1, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0), [.none, .running])
     }
 
     func testAResultHoldsThenClears() {
         var state = DoorState()
-        state.start(0, at: t0)
+        _ = state.start(0, at: t0)
         state.finish(0, ok: true, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0), [.ok, .none])
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.hold - 0.1), [.ok, .none])
@@ -28,15 +28,15 @@ final class DoorStateTests: XCTestCase {
         var state = DoorState()
         state.finish(1, ok: false, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0 + 1), [.none, .failed])
-        state.start(1, at: t0 + 1)
+        _ = state.start(1, at: t0 + 1)
         XCTAssertEqual(state.marks(count: 2, at: t0 + 1), [.none, .running])
         XCTAssertEqual(state.clearDates(at: t0 + 1), [t0 + 1 + DoorState.runningLimit])
     }
 
     func testTwoDoorsKeepTheirOwnState() {
         var state = DoorState()
-        state.start(0, at: t0)
-        state.start(1, at: t0)
+        _ = state.start(0, at: t0)
+        _ = state.start(1, at: t0)
         state.finish(0, ok: true, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0), [.ok, .running])
         // Door 1 clears at its own hold; door 2's limit is a later entry.
@@ -46,15 +46,23 @@ final class DoorStateTests: XCTestCase {
 
     func testATapWhoseProcessDiedExpires() {
         var state = DoorState()
-        state.start(0, at: t0)
+        _ = state.start(0, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.runningLimit - 1), [.running, .none])
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.runningLimit), [.none, .none])
         XCTAssertEqual(state.clearDates(at: t0 + DoorState.runningLimit), [])
     }
 
+    func testARepeatTapOnARunningDoorIsRefused() {
+        var state = DoorState()
+        XCTAssertTrue(state.start(0, at: t0))
+        XCTAssertFalse(state.start(0, at: t0 + 1))
+        XCTAssertTrue(state.start(1, at: t0 + 1), "the other door is free")
+        XCTAssertTrue(state.start(0, at: t0 + DoorState.runningLimit), "an expired tap is over")
+    }
+
     func testRoundTripsThroughJSON() throws {
         var state = DoorState()
-        state.start(0, at: t0)
+        _ = state.start(0, at: t0)
         state.finish(1, ok: false, at: t0)
         let data = try JSONEncoder().encode(state)
         XCTAssertEqual(try JSONDecoder().decode(DoorState.self, from: data), state)

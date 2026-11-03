@@ -245,8 +245,10 @@ final class AugustClient {
     private static let bluetoothKeysLock = OSAllocatedUnfairLock()
 
     private static func bluetoothKeys() -> [String: StoredKey] {
-        guard let data = KeychainStore.get(bluetoothKeysKey)?.data(using: .utf8) else { return legacyBluetoothKeys() }
-        return (try? JSONDecoder().decode([String: StoredKey].self, from: data)) ?? [:]
+        guard let data = KeychainStore.get(bluetoothKeysKey)?.data(using: .utf8),
+            let keys = try? JSONDecoder().decode([String: StoredKey].self, from: data)
+        else { return legacyBluetoothKeys() }
+        return keys
     }
 
     /// Before 2026-11-02 the one key lived in three items, for the picked

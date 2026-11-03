@@ -27,9 +27,13 @@ struct DoorState: Codable, Equatable {
         case none, running, ok, failed
     }
 
-    mutating func start(_ position: Int, at now: Date) {
+    /// Starts the tap unless one is already running on that door: a repeat
+    /// tap would only queue a duplicate command.
+    mutating func start(_ position: Int, at now: Date) -> Bool {
+        if let started = running[String(position)], now < started + Self.runningLimit { return false }
         running[String(position)] = now
         results[String(position)] = nil
+        return true
     }
 
     mutating func finish(_ position: Int, ok: Bool, at now: Date) {

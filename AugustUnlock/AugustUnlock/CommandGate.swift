@@ -34,16 +34,22 @@ final class CommandGate: Sendable {
                     s.busy = true
                     return true
                 }
-                if acquired { continuation.resume(returning: true) }
+                if acquired { return continuation.resume(returning: true) }
+                // A cancel that came before the waiter was queued found no
+                // waiter to resume: do it here, or the tap would hang.
+                if Task.isCancelled { dropWaiter(id)?.continuation.resume(returning: false) }
             }
         } onCancel: {
-            let waiter = state.withLock { s -> Waiter? in
-                guard let index = s.waiters.firstIndex(where: { $0.id == id }) else { return nil }
-                return s.waiters.remove(at: index)
-            }
-            waiter?.continuation.resume(returning: false)
+            dropWaiter(id)?.continuation.resume(returning: false)
         }
         guard handed else { throw CancellationError() }
+    }
+
+    private func dropWaiter(_ id: UInt64) -> Waiter? {
+        state.withLock { s -> Waiter? in
+            guard let index = s.waiters.firstIndex(where: { $0.id == id }) else { return nil }
+            return s.waiters.remove(at: index)
+        }
     }
 
     func leave() {

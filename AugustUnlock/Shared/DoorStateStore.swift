@@ -29,14 +29,15 @@ enum DoorStateStore {
         return state
     }
 
-    static func update(_ change: (inout DoorState) -> Void) {
+    @discardableResult
+    static func update<T>(_ change: (inout DoorState) -> T) -> T {
         lock.withLock { write(change) }
     }
 
-    private static func write(_ change: (inout DoorState) -> Void) {
+    private static func write<T>(_ change: (inout DoorState) -> T) -> T {
         var state = load()
-        change(&state)
-        guard let data = try? JSONEncoder().encode(state) else { return }
+        let result = change(&state)
+        guard let data = try? JSONEncoder().encode(state) else { return result }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: account,
@@ -46,5 +47,6 @@ enum DoorStateStore {
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         lastStatus = SecItemAdd(attributes as CFDictionary, nil)
+        return result
     }
 }
