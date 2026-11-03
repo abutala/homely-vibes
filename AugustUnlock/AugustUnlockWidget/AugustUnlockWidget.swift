@@ -72,7 +72,7 @@ struct DoorsProvider: TimelineProvider {
     private func refresh(at now: Date) async -> DoorsEntry {
         let state = DoorStateStore.load()
         let marks = state.marks(count: DoorNames.count, at: now)
-        WidgetLog.note("door state keychain=\(DoorStateStore.lastStatus) running=\(state.running.keys.sorted()) results=\(state.results.count)")
+        WidgetLog.note("door state keychain=\(KeychainStore.lastStatus) running=\(state.running.keys.sorted()) results=\(state.results.count)")
         do {
             let locks = try await withDeadline(seconds: Self.fetchDeadline) { try await WidgetCloud.fetchLocks() }
             WidgetStore.locks = locks

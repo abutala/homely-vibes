@@ -39,7 +39,7 @@ struct AugustLock: Identifiable, Equatable {
 
 /// Talks to August's cloud API directly from the device — no home server in
 /// the loop — and tries the lock over Bluetooth first when it has a loaded
-/// offline key (`AugustBLEOperation`). Mirrors the request shapes in August/august_client.py (this
+/// offline key (`AugustBLELink`). Mirrors the request shapes in August/august_client.py (this
 /// repo's Python client, built on the `yalexs` library) since there is no
 /// official or third-party Swift SDK for August/Yale locks.
 final class AugustClient {
@@ -332,10 +332,14 @@ final class AugustClient {
     /// setup budget than the screen's 3 s.
     /// `cloudDeadline` bounds the cloud leg alone, from the moment it
     /// starts, so a Bluetooth attempt never eats the cloud's time.
-    func unlock(lockID: String, bluetoothSetupBudget: TimeInterval = 3, cloudDeadline: TimeInterval? = nil) async throws -> OperationReply {
+    /// `keepLink` false (the widget's taps) ends the Bluetooth link after the
+    /// command; the app's own taps keep it a few seconds for the next one.
+    func unlock(
+        lockID: String, bluetoothSetupBudget: TimeInterval = 3, cloudDeadline: TimeInterval? = nil, keepLink: Bool = true
+    ) async throws -> OperationReply {
         try await operate(
             lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked,
-            setupBudget: bluetoothSetupBudget, cloudDeadline: cloudDeadline)
+            setupBudget: bluetoothSetupBudget, cloudDeadline: cloudDeadline, keepLink: keepLink)
     }
 
     func lock() async throws -> OperationReply {
@@ -355,14 +359,14 @@ final class AugustClient {
     /// the lock reports over Bluetooth is final and is not retried.
     private func operate(
         lockID: String, action: String, opcode: UInt8, success: LockState, setupBudget: TimeInterval = 3,
-        cloudDeadline: TimeInterval? = nil
+        cloudDeadline: TimeInterval? = nil, keepLink: Bool = true
     ) async throws -> OperationReply {
         try await gate.enter()
         defer { gate.leave() }
         if let credentials = bluetoothCredentials(for: lockID) {
             let start = ContinuousClock.now
             do {
-                let timing = try await AugustBLEOperation.run(opcode: opcode, credentials: credentials, setupBudget: setupBudget)
+                let timing = try await AugustBLELink.run(opcode: opcode, credentials: credentials, setupBudget: setupBudget, keepLink: keepLink)
                 Self.note("BLE \(action) -> ok in \(Self.ms(since: start)) ms (\(timing.description))")
                 return OperationReply(state: success, path: .bluetooth)
             } catch is CancellationError {

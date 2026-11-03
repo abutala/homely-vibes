@@ -142,7 +142,7 @@ final class AugustBLEProtocolTests: XCTestCase {
     }
 }
 
-private func bytes(_ hex: String) -> [UInt8] {
+func bytes(_ hex: String) -> [UInt8] {
     var out: [UInt8] = []
     var index = hex.startIndex
     while index < hex.endIndex {
