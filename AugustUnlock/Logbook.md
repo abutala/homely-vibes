@@ -724,9 +724,11 @@ setup timed out while exchanging keys; using the cloud`, then the cloud in
 did not finish within the 3 s setup budget, which was measured in the
 foreground app (session at 1.3–1.7 s). A background process gets slower
 Bluetooth from iOS (longer connection intervals), and the fallback costs
-~20 s, so a widget tap now gives Bluetooth setup 8 s; the screen keeps
-3 s. One sample; the next taps' stage timings in `app.log` say whether
-8 s is enough or the stall is the lock's. Measured on the
+~20 s, so a widget tap now gives Bluetooth setup 6 s; the screen keeps
+3 s. The cloud leg has its own 25 s deadline from the moment it starts,
+so the Bluetooth attempt never eats the cloud's time (a reviewer's catch:
+8 + 20 did not fit one 25 s deadline). One sample; the next taps' stage
+timings in `app.log` say whether 6 s is enough or the stall is the lock's. Measured on the
 Simulator: the tapped door shows "Failed" (no sign-in there) and clears;
 the other door does not move; the seven app flows still pass.
 

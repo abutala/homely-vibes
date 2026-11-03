@@ -91,8 +91,9 @@ same path as the app's button: Bluetooth when the lock has a loaded key
 (~1–3 s), the cloud otherwise or when Bluetooth fails (1–25 s). A second
 tap on a door whose unlock is still running does nothing. A tap on the
 name or on empty space is a tap on the widget's body, which opens the app,
-as on any widget. A tap gets 25 s; past that it is dropped by the phone,
-though August may still run it.
+as on any widget. Bluetooth gets 6 s to set up, then the cloud gets 25 s;
+past that the request is dropped by the phone, though August may still
+run it.
 "Open the app to sign in" under the buttons means August rejected the
 sign-in; opening the app renews it.
 

@@ -9,14 +9,15 @@ import os
 /// 2026-11-01): nothing locks, and unlock is idempotent. The app's screen is
 /// not involved: a background launch creates no scene (Logbook 2026-11-02).
 enum AppDoorAction {
-    /// Under the budget iOS gives a background intent; the garage's cloud
-    /// path took 21 s on the phone (app.log, 2026-11-03), so 20 was too
-    /// short for it.
-    static let deadline: TimeInterval = 25
+    /// The cloud leg's own deadline, from the moment it starts: the garage's
+    /// cloud path took 21 s on the phone (app.log, 2026-11-03), so 20 was
+    /// too short. The Bluetooth attempt before it is bounded on its own.
+    static let cloudDeadline: TimeInterval = 25
     /// Bluetooth setup from a background process is slower than from the
-    /// screen (iOS lengthens the connection interval); the cloud fallback
-    /// costs ~20 s, so this can be generous.
-    static let bluetoothSetupBudget: TimeInterval = 8
+    /// screen (iOS lengthens the connection interval): the screen's 3 s
+    /// timed out during the key exchange. The cloud fallback keeps its own
+    /// deadline, so this costs the tap at most 6 s on a miss.
+    static let bluetoothSetupBudget: TimeInterval = 6
 
     /// `lockID` is the lock the widget showed under this button; empty when
     /// the widget had no lock list yet.
@@ -35,9 +36,8 @@ enum AppDoorAction {
         var ok = false
         do {
             guard !lockID.isEmpty else { throw AugustError.noLocks }
-            let reply = try await withDeadline(seconds: deadline) {
-                try await AugustClient.shared.unlock(lockID: lockID, bluetoothSetupBudget: bluetoothSetupBudget)
-            }
+            let reply = try await AugustClient.shared.unlock(
+                lockID: lockID, bluetoothSetupBudget: bluetoothSetupBudget, cloudDeadline: cloudDeadline)
             ok = true
             AppLog.note("widget unlock position=\(position) ok via \(reply.path.rawValue) in \(start.duration(to: .now))")
         } catch {

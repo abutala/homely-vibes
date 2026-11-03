@@ -328,10 +328,12 @@ final class AugustClient {
     /// timed out at 3 s during the key exchange (app.log, 2026-11-03). The
     /// cloud fallback costs ~20 s, so a background tap can afford a longer
     /// setup budget than the screen's 3 s.
-    func unlock(lockID: String, bluetoothSetupBudget: TimeInterval = 3) async throws -> OperationReply {
+    /// `cloudDeadline` bounds the cloud leg alone, from the moment it
+    /// starts, so a Bluetooth attempt never eats the cloud's time.
+    func unlock(lockID: String, bluetoothSetupBudget: TimeInterval = 3, cloudDeadline: TimeInterval? = nil) async throws -> OperationReply {
         try await operate(
             lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked,
-            setupBudget: bluetoothSetupBudget)
+            setupBudget: bluetoothSetupBudget, cloudDeadline: cloudDeadline)
     }
 
     func lock() async throws -> OperationReply {
@@ -350,7 +352,8 @@ final class AugustClient {
     /// cloud retry after a Bluetooth command that did land is harmless. A jam
     /// the lock reports over Bluetooth is final and is not retried.
     private func operate(
-        lockID: String, action: String, opcode: UInt8, success: LockState, setupBudget: TimeInterval = 3
+        lockID: String, action: String, opcode: UInt8, success: LockState, setupBudget: TimeInterval = 3,
+        cloudDeadline: TimeInterval? = nil
     ) async throws -> OperationReply {
         try await gate.enter()
         defer { gate.leave() }
@@ -370,7 +373,12 @@ final class AugustClient {
                 Self.note("BLE \(action) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription); using the cloud")
             }
         }
-        let state = try await cloudOperate(lockID: lockID, action: action)
+        let state: LockState
+        if let cloudDeadline {
+            state = try await withDeadline(seconds: cloudDeadline) { try await self.cloudOperate(lockID: lockID, action: action) }
+        } else {
+            state = try await cloudOperate(lockID: lockID, action: action)
+        }
         refreshBluetoothKeyOnce(lockID: lockID)
         return OperationReply(state: state, path: .cloud)
     }
