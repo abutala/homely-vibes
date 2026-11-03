@@ -761,3 +761,16 @@ outcome was seen on the widget, and both names blinked. Three answers:
 3. **Both names blinked** because I put `.invalidatableContent()` back
    after the per-door redraw proved impossible mid-tap. Amit: no. There is
    no cue during a tap now; the outcome after it is the feedback.
+
+**The rig (02:21 UTC), `BLEWidgetRig/`.** Amit: "optimize for learnings;
+test with something random, not the door lock." The rig is the widget's
+shape against a Mac peripheral that echoes writes as notifications. With
+the `bluetooth-central` background mode, a widget tap in the app's
+background process did the whole round trip in 1981 ms (`app state:
+background`; connected 1121, services 1709, subscribed 1890, written 1952,
+echoed 1981); the tap that opened the app first took 247 ms on the link
+the first tap had left open; the foreground pairing took 5234 ms, 2.5 s of
+it the permission prompt. So the key-exchange stall was the missing
+background mode and nothing else, and the door build with the mode is the
+one to test next. The rig stays: one tap from anywhere answers any future
+"can the widget do X over Bluetooth" in a minute.

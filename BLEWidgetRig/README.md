@@ -54,4 +54,9 @@ written 1150, echoed 16 bytes 1870]`, with the app's state at the start.
 
 ## Findings
 
-See `AugustUnlock/Logbook.md`, 2026-11-03.
+2026-11-03, iPhone 14 Pro, iOS 27.0.1, Sideloadly: with the
+`bluetooth-central` background mode, `widget-background` (app state
+`background`) completed in 1981 ms, connected at 1121 ms; `widget-foreground`
+in 247 ms on the link the first tap left open; the foreground pairing in
+5234 ms with the permission prompt inside it. Without the mode, AugustUnlock's
+key exchange had stalled at 3 s and at 6 s. Details: `AugustUnlock/Logbook.md`.
