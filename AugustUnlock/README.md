@@ -82,15 +82,17 @@ Long-press the Home Screen → **+** → AugustUnlock → **Doors**. One size, f
 width: an unlock button per lock, named as August names it, in lock-ID
 order. A tap sends unlock for that door and nothing else: the widget shows
 no state and never locks (unlock is a no-op on an unlocked door, so a
-repeat is harmless). The button is the lock icon. The door name under it
-says what the tap is doing: "Unlocking…" while it runs, then "Unlocked" or
-"Failed" for a few seconds, then the name again. Only the tapped door
-changes. Each tap runs in the app's own process in the background (the app
-never comes forward), so it takes the same path as the app's button:
-Bluetooth when the lock has a loaded key (~1–3 s), the cloud otherwise or
-when Bluetooth fails (1–25 s). A tap on the name or on empty space is a tap
-on the widget's body, which opens the app, as on any widget. A tap gets
-20 s; past that it is dropped by the phone, though August may still run it.
+repeat is harmless). The button is the lock icon. While a tap runs, both
+door names dim (the system's cue; the widget cannot redraw until the tap
+ends). When it ends, the tapped door's name says "Unlocked" or "Failed"
+for a few seconds, then the name again. Each tap runs in the app's own
+process in the background (the app never comes forward), so it takes the
+same path as the app's button: Bluetooth when the lock has a loaded key
+(~1–3 s), the cloud otherwise or when Bluetooth fails (1–25 s). A second
+tap on a door whose unlock is still running does nothing. A tap on the
+name or on empty space is a tap on the widget's body, which opens the app,
+as on any widget. A tap gets 25 s; past that it is dropped by the phone,
+though August may still run it.
 "Open the app to sign in" under the buttons means August rejected the
 sign-in; opening the app renews it.
 
@@ -215,7 +217,9 @@ buttons and the sign-in caption, then taps a button with the app quit and
 checks that the tapped door shows its result, holds it and clears it, and
 that the app stays closed. The tap runs in the app's process (Logbook
 2026-11-02); the Simulator's app has no sign-in, so the result is "Failed"
-within milliseconds and "Unlocking…" is only seen on the phone. The widget
+within milliseconds. The Simulator has no Bluetooth and no August cloud:
+the key carry-over, the cloud's timing and the phone's reload deferral
+(Logbook 2026-11-03) were all found on the phone. The widget
 reads the tap's state from the Keychain, which the Simulator shares between
 the two bundles only through the `keychain-access-groups` entitlement both
 targets carry (Sideloadly ignores it and gives both the same group anyway).

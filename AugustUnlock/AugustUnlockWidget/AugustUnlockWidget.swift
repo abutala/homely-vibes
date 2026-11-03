@@ -51,12 +51,13 @@ struct DoorsProvider: TimelineProvider {
         Task { completion(await refresh(at: .now)) }
     }
 
-    /// One entry now; a second, cleared one when a held result expires. The
-    /// tap itself reloads this timeline when it starts and when it ends
-    /// (`AppDoorAction`), which is how one door shows "Unlocking…" and then
-    /// its result. `.invalidatableContent()` is not used: it dims every
-    /// marked view for any tap, and inside the button it made the button
-    /// inert (Logbook 2026-11-02).
+    /// One entry now; one more at each moment a held result clears. The tap
+    /// writes its result and reloads this timeline when it ends
+    /// (`AppDoorAction`); a reload asked for while the tap runs is deferred
+    /// by WidgetKit until it returns (measured on the phone, Logbook
+    /// 2026-11-03), so the only cue during a tap is the system's dimming of
+    /// `.invalidatableContent()` views, which is every marked view, not the
+    /// tapped door's alone.
     func getTimeline(in context: Context, completion: @escaping (Timeline<DoorsEntry>) -> Void) {
         Task {
             let now = Date()
@@ -118,8 +119,9 @@ struct DoorsView: View {
         .containerBackground(.fill.tertiary, for: .widget)
     }
 
-    /// The door's name, or what its tap is doing: the cue sits here, beside
-    /// the button, never inside it (Logbook, 2026-11-02).
+    /// The door's name, or what its tap did: the result sits here, beside
+    /// the button, never inside it (Logbook, 2026-11-02); the dimming while
+    /// a tap runs is the system's, on both names.
     private func caption(_ name: String, _ mark: DoorState.Mark) -> some View {
         let (text, color): (String, Color) = switch mark {
         case .none: (name, .primary)
@@ -128,6 +130,7 @@ struct DoorsView: View {
         case .failed: ("Failed", .red)
         }
         return Text(text).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(color)
+            .invalidatableContent()
     }
 
     /// Nothing but the image inside the button.

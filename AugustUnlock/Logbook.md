@@ -693,7 +693,29 @@ tap, which was the "both doors blink". The tap writes `running` and reloads
 the widget's timeline, runs, writes the result and reloads again; the
 provider adds one entry per clearing moment (a result at its 4 s hold, a
 tap at its 30 s limit in case its process died), each door on its own
-time. Measured on the
+time.
+
+**First phone run (2026-11-03, 00:30 UTC): "feels like a regression."**
+Three causes, none visible on the Simulator (no Bluetooth, no August cloud):
+
+1. The per-lock key map was empty: it fills when the app lists locks, and
+   the old single-lock key (three Keychain items) was not read. So the app's
+   own button and the widget both went to the cloud. Fixed: the three items
+   are read as the map until the first refresh rewrites it.
+2. The two `reloadTimelines` at the tap's start never rendered: the widget
+   log has no timeline between the tap (00:30:32) and its end (00:30:57),
+   then two. WidgetKit defers a reload asked for by the app while that
+   widget's intent runs. So "Unlocking…" on one door is not possible this
+   way; the cue during a tap is `.invalidatableContent()` again, which dims
+   both names. The result after the tap is per door, as asked.
+3. The garage's cloud unlock took 21.1 s (200) against the tap's 20 s
+   deadline, so the widget said "Failed" for an unlock that happened; a
+   second tap on the same door waited at the gate and timed out too. The
+   deadline is 25 s, and a tap on a door still running is ignored.
+
+Nothing above is in the 2026-11-02 learnings' Simulator-first rule's
+favour or against it: the Simulator proved the mechanism and the phone
+proved the data. Both runs were needed. Measured on the
 Simulator: the tapped door shows "Failed" (no sign-in there) and clears;
 the other door does not move; the seven app flows still pass.
 

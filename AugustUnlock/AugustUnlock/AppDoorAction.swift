@@ -9,12 +9,21 @@ import os
 /// 2026-11-01): nothing locks, and unlock is idempotent. The app's screen is
 /// not involved: a background launch creates no scene (Logbook 2026-11-02).
 enum AppDoorAction {
-    /// Under the budget iOS gives a background intent.
-    static let deadline: TimeInterval = 20
+    /// Under the budget iOS gives a background intent; the garage's cloud
+    /// path took 21 s on the phone (app.log, 2026-11-03), so 20 was too
+    /// short for it.
+    static let deadline: TimeInterval = 25
 
     /// `lockID` is the lock the widget showed under this button; empty when
     /// the widget had no lock list yet.
     static func unlock(position: Int, lockID: String) async {
+        // A repeat tap on a door whose unlock is still running would only
+        // wait at the gate and then time out; the first tap answers both.
+        let already = DoorStateStore.load().marks(count: position + 1, at: Date())
+        if already.indices.contains(position), already[position] == .running {
+            AppLog.note("widget tap position=\(position) ignored: still running")
+            return
+        }
         DoorStateStore.update { $0.start(position, at: Date()) }
         AppLog.note("widget tap position=\(position) lock=\(lockID.suffix(4)) door state keychain=\(DoorStateStore.lastStatus)")
         WidgetCenter.shared.reloadTimelines(ofKind: "Doors")

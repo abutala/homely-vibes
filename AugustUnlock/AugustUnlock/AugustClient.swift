@@ -244,8 +244,21 @@ final class AugustClient {
     private static let bluetoothKeysLock = OSAllocatedUnfairLock()
 
     private static func bluetoothKeys() -> [String: StoredKey] {
-        guard let data = KeychainStore.get(bluetoothKeysKey)?.data(using: .utf8) else { return [:] }
+        guard let data = KeychainStore.get(bluetoothKeysKey)?.data(using: .utf8) else { return legacyBluetoothKeys() }
         return (try? JSONDecoder().decode([String: StoredKey].self, from: data)) ?? [:]
+    }
+
+    /// Before 2026-11-02 the one key lived in three items, for the picked
+    /// lock only. Read them as the map once, so an update does not send the
+    /// next open to the cloud; the refresh rewrites the map and the three
+    /// items are then unused.
+    private static func legacyBluetoothKeys() -> [String: StoredKey] {
+        guard let lockID = KeychainStore.get("august_lock_id"),
+            let key = KeychainStore.get("august_ble_key"),
+            let slot = KeychainStore.get("august_ble_slot").flatMap(Int.init),
+            let serial = KeychainStore.get("august_ble_serial")
+        else { return [:] }
+        return [lockID: StoredKey(key: key, slot: slot, serial: serial)]
     }
 
     private static func updateBluetoothKeys(_ change: (inout [String: StoredKey]) -> Void) {
