@@ -80,10 +80,22 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
     }
 
     private static func link(for credentials: AugustBLECredentials) -> AugustBLELink {
-        if let link = links[credentials.serial], link.offlineKey == credentials.key, link.slot == credentials.slot { return link }
+        if let link = links[credentials.serial] {
+            if link.offlineKey == credentials.key, link.slot == credentials.slot { return link }
+            // A new key for this lock: the old link's commands fail and its
+            // radio link closes before it goes, so nothing waits on it forever.
+            link.retire()
+        }
         let link = AugustBLELink(credentials: credentials)
         links[credentials.serial] = link
         return link
+    }
+
+    /// Ends this link for good: every pending command fails, the radio
+    /// link closes. On `queue`.
+    private func retire() {
+        apply(engine.handle(.centralState(poweredOn: false), at: now))
+        central?.delegate = nil
     }
 
     private let offlineKey: [UInt8]
