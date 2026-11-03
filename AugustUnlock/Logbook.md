@@ -651,3 +651,113 @@ Learnings, for the next widget:
 5. Sideloadly sometimes opens with "Apple Silicon" selected as the device;
    it refuses that install (Patreon-only), so nothing lands on the Mac, but
    the phone must be re-selected by hand before Start.
+
+## 2026-11-02 — One door blinks, the result shows, and a widget tap goes over Bluetooth
+
+Amit, after the widget shipped: a tap dimmed both doors, nothing said
+whether it worked, and the widget used only the cloud. A scoped TRIAL on the
+design (`.foreground(.dynamic)` in `supportedModes`, a kept Bluetooth link,
+a timeline written from the tap) found two blockers before any code, both
+settled by one-rung Simulator probes:
+
+1. **A widget intent can run in the app's process.** Apple's article lists
+   `openAppWhenRun` and four protocols as what moves it there;
+   `ForegroundContinuableIntent` is deprecated in favour of `supportedModes`.
+   Measured: `supportedModes = [.background, .foreground(.dynamic)]` ran
+   `perform()` in the `AugustUnlock` process; `[.background]` alone kept it
+   in the extension. With the app quit, the tap launched it in the
+   background, `perform()` ran, and the screen's `onAppear` never fired: no
+   open-unlock, no exit timer, no window. The app never comes forward
+   because nothing calls `continueInForeground`. So the widget's tap now
+   uses the app's `AugustClient`: Bluetooth first when the lock has a loaded
+   key, the cloud otherwise. The widget's own cloud unlock is gone.
+2. **The widget cannot read the app's `UserDefaults`** (no App Group under
+   free signing), so the per-door state (`DoorState`: which door runs, its
+   last result and when) goes through the Keychain, the store the widget's
+   sign-in read already crosses. On the Simulator the two bundles share the
+   Keychain only with a `keychain-access-groups` entitlement on both targets
+   (without it the widget read `errSecItemNotFound`; with it, the item).
+   Sideloadly's re-sign ignores the file (the IPA is built unsigned) and
+   gives both bundles the same default group, which is how the token read
+   already works on the phone.
+
+The rest followed the verdict and the PR's reviewers: one `OpenDoorIntent`
+whose parameters are the door's position and the lock ID the widget shows,
+so a tap opens the door under the finger whatever lock list the app holds
+(the app keeps no list of its own for this); per-lock offline keys (one
+Keychain map by lock ID, refreshed for every lock the account lists) so the
+second door is not cloud-only; one `CommandGate` so the screen and a widget tap in the
+same process never open two Bluetooth links to a lock; the tap's own 20 s
+deadline; `.invalidatableContent()` gone — it dims every marked view for any
+tap, which was the "both doors blink". The tap writes `running` and reloads
+the widget's timeline, runs, writes the result and reloads again; the
+provider adds one entry per clearing moment (a result at its 4 s hold, a
+tap at its 30 s limit in case its process died), each door on its own
+time.
+
+**First phone run (2026-11-03, 00:30 UTC): "feels like a regression."**
+Three causes, none visible on the Simulator (no Bluetooth, no August cloud):
+
+1. The per-lock key map was empty: it fills when the app lists locks, and
+   the old single-lock key (three Keychain items) was not read. So the app's
+   own button and the widget both went to the cloud. Fixed: the three items
+   are read as the map until the first refresh rewrites it.
+2. The two `reloadTimelines` at the tap's start never rendered: the widget
+   log has no timeline between the tap (00:30:32) and its end (00:30:57),
+   then two. WidgetKit defers a reload asked for by the app while that
+   widget's intent runs. So "Unlocking…" on one door is not possible this
+   way; the cue during a tap is `.invalidatableContent()` again, which dims
+   both names. The result after the tap is per door, as asked.
+3. The garage's cloud unlock took 21.1 s (200) against the tap's 20 s
+   deadline, so the widget said "Failed" for an unlock that happened; a
+   second tap on the same door waited at the gate and timed out too. The
+   deadline is 25 s, and a tap on a door still running is ignored.
+
+Nothing above is in the 2026-11-02 learnings' Simulator-first rule's
+favour or against it: the Simulator proved the mechanism and the phone
+proved the data. Both runs were needed.
+
+**Second run (00:40 UTC):** Bluetooth first, as intended, and the first
+logged timeout next to a lock: `BLE unlock failed in 3197 ms: Bluetooth
+setup timed out while exchanging keys; using the cloud`, then the cloud in
+19.9 s and "Unlocked" on the widget. The link connected; the key exchange
+did not finish within the 3 s setup budget, which was measured in the
+foreground app (session at 1.3–1.7 s). A background process gets slower
+Bluetooth from iOS (longer connection intervals), and the fallback costs
+~20 s, so a widget tap now gives Bluetooth setup 6 s; the screen keeps
+3 s. The cloud leg has its own 25 s deadline from the moment it starts,
+so the Bluetooth attempt never eats the cloud's time (a reviewer's catch:
+8 + 20 did not fit one 25 s deadline). One sample; the next taps' stage
+timings in `app.log` say whether 6 s is enough or the stall is the lock's. Measured on the
+Simulator: the tapped door shows "Failed" (no sign-in there) and clears;
+the other door does not move; the seven app flows still pass.
+
+Also new: `Library/Caches/app.log` in the app, every timing line, readable
+with `devicectl` like the widget's log, because the Bluetooth failures
+Amit sees next to the lock have never reached a log archive. The kept
+Bluetooth session between commands (the "interrupt, then lock" case) is
+PR B, after this log shows what those failures look like; yalexs-ble keeps
+its link 5.1 s after a command and the lock drops an idle link at 30 s, so
+that window is seconds, not the 30 s the design first said.
+
+**Third run (01:04 UTC), and Amit: "no dude."** Bluetooth from the widget
+still stalled in the key exchange, now at 6.4 s; the cloud took 7.9 s. No
+outcome was seen on the widget, and both names blinked. Three answers:
+
+1. **The stall is iOS, not the radio budget.** Apple, [Core Bluetooth
+   Background Processing](https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html):
+   an app without a Core Bluetooth background mode is "unable to perform
+   Bluetooth-related tasks, nor is it aware of any Bluetooth-related
+   events" while not in the foreground; the events queue until it comes
+   forward. The connect is done by the system, which is why "connected"
+   looked fine; the key exchange needs the delegate, which never fired.
+   The TRIAL's P4 said this; I logged it as "partial" and tried budgets.
+   The app now declares `UIBackgroundModes = bluetooth-central`, which
+   wakes the app for `CBCentralManagerDelegate`/`CBPeripheralDelegate`
+   calls. Phone-only to prove; the Simulator has no radio.
+2. **The outcome was drawn too late to be seen.** WidgetKit draws a reload
+   some seconds after it is asked for; a 4 s hold measured from the write
+   was over before the draw. The hold is 12 s.
+3. **Both names blinked** because I put `.invalidatableContent()` back
+   after the per-door redraw proved impossible mid-tap. Amit: no. There is
+   no cue during a tap now; the outcome after it is the feedback.

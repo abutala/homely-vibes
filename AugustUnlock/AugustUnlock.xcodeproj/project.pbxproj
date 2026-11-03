@@ -55,11 +55,21 @@
 			);
 			target = A1B2C3D4E5F60718293A4B08 /* AugustUnlockWidget */;
 		};
+		C1D2E3F4A5B60718293A4D02 /* Exceptions for "AugustUnlock" folder in "AugustUnlock" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = CE63666751A096A8D2512C72 /* AugustUnlock */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		FA6804D58B3486B44F788059 /* AugustUnlock */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				C1D2E3F4A5B60718293A4D02 /* Exceptions for "AugustUnlock" folder in "AugustUnlock" target */,
+			);
 			path = AugustUnlock;
 			sourceTree = "<group>";
 		};
@@ -433,8 +443,10 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 656D6H7G24;
 				ENABLE_PREVIEWS = YES;
+				CODE_SIGN_ENTITLEMENTS = AugustUnlock/AugustUnlock.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Unlocks your August lock over Bluetooth when you are at the door.";
+				INFOPLIST_FILE = AugustUnlock/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -470,8 +482,10 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 656D6H7G24;
 				ENABLE_PREVIEWS = YES;
+				CODE_SIGN_ENTITLEMENTS = AugustUnlock/AugustUnlock.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Unlocks your August lock over Bluetooth when you are at the door.";
+				INFOPLIST_FILE = AugustUnlock/Info.plist;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]" = YES;
@@ -504,6 +518,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 656D6H7G24;
+				CODE_SIGN_ENTITLEMENTS = AugustUnlockWidget/AugustUnlockWidget.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AugustUnlockWidget/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AugustUnlock;
@@ -533,6 +548,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 656D6H7G24;
+				CODE_SIGN_ENTITLEMENTS = AugustUnlockWidget/AugustUnlockWidget.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AugustUnlockWidget/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AugustUnlock;

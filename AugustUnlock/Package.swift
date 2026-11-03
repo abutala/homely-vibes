@@ -12,8 +12,8 @@ let package = Package(
             path: ".",
             sources: [
                 "AugustUnlock/AugustBLEProtocol.swift", "AugustUnlock/BackgroundExitPolicy.swift",
-                "AugustUnlock/CommandDeadline.swift", "AugustUnlock/CommandMachine.swift",
-                "AugustUnlockWidget/DoorNames.swift",
+                "AugustUnlock/CommandDeadline.swift", "AugustUnlock/CommandMachine.swift", "AugustUnlock/CommandGate.swift",
+                "AugustUnlockWidget/DoorNames.swift", "Shared/DoorState.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

@@ -55,8 +55,9 @@ protocol Home Assistant uses) to CoreBluetooth. See
 
 The Bluetooth path works only for a lock that holds an *offline key* for your
 account. August lists it on `GET /locks/{id}` under `OfflineKeys.loaded`; the
-app reads it when you pick the lock and again after any open that used the
-cloud, at most once per launch. A key that August shows under
+app reads it for every lock on the account when it lists them, when you pick
+a lock, and again after any open that used the cloud, at most once per launch
+per lock, so the widget's doors can go over Bluetooth too. A key that August shows under
 `OfflineKeys.created` is not on the lock yet. To load it (expected, not yet
 verified), stand at the door, turn off WiFi and cellular so the official August
 app has to use Bluetooth, and lock or unlock once with it. Until then that lock uses the cloud, with no
@@ -81,12 +82,18 @@ Long-press the Home Screen → **+** → AugustUnlock → **Doors**. One size, f
 width: an unlock button per lock, named as August names it, in lock-ID
 order. A tap sends unlock for that door and nothing else: the widget shows
 no state and never locks (unlock is a no-op on an unlocked door, so a
-repeat is harmless). The button is the lock icon; the door name under it
-dims while the tap runs. Each tap runs in the widget itself, through the
-cloud (1–25 s), with the app's sign-in read from the Keychain, and the app
-stays closed. A tap on the name or on empty space is a tap on the widget's
-body, which opens the app, as on any widget. A tap gets 20 s; past that
-the request is dropped by the phone, though August may still run it.
+repeat is harmless). The button is the lock icon. The widget cannot
+redraw while a tap runs, so nothing moves until it ends; then the tapped
+door's name says "Unlocked" or "Failed" for about ten seconds, then the
+name again. Each tap runs in the app's own
+process in the background (the app never comes forward), so it takes the
+same path as the app's button: Bluetooth when the lock has a loaded key
+(~1–3 s), the cloud otherwise or when Bluetooth fails (1–25 s). A second
+tap on a door whose unlock is still running does nothing. A tap on the
+name or on empty space is a tap on the widget's body, which opens the app,
+as on any widget. Bluetooth gets 6 s to set up, then the cloud gets 25 s;
+past that the request is dropped by the phone, though August may still
+run it.
 "Open the app to sign in" under the buttons means August rejected the
 sign-in; opening the app renews it.
 
@@ -164,8 +171,16 @@ turn. A second tap within 0.75 s is the same tap and sends nothing.
 
 The screen shows how long the last lock/unlock took ("Last unlock: 1.2 s"),
 after an icon for the path that carried it: a blue Bluetooth rune, or a grey
-cloud. For a per-stage split, read the phone's log from a Mac with the phone
-connected over USB. `log stream` reads only the Mac's own log, never the phone's, so collect
+cloud. Every timing line (each cloud request, each Bluetooth attempt with
+its stages, each widget tap) is also in the app's own file,
+`Library/Caches/app.log` (last 200 lines), which the phone keeps:
+
+```bash
+xcrun devicectl device copy from --device <UDID> --domain-type appDataContainer --domain-identifier com.deviationlabs.AugustUnlock.<TEAMID> --source Library/Caches/app.log --destination /tmp/august-app.log 2>&1 | tee /tmp/augustunlock-app-log.log
+```
+
+The same lines go to the system log; to read them with the rest of the
+phone's log, read the phone's log from a Mac with the phone connected over USB. `log stream` reads only the Mac's own log, never the phone's, so collect
 an archive from the phone, then read it:
 
 ```bash
@@ -189,7 +204,7 @@ the remembered peripheral connected without a scan):
 
 The app quits itself after 5 minutes in the background (`BackgroundExitPolicy.swift`).
 
-The Bluetooth protocol, the exit policy, the command machine and the widget's door names have unit
+The Bluetooth protocol, the exit policy, the command machine, the command gate, the widget's door names and door state have unit
 tests; the protocol's run against bytes produced by yalexs-ble's own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
 AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 
@@ -199,10 +214,22 @@ cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 
 The widget has a UI test on the Simulator (`UITests/WidgetTapTests.swift`):
 it adds the Doors widget through SpringBoard's gallery and checks the two
-buttons and the sign-in caption, then taps a button and checks that the app
-stays closed: the Simulator runs the widget's intent (Logbook 2026-11-02).
-On the phone the proof is the widget's own log, `Library/Caches/widget.log`
-in the widget's data container.
+buttons and the sign-in caption, then taps a button with the app quit and
+checks that the tapped door shows its result, holds it and clears it, and
+that the app stays closed. The tap runs in the app's process (Logbook
+2026-11-02); the Simulator's app has no sign-in, so the result is "Failed"
+within milliseconds. The Simulator has no Bluetooth and no August cloud:
+the key carry-over, the cloud's timing and the phone's reload deferral
+(Logbook 2026-11-03) were all found on the phone. The widget
+reads the tap's state from the Keychain, which the Simulator shares between
+the two bundles only through the `keychain-access-groups` entitlement both
+targets carry (Sideloadly ignores it and gives both the same group anyway).
+The app declares the `bluetooth-central` background mode (`Info.plist`,
+merged into the generated one): without it a backgrounded app gets no
+Bluetooth events, so a widget tap's key exchange stalled (Logbook
+2026-11-03).
+On the phone the proof is `app.log` above and the widget's own log,
+`Library/Caches/widget.log` in the widget's data container.
 
 ```bash
 xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnlockUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro' -allowProvisioningUpdates 2>&1 | tee /tmp/augustunlock-uitest.log
@@ -210,7 +237,8 @@ xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnloc
 
 `Package.swift` exists only for these tests: it builds the pure files alone
 (`AugustBLEProtocol.swift`, `BackgroundExitPolicy.swift`, `CommandDeadline.swift`,
-`CommandMachine.swift`, `AugustUnlockWidget/DoorNames.swift`). The command machine's properties are also pinned by
+`CommandMachine.swift`, `CommandGate.swift`, `AugustUnlockWidget/DoorNames.swift`,
+`Shared/DoorState.swift`). The command machine's properties are also pinned by
 `make formal` (see [formal/README.md](../formal/README.md)). The app builds from `AugustUnlock.xcodeproj`.
 
 The same properties run through the real screens on the Simulator against

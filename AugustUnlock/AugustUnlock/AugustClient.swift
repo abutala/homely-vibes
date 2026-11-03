@@ -85,8 +85,9 @@ final class AugustClient {
     func signOut() {
         for key in [
             "august_email", "august_password", "august_access_token",
-            "august_lock_id", "august_lock_name",
-        ] + Self.bluetoothKeychainKeys {
+            "august_lock_id", "august_lock_name", Self.bluetoothKeysKey,
+            "august_ble_key", "august_ble_slot", "august_ble_serial",
+        ] {
             KeychainStore.remove(key)
         }
         refreshedKeys.withLock { $0.removeAll() }
@@ -209,39 +210,79 @@ final class AugustClient {
         // either) — sort by lock ID so the list order is at least stable
         // across launches, even though it's arbitrary relative to the
         // account's real-world lock order.
-        return raw.sorted { $0.key < $1.key }.compactMap { id, fields in
+        let locks = raw.sorted { $0.key < $1.key }.compactMap { id, fields in
             (fields["LockName"] as? String).map { AugustLock(id: id, name: $0) }
         }
+        locks.forEach { refreshBluetoothKeyOnce(lockID: $0.id) }
+        return locks
     }
 
     func selectLock(_ lock: AugustLock) {
         KeychainStore.set(lock.id, forKey: "august_lock_id")
         KeychainStore.set(lock.name, forKey: "august_lock_name")
-        Self.bluetoothKeychainKeys.forEach { KeychainStore.remove($0) }
-        // The key was just deleted, so re-read it even if this launch already did.
+        // Re-read this lock's key even if this launch already did.
         _ = refreshedKeys.withLock { $0.remove(lock.id) }
         refreshBluetoothKeyOnce(lockID: lock.id)
     }
 
-    // MARK: - Bluetooth offline key
+    // MARK: - Bluetooth offline keys
 
-    private static let bluetoothKeychainKeys = ["august_ble_key", "august_ble_slot", "august_ble_serial"]
+    /// One Keychain item: lock ID → offline key, so every door the widget
+    /// shows can go over Bluetooth, not only the lock the app has picked.
+    private static let bluetoothKeysKey = "august_ble_keys"
+
+    private struct StoredKey: Codable {
+        let key: String
+        let slot: Int
+        let serial: String
+    }
 
     /// Lock IDs whose offline key was already re-read from August this launch.
     private let refreshedKeys = OSAllocatedUnfairLock(initialState: Set<String>())
 
-    private var bluetoothCredentials: AugustBLECredentials? {
-        guard let key = KeychainStore.get("august_ble_key"),
-            let slot = KeychainStore.get("august_ble_slot").flatMap(Int.init),
-            let serial = KeychainStore.get("august_ble_serial")
-        else { return nil }
-        return AugustBLECredentials(hexKey: key, slot: slot, serial: serial)
+    /// One refresh task per lock runs at a time; each read-change-write of
+    /// the map is one step.
+    private static let bluetoothKeysLock = OSAllocatedUnfairLock()
+
+    private static func bluetoothKeys() -> [String: StoredKey] {
+        guard let data = KeychainStore.get(bluetoothKeysKey)?.data(using: .utf8),
+            let keys = try? JSONDecoder().decode([String: StoredKey].self, from: data)
+        else { return legacyBluetoothKeys() }
+        return keys
     }
 
-    /// Re-reads the lock's offline key from GET /locks/{id} in the
-    /// background, at most once per launch per lock: at lock selection, and
-    /// after any open that had to use the cloud. That picks up a key the
-    /// official app loads later, or a rotated one, without delaying an open.
+    /// Before 2026-11-02 the one key lived in three items, for the picked
+    /// lock only. Read them as the map once, so an update does not send the
+    /// next open to the cloud; the refresh rewrites the map and the three
+    /// items are then unused.
+    private static func legacyBluetoothKeys() -> [String: StoredKey] {
+        guard let lockID = KeychainStore.get("august_lock_id"),
+            let key = KeychainStore.get("august_ble_key"),
+            let slot = KeychainStore.get("august_ble_slot").flatMap(Int.init),
+            let serial = KeychainStore.get("august_ble_serial")
+        else { return [:] }
+        return [lockID: StoredKey(key: key, slot: slot, serial: serial)]
+    }
+
+    private static func updateBluetoothKeys(_ change: (inout [String: StoredKey]) -> Void) {
+        bluetoothKeysLock.withLock {
+            var keys = bluetoothKeys()
+            change(&keys)
+            guard let data = try? JSONEncoder().encode(keys), let text = String(data: data, encoding: .utf8) else { return }
+            KeychainStore.set(text, forKey: bluetoothKeysKey)
+        }
+    }
+
+    private func bluetoothCredentials(for lockID: String) -> AugustBLECredentials? {
+        guard let stored = Self.bluetoothKeysLock.withLock({ Self.bluetoothKeys()[lockID] }) else { return nil }
+        return AugustBLECredentials(hexKey: stored.key, slot: stored.slot, serial: stored.serial)
+    }
+
+    /// Re-reads a lock's offline key from GET /locks/{id} in the
+    /// background, at most once per launch per lock: at each lock fetch, at
+    /// lock selection, and after any open that had to use the cloud. That
+    /// picks up a key the official app loads later, or a rotated one,
+    /// without delaying an open.
     private func refreshBluetoothKeyOnce(lockID: String) {
         let isFirst = refreshedKeys.withLock { $0.insert(lockID).inserted }
         guard isFirst else { return }
@@ -251,19 +292,17 @@ final class AugustClient {
     private func refreshBluetoothKey(lockID: String) async {
         guard let data = try? await sendLockRequest(method: "GET", path: "/locks/\(lockID)"),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            // Nothing is written once the lock changed or the account signed
-            // out while the fetch ran: this task outlives a cancelled command.
-            isReady, KeychainStore.get("august_lock_id") == lockID
+            // Nothing is written once the account signed out while the fetch
+            // ran: this task outlives a cancelled command.
+            KeychainStore.get("august_access_token") != nil
         else { return }
         guard let credentials = AugustBLECredentials(lockDetail: json) else {
-            Self.bluetoothKeychainKeys.forEach { KeychainStore.remove($0) }
-            Self.log.notice("No loaded offline key for this lock; opens use the cloud")
+            Self.updateBluetoothKeys { $0[lockID] = nil }
+            Self.log.notice("No loaded offline key for lock \(lockID.suffix(4), privacy: .public); its opens use the cloud")
             return
         }
-        KeychainStore.set(credentials.hexKey, forKey: "august_ble_key")
-        KeychainStore.set(String(credentials.slot), forKey: "august_ble_slot")
-        KeychainStore.set(credentials.serial, forKey: "august_ble_serial")
-        Self.log.notice("Stored the offline key; the next open tries Bluetooth first")
+        Self.updateBluetoothKeys { $0[lockID] = StoredKey(key: credentials.hexKey, slot: Int(credentials.slot), serial: credentials.serial) }
+        Self.log.notice("Stored the offline key for lock \(lockID.suffix(4), privacy: .public); its next open tries Bluetooth first")
     }
 
     // MARK: - Lock state / lock / unlock
@@ -281,43 +320,67 @@ final class AugustClient {
     }
 
     func unlock() async throws -> OperationReply {
-        try await operate(action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked)
+        guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
+        return try await unlock(lockID: lockID)
     }
 
-    /// Any lock on the account, through the cloud (only the selected lock has
-    /// an offline key on this phone). For the widget's intents when they run
-    /// in the app process.
-    func unlock(lockID: String) async throws -> OperationReply {
-        let state = try await cloudOperate(lockID: lockID, action: "unlock")
-        return OperationReply(state: state, path: .cloud)
+    /// Any lock on the account, Bluetooth first when it has a loaded key.
+    /// The widget's taps come here, in the app's process, which runs in the
+    /// background: iOS gives it slower Bluetooth, and the first such tap
+    /// timed out at 3 s during the key exchange (app.log, 2026-11-03). The
+    /// cloud fallback costs ~20 s, so a background tap can afford a longer
+    /// setup budget than the screen's 3 s.
+    /// `cloudDeadline` bounds the cloud leg alone, from the moment it
+    /// starts, so a Bluetooth attempt never eats the cloud's time.
+    func unlock(lockID: String, bluetoothSetupBudget: TimeInterval = 3, cloudDeadline: TimeInterval? = nil) async throws -> OperationReply {
+        try await operate(
+            lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked,
+            setupBudget: bluetoothSetupBudget, cloudDeadline: cloudDeadline)
     }
 
     func lock() async throws -> OperationReply {
-        try await operate(action: "lock", opcode: AugustBLE.lockOpcode, success: .locked)
+        guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
+        return try await operate(lockID: lockID, action: "lock", opcode: AugustBLE.lockOpcode, success: .locked)
     }
+
+    /// One command at a time, Bluetooth or cloud, whoever asks: the screen
+    /// and a widget tap in the same process must not open two Bluetooth
+    /// links to one lock (the second fails and goes to the cloud: a double
+    /// command the screen never sees).
+    private let gate = CommandGate()
 
     /// Bluetooth first when this lock has a loaded offline key, the cloud
     /// otherwise or if Bluetooth fails — unlock and lock are idempotent, so a
     /// cloud retry after a Bluetooth command that did land is harmless. A jam
     /// the lock reports over Bluetooth is final and is not retried.
-    private func operate(action: String, opcode: UInt8, success: LockState) async throws -> OperationReply {
-        guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
-        if let credentials = bluetoothCredentials {
+    private func operate(
+        lockID: String, action: String, opcode: UInt8, success: LockState, setupBudget: TimeInterval = 3,
+        cloudDeadline: TimeInterval? = nil
+    ) async throws -> OperationReply {
+        try await gate.enter()
+        defer { gate.leave() }
+        if let credentials = bluetoothCredentials(for: lockID) {
             let start = ContinuousClock.now
             do {
-                let timing = try await AugustBLEOperation.run(opcode: opcode, credentials: credentials)
-                Self.log.notice("BLE \(action, privacy: .public) -> ok in \(Self.ms(since: start)) ms (\(timing.description, privacy: .public))")
+                let timing = try await AugustBLEOperation.run(opcode: opcode, credentials: credentials, setupBudget: setupBudget)
+                Self.note("BLE \(action) -> ok in \(Self.ms(since: start)) ms (\(timing.description))")
                 return OperationReply(state: success, path: .bluetooth)
             } catch is CancellationError {
+                Self.note("BLE \(action) cancelled at \(Self.ms(since: start)) ms")
                 throw CancellationError()
             } catch let error as AugustBLEProtocolError where error.isMechanical {
-                Self.log.error("BLE \(action, privacy: .public) jammed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public)")
+                Self.note("BLE \(action) jammed in \(Self.ms(since: start)) ms: \(error.localizedDescription)")
                 throw error
             } catch {
-                Self.log.notice("BLE \(action, privacy: .public) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public); using the cloud")
+                Self.note("BLE \(action) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription); using the cloud")
             }
         }
-        let state = try await cloudOperate(lockID: lockID, action: action)
+        let state: LockState
+        if let cloudDeadline {
+            state = try await withDeadline(seconds: cloudDeadline) { try await self.cloudOperate(lockID: lockID, action: action) }
+        } else {
+            state = try await cloudOperate(lockID: lockID, action: action)
+        }
         refreshBluetoothKeyOnce(lockID: lockID)
         return OperationReply(state: state, path: .cloud)
     }
@@ -389,12 +452,19 @@ final class AugustClient {
         do {
             let (data, response) = try await session.data(for: request)
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
-            Self.log.notice("\(method, privacy: .public) \(path, privacy: .public) -> \(status) in \(Self.ms(since: start)) ms")
+            Self.note("\(method) \(path) -> \(status) in \(Self.ms(since: start)) ms")
             return (data, response)
         } catch {
-            Self.log.error("\(method, privacy: .public) \(path, privacy: .public) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription, privacy: .public)")
+            Self.note("\(method) \(path) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription)")
             throw error
         }
+    }
+
+    /// A timing line goes to the system log and to the app's own file
+    /// (`AppLog`), which the phone keeps and `devicectl` can copy.
+    private static func note(_ line: String) {
+        log.notice("\(line, privacy: .public)")
+        AppLog.note(line)
     }
 
     /// Lines go out at `.notice` or above: iOS keeps `.info` in memory only,

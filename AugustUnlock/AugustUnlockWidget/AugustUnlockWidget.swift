@@ -3,10 +3,11 @@ import SwiftUI
 import WidgetKit
 
 /// One full-width row: an unlock button per door, named as August names it.
-/// No state is shown and nothing locks (Amit, 2026-11-01). Each tap runs in
-/// the widget (`DoorIntents.swift`); the app never opens. The widget shares
-/// no code or state with the app; it only reads the app's sign-in
-/// (`WidgetCloud`).
+/// No lock state is shown and nothing locks (Amit, 2026-11-01). Each tap
+/// runs in the app's process, in the background (`DoorIntents.swift`); the
+/// app never comes forward. The widget shares no code with the app's
+/// screens; it reads the app's sign-in (`WidgetCloud`) and the per-door tap
+/// state (`DoorStateStore`) from the Keychain.
 @main
 struct AugustUnlockWidget: Widget {
     var body: some WidgetConfiguration {
@@ -23,6 +24,12 @@ struct DoorsEntry: TimelineEntry {
     let date: Date
     /// At most two, in `WidgetStore.locks` order (by lock ID).
     let names: [String]
+    /// The lock ID behind each name, empty for a door with no lock yet: the
+    /// button carries it, so a tap opens the door it shows, whatever list
+    /// the app holds.
+    let locks: [String]
+    /// One per name: what the tapped door shows while and just after a tap.
+    let marks: [DoorState.Mark]
     let message: String?
 }
 
@@ -37,18 +44,35 @@ struct DoorsProvider: TimelineProvider {
     static let fetchDeadline: TimeInterval = 4
 
     func placeholder(in context: Context) -> DoorsEntry {
-        DoorsEntry(date: .now, names: ["Door", "Door"], message: nil)
+        DoorsEntry(date: .now, names: ["Door", "Door"], locks: ["", ""], marks: [.none, .none], message: nil)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (DoorsEntry) -> Void) {
-        Task { completion(await refresh()) }
+        Task { completion(await refresh(at: .now)) }
     }
 
+    /// One entry now; one more at each moment a held result clears. The tap
+    /// writes its result and reloads this timeline when it ends
+    /// (`AppDoorAction`); a reload asked for while the tap runs is deferred
+    /// by WidgetKit until it returns (measured on the phone, Logbook
+    /// 2026-11-03), and the one cue WidgetKit offers during a tap,
+    /// `.invalidatableContent()`, dims every marked view, so there is none.
     func getTimeline(in context: Context, completion: @escaping (Timeline<DoorsEntry>) -> Void) {
-        Task { completion(Timeline(entries: [await refresh()], policy: .never)) }
+        Task {
+            let now = Date()
+            let entry = await refresh(at: now)
+            let state = DoorStateStore.load()
+            let later = state.clearDates(at: now).map { date in
+                DoorsEntry(date: date, names: entry.names, locks: entry.locks, marks: state.marks(count: DoorNames.count, at: date), message: entry.message)
+            }
+            completion(Timeline(entries: [entry] + later, policy: .never))
+        }
     }
 
-    private func refresh() async -> DoorsEntry {
+    private func refresh(at now: Date) async -> DoorsEntry {
+        let state = DoorStateStore.load()
+        let marks = state.marks(count: DoorNames.count, at: now)
+        WidgetLog.note("door state keychain=\(DoorStateStore.lastStatus) running=\(state.running.keys.sorted()) results=\(state.results.count)")
         do {
             let locks = try await withDeadline(seconds: Self.fetchDeadline) { try await WidgetCloud.fetchLocks() }
             WidgetStore.locks = locks
@@ -58,12 +82,12 @@ struct DoorsProvider: TimelineProvider {
             if case WidgetCloud.Failure.signedOut = error { WidgetStore.signedOut = true }
             WidgetLog.note("timeline fetch failed: \(error.localizedDescription); cached=\(WidgetStore.locks.count)")
             if !WidgetStore.signedOut, WidgetStore.locks.isEmpty {
-                return DoorsEntry(date: .now, names: DoorNames.names(cached: []), message: error.localizedDescription)
+                return DoorsEntry(date: now, names: DoorNames.names(cached: []), locks: DoorNames.ids(cached: []), marks: marks, message: error.localizedDescription)
             }
         }
         let names = DoorNames.names(cached: WidgetStore.locks.map(\.name))
         let message = WidgetStore.signedOut ? WidgetCloud.Failure.signedOut.errorDescription : nil
-        return DoorsEntry(date: .now, names: names, message: message)
+        return DoorsEntry(date: now, names: names, locks: DoorNames.ids(cached: WidgetStore.locks.map(\.id)), marks: marks, message: message)
     }
 }
 
@@ -79,13 +103,9 @@ struct DoorsView: View {
             HStack(spacing: 0) {
                 ForEach(Array(entry.names.enumerated()), id: \.offset) { position, name in
                     VStack(spacing: 6) {
-                        if position == 0 {
-                            Button(intent: OpenFirstDoorIntent()) { doorIcon }.accessibilityLabel(name)
-                        } else {
-                            Button(intent: OpenSecondDoorIntent()) { doorIcon }.accessibilityLabel(name)
-                        }
-                        Text(name).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7)
-                            .invalidatableContent()
+                        Button(intent: OpenDoorIntent(position: position, lockID: entry.locks[position])) { doorIcon }
+                            .accessibilityLabel(name)
+                        caption(name, entry.marks[position])
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -98,9 +118,21 @@ struct DoorsView: View {
         .containerBackground(.fill.tertiary, for: .widget)
     }
 
-    /// Nothing but the image inside the button: `.invalidatableContent()` on
-    /// the label made the button inert here (Logbook, 2026-11-02), so the
-    /// running-tap cue sits on the name below it instead.
+    /// The door's name, or what its tap did: the result sits here, beside
+    /// the button, never inside it (Logbook, 2026-11-02). No cue while a
+    /// tap runs: the only one WidgetKit offers dims both names (Amit,
+    /// 2026-11-03: no).
+    private func caption(_ name: String, _ mark: DoorState.Mark) -> some View {
+        let (text, color): (String, Color) = switch mark {
+        case .none: (name, .primary)
+        case .running: ("Unlocking\u{2026}", .secondary)
+        case .ok: ("Unlocked", .green)
+        case .failed: ("Failed", .red)
+        }
+        return Text(text).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(color)
+    }
+
+    /// Nothing but the image inside the button.
     private var doorIcon: some View {
         Image(systemName: "lock.open.fill").font(.system(size: 34)).padding(8)
     }
