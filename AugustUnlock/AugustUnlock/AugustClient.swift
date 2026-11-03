@@ -265,19 +265,26 @@ final class AugustClient {
     /// Lock IDs whose offline key was already re-read from August this launch.
     private let refreshedKeys = OSAllocatedUnfairLock(initialState: Set<String>())
 
-    private static var bluetoothKeys: [String: StoredKey] {
-        get {
-            guard let data = KeychainStore.get(bluetoothKeysKey)?.data(using: .utf8) else { return [:] }
-            return (try? JSONDecoder().decode([String: StoredKey].self, from: data)) ?? [:]
-        }
-        set {
-            guard let data = try? JSONEncoder().encode(newValue), let text = String(data: data, encoding: .utf8) else { return }
+    /// One refresh task per lock runs at a time; each read-change-write of
+    /// the map is one step.
+    private static let bluetoothKeysLock = OSAllocatedUnfairLock()
+
+    private static func bluetoothKeys() -> [String: StoredKey] {
+        guard let data = KeychainStore.get(bluetoothKeysKey)?.data(using: .utf8) else { return [:] }
+        return (try? JSONDecoder().decode([String: StoredKey].self, from: data)) ?? [:]
+    }
+
+    private static func updateBluetoothKeys(_ change: (inout [String: StoredKey]) -> Void) {
+        bluetoothKeysLock.withLock {
+            var keys = bluetoothKeys()
+            change(&keys)
+            guard let data = try? JSONEncoder().encode(keys), let text = String(data: data, encoding: .utf8) else { return }
             KeychainStore.set(text, forKey: bluetoothKeysKey)
         }
     }
 
     private func bluetoothCredentials(for lockID: String) -> AugustBLECredentials? {
-        guard let stored = Self.bluetoothKeys[lockID] else { return nil }
+        guard let stored = Self.bluetoothKeysLock.withLock({ Self.bluetoothKeys()[lockID] }) else { return nil }
         return AugustBLECredentials(hexKey: stored.key, slot: stored.slot, serial: stored.serial)
     }
 
@@ -300,11 +307,11 @@ final class AugustClient {
             KeychainStore.get("august_access_token") != nil
         else { return }
         guard let credentials = AugustBLECredentials(lockDetail: json) else {
-            Self.bluetoothKeys[lockID] = nil
+            Self.updateBluetoothKeys { $0[lockID] = nil }
             Self.log.notice("No loaded offline key for lock \(lockID.suffix(4), privacy: .public); its opens use the cloud")
             return
         }
-        Self.bluetoothKeys[lockID] = StoredKey(key: credentials.hexKey, slot: Int(credentials.slot), serial: credentials.serial)
+        Self.updateBluetoothKeys { $0[lockID] = StoredKey(key: credentials.hexKey, slot: Int(credentials.slot), serial: credentials.serial) }
         Self.log.notice("Stored the offline key for lock \(lockID.suffix(4), privacy: .public); its next open tries Bluetooth first")
     }
 

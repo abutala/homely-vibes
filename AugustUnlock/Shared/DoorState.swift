@@ -10,39 +10,45 @@ struct DoorState: Codable, Equatable {
         let at: Date
     }
 
-    /// Positions with a tap in flight.
-    var running: Set<Int> = []
+    /// Taps in flight: when each started, keyed by the position's text (JSON).
+    var running: [String: Date] = [:]
     /// The last result per position, keyed by the position's text (JSON).
     var results: [String: Result] = [:]
 
     /// How long a result stays on the widget.
     static let hold: TimeInterval = 4
+    /// A tap older than this is over whatever happened: the process that ran
+    /// it may have died before it wrote the result.
+    static let runningLimit: TimeInterval = 30
 
     enum Mark: Equatable {
         case none, running, ok, failed
     }
 
-    mutating func start(_ position: Int) {
-        running.insert(position)
+    mutating func start(_ position: Int, at now: Date) {
+        running[String(position)] = now
         results[String(position)] = nil
     }
 
     mutating func finish(_ position: Int, ok: Bool, at now: Date) {
-        running.remove(position)
+        running[String(position)] = nil
         results[String(position)] = Result(ok: ok, at: now)
     }
 
-    /// The mark per position at `now`: a result older than `hold` is gone.
+    /// The mark per position at `now`: a result older than `hold` is gone,
+    /// and so is a tap older than `runningLimit`.
     func marks(count: Int, at now: Date) -> [Mark] {
         (0..<count).map { position in
-            if running.contains(position) { return .running }
+            if let started = running[String(position)], now < started + Self.runningLimit { return .running }
             guard let result = results[String(position)], now < result.at + Self.hold else { return .none }
             return result.ok ? .ok : .failed
         }
     }
 
-    /// When the last held result clears, if any is still showing at `now`.
+    /// When the next showing mark clears on its own, if any is showing at
+    /// `now`: the latest held result, or a running tap at its limit.
     func clearDate(at now: Date) -> Date? {
-        results.values.map { $0.at + Self.hold }.filter { $0 > now }.max()
+        let ends = results.values.map { $0.at + Self.hold } + running.values.map { $0 + Self.runningLimit }
+        return ends.filter { $0 > now }.max()
     }
 }

@@ -13,16 +13,16 @@ enum AppDoorAction {
     static let deadline: TimeInterval = 20
 
     static func unlock(position: Int) async {
-        DoorStateStore.update { $0.start(position) }
+        DoorStateStore.update { $0.start(position, at: Date()) }
         AppLog.note("widget tap position=\(position) door state keychain=\(DoorStateStore.lastStatus)")
         WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
         let start = ContinuousClock.now
         var ok = false
         do {
-            let locks = try await AugustClient.shared.knownLocks()
-            guard locks.indices.contains(position) else { throw AugustError.noLocks }
             let reply = try await withDeadline(seconds: deadline) {
-                try await AugustClient.shared.unlock(lockID: locks[position].id)
+                let locks = try await AugustClient.shared.knownLocks()
+                guard locks.indices.contains(position) else { throw AugustError.noLocks }
+                return try await AugustClient.shared.unlock(lockID: locks[position].id)
             }
             ok = true
             AppLog.note("widget unlock position=\(position) ok via \(reply.path.rawValue) in \(start.duration(to: .now))")
