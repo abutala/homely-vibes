@@ -817,3 +817,24 @@ Maintainability, same PR (Amit: "we've churned this app a lot"): one
 (three readers before); one `LineLog` for `app.log` and `widget.log` (two
 copies before); the screen's background keep-alive and the link's share
 `BackgroundTask`.
+
+**The door run (03:57 UTC).** The kept link works: after an unlock over
+Bluetooth, the lock command was written 214 ms after it started and done
+at 2263 ms, with no connect and no key exchange (`BLE lock -> ok in 2263
+ms (found -, connected -, session -, written 214, done 2262)`). What is
+slow is the connect: 9396 ms to the remembered peripheral, and in those
+nine seconds the scan never saw the lock advertise once. A lock connected
+to another central does not advertise, and this lock sits behind the
+Wi-Fi bridge, which connects to it for every cloud command; this morning,
+with no cloud traffic, the same connect took 611 ms. So every cloud
+fallback makes the next Bluetooth connect wait for the bridge, and a
+two-minute pause was not enough. The lock dropped the link itself 4 s
+after the last command. Amit's taps during the wait cancelled two
+commands before the write (each dropped cleanly; the third got the link).
+
+What this says about budgets: the connect wait is the lock coming free,
+and for this lock the cloud takes 8–25 s, so a longer Bluetooth wait costs
+nothing against it. The right shape is a race, not a budget: start the
+cloud after the setup budget but let Bluetooth keep going, first result
+wins, the other is cancelled (unlock and lock are idempotent). That is its
+own change (TRIAL first); this PR keeps the 6 s budget.
