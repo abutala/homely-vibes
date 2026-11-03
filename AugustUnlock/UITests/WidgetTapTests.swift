@@ -10,7 +10,7 @@ import XCTest
 /// AugustUnlockUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 /// -allowProvisioningUpdates` (the README's Tests section).
 /// `DoorState.hold` in the app, which a UI test cannot import.
-private let DoorStateHold: TimeInterval = 4
+private let DoorStateHold: TimeInterval = 12
 
 final class WidgetTapTests: XCTestCase {
     private let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
