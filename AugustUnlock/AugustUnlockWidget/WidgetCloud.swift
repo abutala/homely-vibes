@@ -2,7 +2,7 @@ import Foundation
 import Security
 import os
 
-/// The widget's own path to August's cloud. It only reads the app's sign-in
+/// The widget's own path to August's lock list. It only reads the app's sign-in
 /// from the Keychain (Sideloadly gives both targets the same default access
 /// group, see the Logbook) and never writes it: a token refresh, a lock pick
 /// or the Bluetooth key stay the app's alone. On a 401 the widget shows
@@ -40,12 +40,6 @@ enum WidgetCloud {
         return raw.sorted { $0.key < $1.key }.compactMap { id, fields in
             (fields["LockName"] as? String).map { Lock(id: id, name: $0) }
         }
-    }
-
-    /// A 2xx means August accepted the command; the reply's state is not
-    /// shown, so it is not read.
-    static func unlock(lockID: String) async throws {
-        _ = try await send(method: "PUT", path: "/remoteoperate/\(lockID)/unlock")
     }
 
     private static func send(method: String, path: String) async throws -> Data {

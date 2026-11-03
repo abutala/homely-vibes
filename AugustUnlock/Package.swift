@@ -13,7 +13,7 @@ let package = Package(
             sources: [
                 "AugustUnlock/AugustBLEProtocol.swift", "AugustUnlock/BackgroundExitPolicy.swift",
                 "AugustUnlock/CommandDeadline.swift", "AugustUnlock/CommandMachine.swift",
-                "AugustUnlockWidget/DoorNames.swift",
+                "AugustUnlockWidget/DoorNames.swift", "Shared/DoorState.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),

@@ -651,3 +651,51 @@ Learnings, for the next widget:
 5. Sideloadly sometimes opens with "Apple Silicon" selected as the device;
    it refuses that install (Patreon-only), so nothing lands on the Mac, but
    the phone must be re-selected by hand before Start.
+
+## 2026-11-02 — One door blinks, the result shows, and a widget tap goes over Bluetooth
+
+Amit, after the widget shipped: a tap dimmed both doors, nothing said
+whether it worked, and the widget used only the cloud. A scoped TRIAL on the
+design (`.foreground(.dynamic)` in `supportedModes`, a kept Bluetooth link,
+a timeline written from the tap) found two blockers before any code, both
+settled by one-rung Simulator probes:
+
+1. **A widget intent can run in the app's process.** Apple's article lists
+   `openAppWhenRun` and four protocols as what moves it there;
+   `ForegroundContinuableIntent` is deprecated in favour of `supportedModes`.
+   Measured: `supportedModes = [.background, .foreground(.dynamic)]` ran
+   `perform()` in the `AugustUnlock` process; `[.background]` alone kept it
+   in the extension. With the app quit, the tap launched it in the
+   background, `perform()` ran, and the screen's `onAppear` never fired: no
+   open-unlock, no exit timer, no window. The app never comes forward
+   because nothing calls `continueInForeground`. So the widget's tap now
+   uses the app's `AugustClient`: Bluetooth first when the lock has a loaded
+   key, the cloud otherwise. The widget's own cloud unlock is gone.
+2. **The widget cannot read the app's `UserDefaults`** (no App Group under
+   free signing), so the per-door state (`DoorState`: which door runs, its
+   last result and when) goes through the Keychain, the store the widget's
+   sign-in read already crosses. On the Simulator the two bundles share the
+   Keychain only with a `keychain-access-groups` entitlement on both targets
+   (without it the widget read `errSecItemNotFound`; with it, the item).
+   Sideloadly's re-sign ignores the file (the IPA is built unsigned) and
+   gives both bundles the same default group, which is how the token read
+   already works on the phone.
+
+The rest followed the verdict: per-lock offline keys (one Keychain map by
+lock ID, refreshed for every lock the account lists) so the second door is
+not cloud-only; one `CommandGate` so the screen and a widget tap in the
+same process never open two Bluetooth links to a lock; the tap's own 20 s
+deadline; `.invalidatableContent()` gone — it dims every marked view for any
+tap, which was the "both doors blink". The tap writes `running` and reloads
+the widget's timeline, runs, writes the result and reloads again; the
+provider adds a second entry at result + 4 s that clears it. Measured on the
+Simulator: the tapped door shows "Failed" (no sign-in there) and clears;
+the other door does not move; the seven app flows still pass.
+
+Also new: `Library/Caches/app.log` in the app, every timing line, readable
+with `devicectl` like the widget's log, because the Bluetooth failures
+Amit sees next to the lock have never reached a log archive. The kept
+Bluetooth session between commands (the "interrupt, then lock" case) is
+PR B, after this log shows what those failures look like; yalexs-ble keeps
+its link 5.1 s after a command and the lock drops an idle link at 30 s, so
+that window is seconds, not the 30 s the design first said.

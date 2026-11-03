@@ -433,6 +433,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 656D6H7G24;
 				ENABLE_PREVIEWS = YES;
+				CODE_SIGN_ENTITLEMENTS = AugustUnlock/AugustUnlock.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Unlocks your August lock over Bluetooth when you are at the door.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -470,6 +471,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 656D6H7G24;
 				ENABLE_PREVIEWS = YES;
+				CODE_SIGN_ENTITLEMENTS = AugustUnlock/AugustUnlock.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Unlocks your August lock over Bluetooth when you are at the door.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
@@ -504,6 +506,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 656D6H7G24;
+				CODE_SIGN_ENTITLEMENTS = AugustUnlockWidget/AugustUnlockWidget.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AugustUnlockWidget/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AugustUnlock;
@@ -533,6 +536,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 656D6H7G24;
+				CODE_SIGN_ENTITLEMENTS = AugustUnlockWidget/AugustUnlockWidget.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = AugustUnlockWidget/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AugustUnlock;

@@ -2,12 +2,16 @@ import XCTest
 
 /// The widget on the Simulator: added through SpringBoard's own gallery, it
 /// draws two buttons before it has a lock list and shows its sign-in caption
-/// (the 2026-11-01 bug), and a tap on a button runs in the widget: the app
+/// (the 2026-11-01 bug), and a tap on a button runs in the app's process in
+/// the background: the tapped door shows its progress and result, the app
 /// stays closed.
 ///
 /// Run: `xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme
 /// AugustUnlockUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 /// -allowProvisioningUpdates` (the README's Tests section).
+/// `DoorState.hold` in the app, which a UI test cannot import.
+private let DoorStateHold: TimeInterval = 4
+
 final class WidgetTapTests: XCTestCase {
     private let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
     private let app = XCUIApplication()
@@ -17,6 +21,9 @@ final class WidgetTapTests: XCTestCase {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         XCUIDevice.shared.press(.home)
         XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 5))
+        // The common case on the phone: the app has quit (5 minutes in the
+        // background), so the tap launches it in the background.
+        app.terminate()
 
         if !springboard.staticTexts["Door 1"].waitForExistence(timeout: 2) {
             try addWidget()
@@ -36,7 +43,14 @@ final class WidgetTapTests: XCTestCase {
         // finished` in its log, 2026-11-02); a tap that opens the app is the
         // inert-button bug, not a Simulator limit (Logbook, 2026-11-02).
         door.tap()
-        XCTAssertFalse(app.wait(for: .runningForeground, timeout: 3), "a widget tap opened the app")
+        // The tap runs in the app's process, in the background; the widget
+        // reads its result from the Keychain (a failure here, within
+        // milliseconds: the Simulator's app has no sign-in, so "Unlocking…"
+        // is only seen on the phone), holds it, then clears it.
+        XCTAssertTrue(springboard.staticTexts["Failed"].waitForExistence(timeout: 5), springboard.debugDescription)
+        XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "the other door must not move")
+        XCTAssertTrue(springboard.staticTexts["Door 1"].waitForExistence(timeout: DoorStateHold + 10), "the result must clear")
+        XCTAssertFalse(app.wait(for: .runningForeground, timeout: 1), "a widget tap opened the app")
     }
 
     /// Long-press the Home Screen → Edit → Add Widget → search → add.
