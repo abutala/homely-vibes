@@ -349,9 +349,8 @@ final class AugustClient {
     /// cloud retry after a Bluetooth command that did land is harmless. A jam
     /// the lock reports over Bluetooth is final and is not retried.
     private func operate(lockID: String, action: String, opcode: UInt8, success: LockState) async throws -> OperationReply {
-        await gate.enter()
+        try await gate.enter()
         defer { gate.leave() }
-        try Task.checkCancellation()
         if let credentials = bluetoothCredentials(for: lockID) {
             let start = ContinuousClock.now
             do {
@@ -462,43 +461,5 @@ final class AugustClient {
     private static func ms(since start: ContinuousClock.Instant) -> Int {
         let elapsed = ContinuousClock.now - start
         return Int(elapsed.components.seconds * 1000 + elapsed.components.attoseconds / 1_000_000_000_000_000)
-    }
-}
-
-/// A first-come queue: `enter` waits until the previous holder leaves.
-/// An actor's own methods do not serialise across an `await`, so the queue
-/// is explicit.
-final class CommandGate: Sendable {
-    private let state = OSAllocatedUnfairLock(initialState: (busy: false, waiters: [CheckedContinuation<Void, Never>]()))
-
-    func enter() async {
-        let acquired = state.withLock { s -> Bool in
-            if s.busy { return false }
-            s.busy = true
-            return true
-        }
-        if acquired { return }
-        await withCheckedContinuation { continuation in
-            let acquired = state.withLock { s -> Bool in
-                if s.busy {
-                    s.waiters.append(continuation)
-                    return false
-                }
-                s.busy = true
-                return true
-            }
-            if acquired { continuation.resume() }
-        }
-    }
-
-    func leave() {
-        let next = state.withLock { s -> CheckedContinuation<Void, Never>? in
-            if s.waiters.isEmpty {
-                s.busy = false
-                return nil
-            }
-            return s.waiters.removeFirst()
-        }
-        next?.resume()
     }
 }

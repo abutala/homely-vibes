@@ -201,7 +201,7 @@ the remembered peripheral connected without a scan):
 
 The app quits itself after 5 minutes in the background (`BackgroundExitPolicy.swift`).
 
-The Bluetooth protocol, the exit policy, the command machine and the widget's door names have unit
+The Bluetooth protocol, the exit policy, the command machine, the command gate, the widget's door names and door state have unit
 tests; the protocol's run against bytes produced by yalexs-ble's own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
 AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 
@@ -228,7 +228,8 @@ xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnloc
 
 `Package.swift` exists only for these tests: it builds the pure files alone
 (`AugustBLEProtocol.swift`, `BackgroundExitPolicy.swift`, `CommandDeadline.swift`,
-`CommandMachine.swift`, `AugustUnlockWidget/DoorNames.swift`). The command machine's properties are also pinned by
+`CommandMachine.swift`, `CommandGate.swift`, `AugustUnlockWidget/DoorNames.swift`,
+`Shared/DoorState.swift`). The command machine's properties are also pinned by
 `make formal` (see [formal/README.md](../formal/README.md)). The app builds from `AugustUnlock.xcodeproj`.
 
 The same properties run through the real screens on the Simulator against

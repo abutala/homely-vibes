@@ -47,10 +47,16 @@ enum AppLog {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("app.log")
     }
 
+    /// Lines come from several tasks at once (key refreshes, a tap, the
+    /// screen); each read-append-write is one step.
+    private static let lock = OSAllocatedUnfairLock()
+
     static func note(_ message: String) {
-        let stamp = ISO8601DateFormatter().string(from: Date())
-        var lines = (try? String(contentsOf: url, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
-        lines.append("\(stamp) \(message)")
-        try? lines.suffix(200).joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
+        lock.withLock {
+            let stamp = ISO8601DateFormatter().string(from: Date())
+            var lines = (try? String(contentsOf: url, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
+            lines.append("\(stamp) \(message)")
+            try? lines.suffix(200).joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
+        }
     }
 }
