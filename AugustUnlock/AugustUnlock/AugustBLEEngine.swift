@@ -349,7 +349,9 @@ nonisolated final class AugustBLEEngine {
     private func fired(_ timer: Timer, at now: Double) -> [Output] {
         switch timer {
         case .setup(let token):
-            guard let head = queue.first, head.token == token, link != .ready, link != .none else { return [] }
+            // Stale once the session opened: from `.opening` on, the
+            // operation deadline owns the command.
+            guard let head = queue.first, head.token == token, link != .ready, link != .opening, link != .none else { return [] }
             let stage = stageName
             var out: [Output] = [.complete(token, .setupTimedOut(stage: stage))]
             queue.removeFirst()

@@ -251,6 +251,13 @@ final class AugustBLEEngineTests: XCTestCase {
         XCTAssertEqual(out, [.write(secureWrite, engineShutdown()), .schedule(.close(epoch: 1), 0.3)])
     }
 
+    func testTheSetupTimerIsStaleOnceTheSessionOpened() {
+        openLink()
+        // Session open, plain notify still pending: the operation deadline owns it now.
+        XCTAssertEqual(send(.timer(.setup(1)), after: 0.1), [])
+        XCTAssertEqual(send(.notifyEnabled(read, error: nil), after: 0.3), [.write(write, unlock1)])
+    }
+
     func testAQueuedCommandStartsItsBudgetsWhenItBecomesHead() {
         _ = send(command(1, AugustBLE.unlockOpcode))
         XCTAssertEqual(send(command(2, AugustBLE.lockOpcode), after: 0.5), [])
