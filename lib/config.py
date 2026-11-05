@@ -447,12 +447,29 @@ class UplinkWatchdogConfig:
 
 
 @dataclass
+class IotGatekeeperConfig:
+    """Block unknown MACs on the Deco's IoT network.
+
+    Logs in with the uplink watchdog's Deco credential. The allowlist holds
+    household MACs, so it lives only in the gitignored local.yaml.
+    """
+
+    enabled: bool
+    allowed_macs: list[str]
+    # More strangers than this in one tick blocks none of them and alerts:
+    # a mass block is far more likely a bad allowlist than an invasion.
+    max_blocks_per_tick: int
+    state_file: str
+
+
+@dataclass
 class NetworkCheckConfig:
     """Network bandwidth monitoring configuration"""
 
     min_dl_bw: int
     min_ul_bw: int
     uplink_watchdog: UplinkWatchdogConfig
+    iot_gatekeeper: IotGatekeeperConfig
 
 
 @dataclass

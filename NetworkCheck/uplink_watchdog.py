@@ -25,7 +25,7 @@ Layout (one concern per module):
     probes.py          -- the only code that touches the real network
     watchdog_state.py  -- what survives between cron ticks
     watchdog_policy.py -- when to act; the whole risk surface, pure and testable
-    common.py          -- notifier + invocation banner shared across NetworkCheck
+    common.py          -- notifier, invocation banner and Deco admin lock, shared
 
 Deployment: cron runs `check` every few minutes (run-once per tick -- fresh
 state load each run, free crash recovery, matches the repo cron convention).
@@ -44,7 +44,8 @@ from typing import Any, Callable, Optional, Protocol
 from lib.config import UplinkWatchdogConfig, get_config
 from lib.logger import get_logger
 from lib.notifications import Notifier
-from NetworkCheck.common import log_invocation, network_notifier
+from lib.file_lock import LockTimeoutError
+from NetworkCheck.common import deco_admin_lock, log_invocation, network_notifier
 from NetworkCheck.deco_client import (
     DecoAPIError,
     DecoAuthError,
@@ -57,6 +58,7 @@ from NetworkCheck.watchdog_policy import ActionDecision, should_act
 from NetworkCheck.watchdog_state import load_state, save_state
 
 ALERT_TITLE = "Uplink Watchdog"
+WATCHDOG_LOCK_WAIT_S = 240
 HEALTHY = "mesh healthy"
 
 # urllib3 prefixes its errors with the pool it failed on. True but useless on a
@@ -628,6 +630,21 @@ def main() -> None:
         print(json.dumps(asdict(watchdog.state), indent=2))
         return
 
+    # Every other command logs into the Deco. The admin account is
+    # single-session, so the IoT gatekeeper must not log in mid-tick.
+    # The wait is long on purpose: a gatekeeper tick whose reads all time out
+    # can hold the lock past a minute, and skipping a watchdog tick delays a
+    # needed reboot by ten.
+    try:
+        with deco_admin_lock(timeout_s=WATCHDOG_LOCK_WAIT_S):
+            _run(args, watchdog, logger)
+    except LockTimeoutError:
+        logger.warning("Another script holds the Deco admin session; skipping this tick")
+        if args.command != "check":
+            raise SystemExit(f"{args.command}: the Deco admin session is busy; try again") from None
+
+
+def _run(args: argparse.Namespace, watchdog: UplinkWatchdog, logger: logging.Logger) -> None:
     if args.command == "probe":
         for line in watchdog.probe_deco():
             print(line)

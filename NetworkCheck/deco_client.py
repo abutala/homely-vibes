@@ -72,6 +72,14 @@ class DecoAPIError(Exception):
     """Deco admin API returned an error or an unparsable response."""
 
 
+class DecoSessionLost(DecoAPIError):
+    """The session was evicted by another login with the same admin account.
+
+    The router answers an evicted session with ``{"data": ""}`` (measured on an
+    XE75 Pro, firmware 1.4.5). A fresh login fixes it.
+    """
+
+
 def _form(params: dict[str, str]) -> str:
     """Name the call for an error message.
 
@@ -204,13 +212,7 @@ class DecoClient:
 
     def list_decos(self) -> list[dict[str, Any]]:
         """Return the mesh device list (one entry per Deco unit)."""
-        self.login_if_needed()
-        data = self._post_encrypted(
-            f"/cgi-bin/luci/;stok={self._stok}/admin/device",
-            {"form": "device_list"},
-            {"operation": "read"},
-        )
-        self._raise_for_error(data, "list_decos")
+        data = self._read("admin/device", "device_list", {"operation": "read"})
         try:
             device_list = data["result"]["device_list"]
         except (KeyError, TypeError) as err:
@@ -219,18 +221,56 @@ class DecoClient:
 
     def list_clients(self) -> list[dict[str, Any]]:
         """Return every client the mesh currently sees, wired and wireless."""
-        self.login_if_needed()
-        data = self._post_encrypted(
-            f"/cgi-bin/luci/;stok={self._stok}/admin/client",
-            {"form": "client_list"},
+        data = self._read(
+            "admin/client",
+            "client_list",
             {"operation": "read", "params": {"device_mac": "default"}},
         )
-        self._raise_for_error(data, "list_clients")
         try:
             client_list = data["result"]["client_list"]
         except (KeyError, TypeError) as err:
             raise DecoAPIError(f"Unexpected client_list response: {data}") from err
         return list(client_list)
+
+    def list_blocked(self) -> list[dict[str, Any]]:
+        """Return the mesh-wide blocklist.
+
+        The router sends an empty dict, not an empty list, when nothing is
+        blocked. Anything else that is not a list raises: reading it as empty
+        would make every tick block and alert again.
+        """
+        data = self._read("admin/client", "black_list", {"operation": "list"})
+        try:
+            blocked = data["result"]["client_list"]
+        except (KeyError, TypeError) as err:
+            raise DecoAPIError(f"Unexpected black_list response: {data}") from err
+        if blocked == {}:
+            return []
+        if not isinstance(blocked, list):
+            raise DecoAPIError(f"Unexpected black_list shape: {type(blocked).__name__}")
+        return blocked
+
+    def block(self, mac: str, name: str, client_type: str) -> None:
+        """Add one client to the mesh-wide blocklist.
+
+        ``name`` is the base64 name exactly as ``client_list`` returns it. Never
+        retried: the next tick reads the blocklist again, so a lost reply only
+        delays the outcome.
+        """
+        entry = {"mac": mac, "name": name, "client_type": client_type}
+        self._command(
+            "admin/client", "black_list", {"operation": "block", "params": {"client_list": [entry]}}
+        )
+        logger.info("Deco block issued for %s", mac)
+
+    def unblock(self, macs: list[str]) -> None:
+        """Remove clients from the mesh-wide blocklist."""
+        if not macs:
+            raise ValueError("unblock() requires at least one MAC")
+        self._command(
+            "admin/client", "black_list", {"operation": "unblock", "params": {"client_list": macs}}
+        )
+        logger.info("Deco unblock issued for %s", ", ".join(macs))
 
     def reboot(self, macs: list[str]) -> None:
         """Reboot the named Deco units.
@@ -242,15 +282,51 @@ class DecoClient:
         """
         if not macs:
             raise ValueError("reboot() requires at least one MAC")
-        self.login_if_needed()
-        data = self._post_encrypted(
-            f"/cgi-bin/luci/;stok={self._stok}/admin/device",
-            {"form": "system"},
+        self._command(
+            "admin/device",
+            "system",
             {"operation": "reboot", "params": {"mac_list": [{"mac": m} for m in macs]}},
-            retry=False,
         )
-        self._raise_for_error(data, "reboot")
         logger.info("Deco reboot issued for %s", ", ".join(macs))
+
+    def _read(self, path: str, form: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """An authenticated read. Logs in again once if another login evicted us.
+
+        Reads are safe to repeat, so a lost session costs one extra handshake
+        instead of a failed tick -- which for the watchdog's census would read
+        as zero clients and start the outage clock.
+        """
+        self.login_if_needed()
+        try:
+            data = self._post_encrypted(self._admin_path(path), {"form": form}, payload)
+        except DecoSessionLost:
+            logger.warning("Deco %s: session evicted by another login; logging in again", form)
+            self.login()
+            data = self._post_encrypted(self._admin_path(path), {"form": form}, payload)
+        self._raise_for_error(data, form)
+        return data
+
+    def _command(self, path: str, form: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """An authenticated write. Never retried and never re-sent after an eviction.
+
+        Some writes answer with a plain, unencrypted ``{"error_code": 0}``
+        rather than an encrypted ``data`` field, so both shapes are accepted.
+        """
+        self.login_if_needed()
+        response = self._post(
+            self._admin_path(path), {"form": form}, self._encode_payload(payload), retry=False
+        )
+        if "data" in response:
+            data = self._decrypt_data(response, form)
+        elif "error_code" in response or "errorcode" in response:
+            data = response
+        else:
+            raise DecoAPIError(f"Deco {form} returned no data")
+        self._raise_for_error(data, form)
+        return data
+
+    def _admin_path(self, path: str) -> str:
+        return f"/cgi-bin/luci/;stok={self._stok}/{path}"
 
     def _fetch_password_key(self) -> None:
         result = self._post_plain("/cgi-bin/luci/;stok=/login", {"form": "keys"})
@@ -273,18 +349,17 @@ class DecoClient:
         return self._post(path, params, json.dumps({"operation": "read"}))
 
     def _post_encrypted(
-        self,
-        path: str,
-        params: dict[str, str],
-        payload: dict[str, Any],
-        *,
-        retry: bool = True,
+        self, path: str, params: dict[str, str], payload: dict[str, Any]
     ) -> dict[str, Any]:
-        response = self._post(path, params, self._encode_payload(payload), retry=retry)
-        encrypted = response.get("data")
-        if not encrypted:
-            raise DecoAPIError(f"Deco {_form(params)} returned no data")
-        return self._decrypt(encrypted)
+        response = self._post(path, params, self._encode_payload(payload))
+        return self._decrypt_data(response, _form(params))
+
+    def _decrypt_data(self, response: dict[str, Any], form: str) -> dict[str, Any]:
+        if "data" not in response:
+            raise DecoAPIError(f"Deco {form} returned no data")
+        if not response["data"]:
+            raise DecoSessionLost(f"Deco {form} returned empty data (session evicted)")
+        return self._decrypt(response["data"])
 
     def _post(
         self, path: str, params: dict[str, str], body: str, *, retry: bool = True

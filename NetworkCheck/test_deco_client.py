@@ -19,6 +19,7 @@ from NetworkCheck.deco_client import (
     DecoAPIError,
     DecoAuthError,
     DecoClient,
+    DecoSessionLost,
     _aes_decrypt,
     count_wireless_clients,
     _aes_encrypt,
@@ -65,6 +66,21 @@ class FakeDecoSession:
         # Reply with a well-formed but client_list-less result, the shape a
         # firmware change could produce.
         self.omit_client_list = False
+        # black_list: what `list` returns, and the plain reply to block/unblock.
+        self.blocked: Any = {}
+        self.command_reply: dict[str, Any] = {"error_code": 0}
+        self.commands: list[dict[str, Any]] = []
+        # The next N authenticated posts answer as an evicted session does.
+        self.evict_next = 0
+
+    def _decrypt_body(self, body: str) -> dict[str, Any]:
+        assert self.client is not None
+        blob = base64.b64decode(parse_qs(body)["data"][0])
+        return dict(
+            json.loads(
+                _aes_decrypt(self.client._aes_key.encode(), self.client._aes_iv.encode(), blob)
+            )
+        )
 
     def _encrypt(self, payload: dict[str, Any]) -> str:
         assert self.client is not None
@@ -101,6 +117,21 @@ class FakeDecoSession:
             return FakeResponse(
                 {"data": self._encrypt({"error_code": 0, "result": {"stok": "STOK123"}})}
             )
+        if self.evict_next:
+            self.evict_next -= 1
+            return FakeResponse({"data": ""})
+        if form == "black_list":
+            payload = self._decrypt_body(data or "")
+            if payload["operation"] == "list":
+                return FakeResponse(
+                    {
+                        "data": self._encrypt(
+                            {"error_code": 0, "result": {"client_list": self.blocked}}
+                        )
+                    }
+                )
+            self.commands.append(payload)
+            return FakeResponse(self.command_reply)
         if form == "device_list":
             return FakeResponse(
                 {"data": self._encrypt({"result": {"device_list": self.device_list}})}
@@ -371,3 +402,88 @@ class TestTransientRetry:
         with pytest.raises(DecoAPIError):
             client.list_decos()
         assert session.attempts["device_list"] == 1
+
+
+class TestBlocklist:
+    def test_an_empty_blocklist_arrives_as_a_dict(self) -> None:
+        """Measured on an XE75 Pro: nothing blocked is `{}`, not `[]`."""
+        assert make_client(FakeDecoSession()).list_blocked() == []
+
+    def test_a_blocklist_returns_its_entries(self) -> None:
+        session = FakeDecoSession()
+        session.blocked = [{"mac": "02-00-00-00-00-01"}]
+        assert make_client(session).list_blocked() == [{"mac": "02-00-00-00-00-01"}]
+
+    def test_an_unexpected_shape_raises_rather_than_reading_as_empty(self) -> None:
+        """Read as empty, every tick would block and alert again."""
+        session = FakeDecoSession()
+        session.blocked = {"oops": 1}
+        with pytest.raises(DecoAPIError, match="Unexpected black_list shape"):
+            make_client(session).list_blocked()
+
+    def test_block_sends_one_entry_and_accepts_a_plain_reply(self) -> None:
+        session = FakeDecoSession()
+        make_client(session).block("02-00-00-00-00-01", "bmFtZQ==", "phone")
+        assert session.commands == [
+            {
+                "operation": "block",
+                "params": {
+                    "client_list": [
+                        {"mac": "02-00-00-00-00-01", "name": "bmFtZQ==", "client_type": "phone"}
+                    ]
+                },
+            }
+        ]
+
+    def test_a_refused_block_raises(self) -> None:
+        session = FakeDecoSession()
+        session.command_reply = {"error_code": -1}
+        with pytest.raises(DecoAPIError, match="error_code=-1"):
+            make_client(session).block("02-00-00-00-00-01", "", "phone")
+
+    def test_a_reply_with_neither_data_nor_error_code_is_not_success(self) -> None:
+        session = FakeDecoSession()
+        session.command_reply = {}
+        with pytest.raises(DecoAPIError, match="returned no data"):
+            make_client(session).block("02-00-00-00-00-01", "", "phone")
+
+    def test_unblock_sends_the_macs(self) -> None:
+        session = FakeDecoSession()
+        make_client(session).unblock(["02-00-00-00-00-01"])
+        assert session.commands == [
+            {"operation": "unblock", "params": {"client_list": ["02-00-00-00-00-01"]}}
+        ]
+
+    def test_unblock_with_no_macs_is_rejected(self) -> None:
+        with pytest.raises(ValueError):
+            make_client(FakeDecoSession()).unblock([])
+
+
+class TestEviction:
+    """Measured: a second login with the same account answers the first
+    session's next call with `{"data": ""}`."""
+
+    def test_a_read_logs_in_again_once_after_an_eviction(self) -> None:
+        session = FakeDecoSession(client_list=[{"connection_type": "band5"}])
+        client = make_client(session)
+        client.login()
+        session.evict_next = 1
+        assert client.list_clients() == [{"connection_type": "band5"}]
+        assert [c[1].get("form") for c in session.calls].count("login") == 2
+
+    def test_a_read_evicted_twice_raises(self) -> None:
+        session = FakeDecoSession()
+        client = make_client(session)
+        client.login()
+        session.evict_next = 2
+        with pytest.raises(DecoSessionLost):
+            client.list_clients()
+
+    def test_a_write_is_never_resent_after_an_eviction(self) -> None:
+        session = FakeDecoSession()
+        client = make_client(session)
+        client.login()
+        session.evict_next = 1
+        with pytest.raises(DecoSessionLost):
+            client.reboot([MASTER_MAC])
+        assert [c[1].get("form") for c in session.calls].count("system") == 1

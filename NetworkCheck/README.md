@@ -98,7 +98,7 @@ One concern per file, so the risky part is small enough to read in one sitting:
 | `watchdog_policy.py` | **When to act,** for both faults. Pure function of (state, now, config) — the entire risk surface |
 | `uplink_watchdog.py` | Orchestration + CLI |
 | `deco_client.py` | The Deco local admin API |
-| `common.py` | Notifier + invocation banner, shared by all three NetworkCheck scripts |
+| `common.py` | Notifier, invocation banner and the shared Deco admin lock |
 
 ### How it works
 
@@ -217,3 +217,86 @@ Fake sessions and injected probes/clients — no `patch()`, per repo convention.
 The Deco tests speak the real wire format: replies are AES-encrypted with the
 client's own session key and the `sign` blob is RSA-decrypted and asserted on,
 so the crypto is genuinely exercised rather than mocked away.
+
+---
+
+## `iot_gatekeeper.py` — IoT network gatekeeper
+
+Blocks any device on the Deco's **IoT** network whose MAC is not on an
+allowlist. The main and guest networks are never touched, so devices there may
+change their MAC freely. Use it when the IoT password is widely known and the
+IoT devices are too hard to re-provision with a new one. Why not the Deco's own
+Allow List, and what was measured: [Logbook.md](Logbook.md).
+
+| File | Job |
+|---|---|
+| `gatekeeper_policy.py` | **Who to block.** Pure function of (clients, allowlist, blocklist) |
+| `iot_gatekeeper.py` | Orchestration, state, alerts, CLI |
+
+Each tick reads the client list and the blocklist, then blocks every online,
+wireless client on the `iot` interface that is not allowlisted and not already
+blocked. It blocks **nothing** that tick, and alerts, when:
+
+- the allowlist is empty, or the IoT network shows no clients;
+- more unknown devices appear than `max_blocks_per_tick`;
+- the Deco cannot be read (alert after 3 ticks in a row);
+- the login fails (and pauses for an hour, so it cannot lock the account).
+
+A MAC that is unknown on IoT but also present on another network is reported,
+not blocked: the Deco blocklist is mesh-wide.
+
+The block cuts the device's internet. A blocked device stays blocked on every
+later join until you unblock it.
+
+### Setup
+
+```bash
+# 1. Print the IoT network's clients as allowlist lines (shows device names --
+#    run by hand, never from cron). Delete every line that is not yours.
+uv run python -m NetworkCheck.iot_gatekeeper snapshot 2>&1 | tee /tmp/iot_snapshot.log
+
+# 2. Paste the kept lines under allowed_macs in config/local.yaml (quoted).
+
+# 3. Watch what it would block, then set enabled: true.
+uv run python -m NetworkCheck.iot_gatekeeper check --dry-run
+
+# Undo a wrong block, then add the MAC to allowed_macs.
+uv run python -m NetworkCheck.iot_gatekeeper unblock AA-BB-CC-DD-EE-FF
+```
+
+```yaml
+# config/local.yaml
+network_check:
+  iot_gatekeeper:
+    enabled: true
+    allowed_macs:
+      - "AA-BB-CC-DD-EE-01"  # iot_device: thermostat
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `false` | `check` does nothing until set; `--dry-run` works regardless |
+| `allowed_macs` | `[]` | Quoted MACs, any separator or case. One malformed entry blocks nothing and alerts |
+| `max_blocks_per_tick` | `3` | More unknown devices than this in one tick blocks none of them |
+| `state_file` | `iot_gatekeeper_state.json` | Failure count, login pause, alert dedupe; under `logging_dir` |
+
+The Deco login is `uplink_watchdog`'s (`deco_host`, `deco_username`,
+`deco_password`).
+
+Cron on the Linux prod host, offset from the watchdog's `*/10`:
+
+```
+2-57/5 * * * * cd $HOMELY_VIBES && uv run python -m NetworkCheck.iot_gatekeeper check >> ~/logs/iot_gatekeeper.log 2>&1
+```
+
+Both scripts hold one file lock (`{logging_dir}/deco_admin.lock`) for as long
+as they talk to the Deco: the admin account is single-session.
+
+### Alert priorities
+
+- **P1** — blocked nothing because of a refusal (cap, empty IoT network, a
+  malformed `allowed_macs`); the Deco unreadable for 3 ticks; a block the router
+  refused. At most once a day each.
+- **P0** — devices blocked: one push per tick that blocks, naming each MAC and
+  device type, never names. Also, at most once a day each: a MAC skipped
+  because it is also on another network; a failed login.
