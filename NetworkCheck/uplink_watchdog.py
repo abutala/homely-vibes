@@ -44,7 +44,8 @@ from typing import Any, Callable, Optional, Protocol
 from lib.config import UplinkWatchdogConfig, get_config
 from lib.logger import get_logger
 from lib.notifications import Notifier
-from NetworkCheck.common import log_invocation, network_notifier
+from lib.file_lock import LockTimeoutError
+from NetworkCheck.common import deco_admin_lock, log_invocation, network_notifier
 from NetworkCheck.deco_client import (
     DecoAPIError,
     DecoAuthError,
@@ -628,6 +629,16 @@ def main() -> None:
         print(json.dumps(asdict(watchdog.state), indent=2))
         return
 
+    # Every other command logs into the Deco. The admin account is
+    # single-session, so the IoT gatekeeper must not log in mid-tick.
+    try:
+        with deco_admin_lock():
+            _run(args, watchdog, logger)
+    except LockTimeoutError:
+        logger.warning("Another script holds the Deco admin session; skipping this tick")
+
+
+def _run(args: argparse.Namespace, watchdog: UplinkWatchdog, logger: logging.Logger) -> None:
     if args.command == "probe":
         for line in watchdog.probe_deco():
             print(line)

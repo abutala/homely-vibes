@@ -111,6 +111,17 @@ network_check:
     modem_password: ""       # set in local.yaml
     state_file: "uplink_watchdog_state.json"
 
+  # Block any device on the Deco's IoT network whose MAC is not listed. The main
+  # and guest networks are never touched. Uses uplink_watchdog's Deco login.
+  # Build the list with `uv run python -m NetworkCheck.iot_gatekeeper snapshot`,
+  # prune it, and put it in local.yaml (household MACs never enter the repo).
+  # Quote every MAC: YAML reads some unquoted MACs as numbers.
+  iot_gatekeeper:
+    enabled: false
+    allowed_macs: []       # set in local.yaml; an empty list blocks nothing
+    max_blocks_per_tick: 3
+    state_file: "iot_gatekeeper_state.json"
+
 # === Browser Alert ===
 browser_alert:
   refresh_delay: 30  # seconds

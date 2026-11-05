@@ -348,6 +348,39 @@ that file's mtime is the liveness check if you ever want one.
 
 ---
 
+### The IoT gatekeeper (2026-11-05)
+
+**Why not the Deco's own Allow List.** Firmware 1.4.x on the XE75 Pro has Wi-Fi
+Access Control with an Allow List (TP-Link FAQ 3833). It covers every SSID
+except the guest network, so it would also lock the main network, where devices
+change their MAC. Hence a job that blocks by MAC on the `iot` interface only.
+
+**The admin session is one-at-a-time, and eviction is silent.** Measured on an
+XE75 Pro, firmware 1.4.5: a second login with the same account evicts the
+first. The evicted session's next call answers `{"data": ""}` -- not an HTTP
+error and not an auth error. Before 2026-11-05 that surfaced as
+`returned no data`, and in the watchdog's census it reads as zero clients and
+starts the outage clock. So `DecoClient` now raises `DecoSessionLost` for it,
+reads log in again once, writes never resend, and every NetworkCheck script
+that logs in holds one shared file lock (`common.deco_admin_lock`). The lock
+cannot stop the Deco phone app from evicting us; the read retry covers that.
+
+**The blocklist API** (`/admin/client?form=black_list`, ported from
+`roquerodrigo/tplink-deco-api`, verified on the XE75 Pro with a dummy MAC):
+
+- `list` returns `result.client_list` as `{}` when empty and a list otherwise.
+  Anything else raises -- read as empty, every tick would block and alert again.
+- `block` and `unblock` answer with a plain, unencrypted `{"error_code": 0}`,
+  not an encrypted `data` field. `_command` accepts both shapes.
+- The block entry's `name` is the base64 name exactly as `client_list` gives it.
+- The block cuts internet, per the SDK's docs. Whether a blocked client also
+  drops off the radio is not yet measured.
+
+**Fail toward blocking nothing.** A wrong block takes an IoT device offline
+until a human notices, so the gatekeeper is the opposite of the watchdog's
+fail-closed census: an unreadable list, an empty allowlist, an empty IoT
+network or more strangers than the cap all block nothing that tick.
+
 ## Landmines
 
 - **IoT/Guest SSID client isolation is real and measured.** Any plug on that
@@ -361,8 +394,9 @@ that file's mtime is the liveness check if you ever want one.
   the router wants (`sign=<hex>&data=<urlencoded base64>`). Don't "fix" it.
 - **`sign` covers `seq + len(data)`** — the length of the *base64* string,
   computed before URL-encoding.
-- **The admin account is single-session.** Logging into the Deco phone app can
-  invalidate the watchdog's session; it re-logs in on the next tick.
+- **The admin account is single-session.** Any second login -- the Deco phone
+  app, or another of our scripts -- evicts the first, which then gets
+  `{"data": ""}`. Reads log in again once; our scripts share one file lock.
 - **`btn1` reboots the modem, `btn5` factory-resets it** — same endpoint, same
   payload shape. Read "Rebooting the modem" above before touching that module.
 - **`10.0.0.1` is one hop *past* the Deco, not before it.** Anything depending
