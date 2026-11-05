@@ -36,7 +36,7 @@ final class FiveHourLimitTests: XCTestCase {
     }
 
     func testTitleOmitsFiveHourSegmentWithoutLimit() {
-        XCTAssertEqual(title(snapshot(fiveHour: nil, hasFiveHourLimit: false)), "63% 4.4d")
+        XCTAssertEqual(title(snapshot(fiveHour: nil, hasFiveHourLimit: false)), "7d: 63% 4.4d")
     }
 
     /// With a limit, an absent window still means nothing spent yet.
