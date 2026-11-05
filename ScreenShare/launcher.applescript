@@ -5,7 +5,9 @@ use scripting additions
 
 property connectionURL : __URL__
 property windowTitle : __TITLE__
-property waitSeconds : 90
+property tunnelCommand : __TUNNEL__ -- empty: connect directly
+property fallbackApp : __FALLBACK__ -- empty: no other app to offer
+property waitSeconds : __WAIT__
 property maxZoomSteps : 8 -- stop even if the picture never overflows
 property pollSeconds : 0.05
 property resizeTimeout : 2 -- Actual Size on a remote as large as this screen does not resize
@@ -16,10 +18,14 @@ property permissionPane : "x-apple.systempreferences:com.apple.settings.PrivacyS
 on run
 	try
 		my requireAccessibility()
+		if not my openTunnel() then return
 		-- The URL is the saved connection's own address and user, so Screen Sharing reuses it.
 		open location connectionURL
 		set sessionWindow to my waitForSessionWindow()
-		if sessionWindow is missing value then return
+		if sessionWindow is missing value then
+			my offerFallback("No session after " & waitSeconds & " seconds.")
+			return
+		end if
 		tell application "System Events" to tell process "Screen Sharing"
 			set frontmost to true
 			perform action "AXRaise" of sessionWindow
@@ -44,6 +50,32 @@ end run
 on requireAccessibility()
 	tell application "System Events" to count UI elements of process "Dock"
 end requireAccessibility
+
+-- False when the tunnel failed. The script exits non-zero with ssh's error on stderr.
+on openTunnel()
+	if tunnelCommand is "" then return true
+	try
+		do shell script tunnelCommand
+	on error errText
+		my offerFallback("The SSH tunnel failed. " & errText)
+		return false
+	end try
+	return true
+end openTunnel
+
+-- Says why the connection failed, and offers fallbackApp when there is one.
+on offerFallback(reason)
+	set appName to name of me
+	activate
+	if fallbackApp is "" then
+		display dialog appName & ": " & reason buttons {"OK"} default button 1 with icon stop
+		return
+	end if
+	set openLabel to "Open " & fallbackApp
+	set answer to button returned of (display dialog appName & ": " & reason & return & return & ¬
+		openLabel & " instead?" buttons {"Not Now", openLabel} default button 2 with icon caution)
+	if answer is openLabel then do shell script "open -a " & quoted form of fallbackApp
+end offerFallback
 
 -- Saved connections open in a window titled with the connection's name.
 on waitForSessionWindow()

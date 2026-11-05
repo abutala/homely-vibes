@@ -65,6 +65,23 @@ With the session in full screen and another Space active, `windows of process
 "Screen Sharing"` is empty while the connection is up (`lsof -i` shows port 5900
 established). `open location` switches to the session's Space, so the launcher then finds it.
 
+### `do shell script` hangs on `ssh -f`
+
+`do shell script` returns only when the command's stdout and stderr close. `ssh -f` goes to the
+background and keeps them open, so the launcher would wait until the tunnel closes. The tunnel
+command sends ssh's stdout to `/dev/null` and its stderr to a temp file, then prints that file,
+so an SSH error still reaches the dialog. `BatchMode=yes` stops a password prompt that nobody
+can answer, and `ExitOnForwardFailure=yes` makes ssh fail, not go to the background without a
+forward. Checked on the real host: the command returns in about 1 s, and the forwarded port
+answers with an `RFB` banner.
+
+### A tunnel needs its own saved connection
+
+The URL must be a saved connection (see the first landmine), so the tunneled host is a second
+entry at `localhost:<port>`, saved once by hand through a tunnel. The builder takes the local
+port from that entry, so the config holds only the SSH side. A `localhost` address names no
+host, so the app name and icon come from the entry's saved name.
+
 ### Each View menu click must settle before the next
 
 In full screen with scaling on, the window is capped at the remote size (2048 wide). Actual

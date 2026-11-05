@@ -1,13 +1,18 @@
 import plistlib
+import socket
+import subprocess
 from pathlib import Path
 
 import pytest
 
+from lib.config import SshTunnelConfig
 from ScreenShare.icon import initials, make_icon
 from ScreenShare.build_app import (
     _absolute_path,
     TEMPLATE,
+    WAIT_SECONDS,
     Connection,
+    connection_label,
     default_app_name,
     dock_has,
     host_label,
@@ -16,6 +21,8 @@ from ScreenShare.build_app import (
     find_connection,
     parse_connections,
     render,
+    tunnel_command,
+    tunnel_port,
 )
 
 
@@ -36,6 +43,9 @@ BONJOUR = {
     "username": "alex",
 }
 PLAIN = {"displayName": "beta", "address": "192.0.2.10", "username": ""}
+TUNNELED = Connection(
+    name="Studio Mác", address="localhost", url="vnc://alex@localhost:5901", port=5901
+)
 
 
 def test_parse_builds_url_with_user_and_port() -> None:
@@ -44,6 +54,7 @@ def test_parse_builds_url_with_user_and_port() -> None:
         name="Studio Mac",
         address="Studio%20Mac._rfb._tcp.local",
         url="vnc://alex@Studio%20Mac._rfb._tcp.local:5900?numVirtualDisplays=0",
+        port=5900,
     )
 
 
@@ -75,6 +86,17 @@ def test_applescript_string_escapes_quotes_and_backslashes() -> None:
 def test_render_fills_every_placeholder() -> None:
     conn = Connection(name='Ma"c', address="x", url="vnc://x")
     assert render("__URL__|__TITLE__", conn) == '"vnc://x"|"Ma\\"c"'
+
+
+def test_render_fills_tunnel_fallback_and_wait() -> None:
+    conn = Connection(name="n", address="a", url="vnc://a")
+    out = render("__TUNNEL__|__FALLBACK__|__WAIT__", conn, "ssh x", "Remote App")
+    assert out == f'"ssh x"|"Remote App"|{WAIT_SECONDS}'
+
+
+def test_render_does_not_replace_inside_a_value() -> None:
+    conn = Connection(name="__URL__", address="a", url="vnc://a")
+    assert render("__TITLE__", conn) == '"__URL__"'
 
 
 def test_bundle_id_is_stable_slug() -> None:
@@ -136,3 +158,66 @@ def test_dest_expands_tilde_to_absolute() -> None:
     dest = _absolute_path("~/Apps")
     assert dest.is_absolute()
     assert dest == Path.home() / "Apps"
+
+
+def test_tunnel_port_is_the_saved_localhost_port() -> None:
+    assert tunnel_port(TUNNELED) == 5901
+
+
+@pytest.mark.parametrize(
+    "conn",
+    [
+        Connection(name="m", address="Studio%20Mac._rfb._tcp.local", url="vnc://x", port=5900),
+        Connection(name="m", address="localhost", url="vnc://localhost"),
+    ],
+)
+def test_tunnel_port_rejects_remote_or_portless(conn: Connection) -> None:
+    with pytest.raises(ValueError, match="localhost:<port>"):
+        tunnel_port(conn)
+
+
+def test_tunnel_command_forwards_local_to_remote_port() -> None:
+    tunnel = SshTunnelConfig(host="vnc.example.com", port=2222, user="alex")
+    command = tunnel_command(tunnel, 5901)
+    assert "-p 2222 -L 5901:localhost:5900 alex@vnc.example.com" in command
+    assert "BatchMode=yes" in command
+
+
+def test_tunnel_command_without_user_uses_bare_host() -> None:
+    command = tunnel_command(SshTunnelConfig(host="vnc.example.com"), 5901)
+    assert "-p 22 -L 5901:localhost:5900 vnc.example.com " in command
+
+
+def _free_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def test_tunnel_command_skips_ssh_when_port_already_listens() -> None:
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        unreachable = SshTunnelConfig(host="127.0.0.1", port=_free_port())
+        result = subprocess.run(
+            ["/bin/sh", "-c", tunnel_command(unreachable, port)], capture_output=True, timeout=10
+        )
+    assert result.returncode == 0
+
+
+def test_tunnel_command_fails_with_ssh_error_on_stderr() -> None:
+    unreachable = SshTunnelConfig(host="127.0.0.1", port=_free_port())
+    result = subprocess.run(
+        ["/bin/sh", "-c", tunnel_command(unreachable, _free_port())],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode != 0
+    assert "Connection refused" in result.stderr
+
+
+def test_connection_label_uses_name_for_localhost() -> None:
+    assert connection_label(TUNNELED) == "Studio Mac"
+    assert default_app_name(TUNNELED) == "VNC Studio Mac"

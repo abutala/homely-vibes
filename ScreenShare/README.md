@@ -32,7 +32,40 @@ A rebuild drops the Accessibility grant, even though the old entry still shows a
 | Key | Default | What it does |
 |---|---|---|
 | `connection` | required | Saved connection name or address. An unknown one lists the saved names |
-| `name` | `VNC <Host Name>` | App name. `studio-mac.local` → `VNC Studio Mac`. An IP stays as is |
+| `name` | `VNC <Host Name>` | App name. `studio-mac.local` → `VNC Studio Mac`. An IP stays as is. A `localhost` connection takes its saved name |
+| `ssh_tunnel` | none | Connect through an SSH server. See [Reach a Mac from anywhere](#reach-a-mac-from-anywhere) |
+| `fallback_app` | none | App to offer when the connection fails, e.g. `Splashtop Personal` |
+
+## Reach a Mac from anywhere
+
+A Bonjour connection works only on the home network. To reach the Mac from anywhere, go
+through an SSH server that can reach its VNC port, for example the Mac itself behind a
+router port forward to its SSH port.
+
+1. Check that key-only SSH works, and accept the host key:
+   `ssh -o BatchMode=yes -p <ssh port> <user>@<fqdn> true`.
+2. Start a tunnel by hand: `ssh -N -L 5901:localhost:5900 -p <ssh port> <user>@<fqdn>`.
+3. In Screen Sharing, connect to `localhost:5901` and let it remember the password. In All
+   Connections, rename the new entry to the name the app should use. If the home-network entry
+   has that name, rename or delete that one first. Stop the tunnel (Ctrl-C).
+4. Add the tunnel to the entry in `config/local.yaml`, then run `make screenshare-app` again:
+
+   ```yaml
+   screen_share:
+     apps:
+       - connection: "Studio Mac"   # the localhost:5901 entry from step 3
+         ssh_tunnel:
+           host: vnc.example.com    # FQDN or IP of the SSH server
+           port: 2222               # default 22
+           user: alex               # default: ~/.ssh/config, then your login name
+           # remote_port: 5900      # VNC port as seen from the SSH server
+         fallback_app: "Splashtop Personal"
+   ```
+
+The local port comes from the saved connection (`5901` above). On launch the app starts
+`ssh -L` in the background, unless that port already listens, which means a session is up. The
+tunnel closes when the session ends. If SSH fails, or no session shows within 90 s, the app
+says why and offers `fallback_app`.
 
 The fit needs no setting: from Actual Size the app zooms in until a scroll bar appears, then
 zooms out one step. A remote larger than this screen gets scaling instead.
