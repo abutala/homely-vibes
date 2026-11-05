@@ -106,10 +106,11 @@ def tunnel_port(conn: Connection) -> int:
 
 
 def tunnel_command(tunnel: SshTunnelConfig, local_port: int) -> str:
-    """Shell that starts `ssh -L` unless the local port already listens (a live session).
+    """Shell that starts `ssh -L` unless the local port already listens (a live tunnel).
 
     `ssh -f` goes to the background once the forward is up. It exits when its `sleep` ends and
-    the last forwarded connection closes, so the tunnel lasts as long as the session. Its stderr
+    the last forwarded connection closes, so the tunnel lasts as long as the session. Keepalives
+    end a tunnel whose link died (sleep, a new network), so it does not hold the port. Its stderr
     goes to a file: `do shell script` waits for its pipes to close, and a background ssh holds
     them open.
     """
@@ -121,6 +122,8 @@ def tunnel_command(tunnel: SshTunnelConfig, local_port: int) -> str:
             "-o", "BatchMode=yes",
             "-o", "ConnectTimeout=10",
             "-o", "ExitOnForwardFailure=yes",
+            "-o", "ServerAliveInterval=10",
+            "-o", "ServerAliveCountMax=2",
             "-p", str(tunnel.port),
             "-L", f"{local_port}:localhost:{tunnel.remote_port}",
             destination,

@@ -181,6 +181,7 @@ def test_tunnel_command_forwards_local_to_remote_port() -> None:
     command = tunnel_command(tunnel, 5901)
     assert "-p 2222 -L 5901:localhost:5900 alex@vnc.example.com" in command
     assert "BatchMode=yes" in command
+    assert "ServerAliveInterval=10" in command
 
 
 def test_tunnel_command_without_user_uses_bare_host() -> None:

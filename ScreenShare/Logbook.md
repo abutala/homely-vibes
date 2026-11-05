@@ -71,8 +71,11 @@ established). `open location` switches to the session's Space, so the launcher t
 background and keeps them open, so the launcher would wait until the tunnel closes. The tunnel
 command sends ssh's stdout to `/dev/null` and its stderr to a temp file, then prints that file,
 so an SSH error still reaches the dialog. `BatchMode=yes` stops a password prompt that nobody
-can answer, and `ExitOnForwardFailure=yes` makes ssh fail, not go to the background without a
-forward. Checked on the real host: the command returns in about 1 s, and the forwarded port
+can answer, and `ExitOnForwardFailure=yes` makes ssh fail, not go to the background, when the
+local port cannot be bound. It does not check the far side: a wrong `remote_port`, or VNC off
+on the server, shows only when Screen Sharing connects, as the 90 s timeout and not as an
+SSH error. `ServerAliveInterval` ends a tunnel whose link died; without it, a stale ssh kept
+the local port, the next launch reused it, and the session hung. Checked on the real host: the command returns in about 1 s, and the forwarded port
 answers with an `RFB` banner.
 
 ### A tunnel needs its own saved connection

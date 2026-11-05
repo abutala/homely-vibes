@@ -40,7 +40,9 @@ A rebuild drops the Accessibility grant, even though the old entry still shows a
 
 A Bonjour connection works only on the home network. To reach the Mac from anywhere, go
 through an SSH server that can reach its VNC port, for example the Mac itself behind a
-router port forward to its SSH port.
+router port forward to its SSH port. The server must run a shell command (`sleep`): a
+forwarding-only key or a server with no `sleep` closes the tunnel before Screen Sharing
+connects.
 
 1. Check that key-only SSH works, and accept the host key:
    `ssh -o BatchMode=yes -p <ssh port> <user>@<fqdn> true`.
@@ -63,8 +65,8 @@ router port forward to its SSH port.
    ```
 
 The local port comes from the saved connection (`5901` above). On launch the app starts
-`ssh -L` in the background, unless that port already listens, which means a session is up. The
-tunnel closes when the session ends. If SSH fails, or no session shows within 90 s, the app
+`ssh -L` in the background, unless that port already listens, which means a tunnel is up. The
+tunnel closes when the session ends, or about 30 s after its link dies. If SSH fails, or no session shows within 90 s, the app
 says why and offers `fallback_app`.
 
 The fit needs no setting: from Actual Size the app zooms in until a scroll bar appears, then
