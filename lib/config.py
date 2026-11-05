@@ -519,6 +519,7 @@ class SshTunnelConfig:
     port: int = 22
     user: str | None = None  # default: ~/.ssh/config, then the login name
     remote_port: int = 5900  # VNC port, as seen from the SSH server
+    local_port: int = 5901  # tunnel end on this Mac; 5900 is this Mac's own Screen Sharing
 
 
 @dataclass
@@ -527,7 +528,7 @@ class ScreenShareAppConfig:
 
     connection: str  # name in Screen Sharing's All Connections list, or its address
     name: str | None = None  # default "VNC <Host Name>"
-    ssh_tunnel: SshTunnelConfig | None = None  # connection must then be a localhost one
+    ssh_tunnel: SshTunnelConfig | None = None  # reach the connection's host through SSH
     fallback_app: str | None = None  # offered when the connection fails, e.g. "Splashtop Personal"
 
 

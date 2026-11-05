@@ -29,7 +29,8 @@ IP_PATTERN = re.compile(r"^[0-9.]+$|:")
 HOST_SUFFIXES = ("._rfb._tcp.local.", "._rfb._tcp.local", ".local.", ".local")
 LOOPBACK = ("localhost", "127.0.0.1")
 PLACEHOLDER = re.compile(r"__(URL|TITLE|TUNNEL|FALLBACK|WAIT)__")
-WAIT_SECONDS = 90  # the launcher waits this long for the session; the tunnel stays up as long
+WAIT_SECONDS = 90  # the launcher waits this long for the session window
+TUNNEL_HOLD_SECONDS = 300  # an unused tunnel lasts this long; a first launch asks for a password
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,12 @@ class Connection:
     address: str
     url: str
     port: int | None = None
+    user: str = ""
+    query: str = ""  # the saved screen sharing type, e.g. "?numVirtualDisplays=0"
+
+
+def is_loopback(conn: Connection) -> bool:
+    return unquote(conn.address) in LOOPBACK
 
 
 def parse_connections(prefs: bytes) -> list[Connection]:
@@ -54,9 +61,24 @@ def _connection(entry: dict) -> Connection:
     address = target["address"]  # already percent-encoded, e.g. a Bonjour name
     user = target.get("username") or ""
     port = target.get("port")
-    url = "vnc://" + (f"{quote(user)}@" if user else "") + address + (f":{port}" if port else "")
+    query = _type_query(target)
     return Connection(
-        name=target["displayName"], address=address, url=url + _type_query(target), port=port
+        name=target["displayName"],
+        address=address,
+        url=_url(user, address, port, query),
+        port=port,
+        user=user,
+        query=query,
+    )
+
+
+def _url(user: str, address: str, port: int | None, query: str) -> str:
+    return (
+        "vnc://"
+        + (f"{quote(user)}@" if user else "")
+        + address
+        + (f":{port}" if port else "")
+        + query
     )
 
 
@@ -67,9 +89,12 @@ def _type_query(target: dict) -> str:
 
 
 def find_connection(connections: list[Connection], wanted: str) -> Connection:
-    """Match on the name Screen Sharing shows, or on the address. Case-insensitive."""
+    """Match on the name Screen Sharing shows, or on the address. Case-insensitive.
+
+    A tunnel's first use saves a localhost entry under the same name: the real host wins.
+    """
     key = wanted.casefold()
-    for conn in connections:
+    for conn in sorted(connections, key=is_loopback):
         if key in (conn.name.casefold(), conn.address.casefold()):
             return conn
     names = ", ".join(f'"{c.name}"' for c in connections) or "none"
@@ -95,14 +120,20 @@ def render(template: str, conn: Connection, tunnel: str = "", fallback: str = ""
     return PLACEHOLDER.sub(lambda match: values[match.group(1)], template)
 
 
-def tunnel_port(conn: Connection) -> int:
-    """The saved connection's port on this Mac, which the tunnel forwards."""
-    if unquote(conn.address) not in LOOPBACK or conn.port is None:
-        raise ValueError(
-            f'"{conn.name}" ({conn.url}) is not a localhost:<port> connection. With '
-            "ssh_tunnel, save the connection through the tunnel first. See ScreenShare/README.md."
-        )
-    return conn.port
+def through_tunnel(conn: Connection, local_port: int) -> Connection:
+    """The saved connection, moved to the tunnel's end on this Mac. Same name, user and type.
+
+    Screen Sharing saves the first use as a new entry and names its window after the remote
+    Mac, so the window title stays the saved name.
+    """
+    return Connection(
+        name=conn.name,
+        address="localhost",
+        url=_url(conn.user, "localhost", local_port, conn.query),
+        port=local_port,
+        user=conn.user,
+        query=conn.query,
+    )
 
 
 def tunnel_command(tunnel: SshTunnelConfig, local_port: int) -> str:
@@ -127,7 +158,7 @@ def tunnel_command(tunnel: SshTunnelConfig, local_port: int) -> str:
             "-p", str(tunnel.port),
             "-L", f"{local_port}:localhost:{tunnel.remote_port}",
             destination,
-            f"sleep {WAIT_SECONDS}",
+            f"sleep {TUNNEL_HOLD_SECONDS}",
         ]
     )  # fmt: skip
     return (
@@ -151,7 +182,7 @@ def host_label(address: str) -> str:
 
 def connection_label(conn: Connection) -> str:
     """Host label for the app name and icon. A tunnel's localhost names nothing: use the name."""
-    return host_label(conn.name if unquote(conn.address) in LOOPBACK else conn.address)
+    return host_label(conn.name if is_loopback(conn) else conn.address)
 
 
 def default_app_name(conn: Connection) -> str:
@@ -239,13 +270,14 @@ def install(spec: ScreenShareAppConfig, conn: Connection, dest: Path, dock: bool
     if not NAME_PATTERN.match(name):
         raise ValueError(f"App name may hold letters, digits, space, '.', '_' and '-': {name}")
     tunnel = spec.ssh_tunnel
-    shell = tunnel_command(tunnel, tunnel_port(conn)) if tunnel else ""
+    target = through_tunnel(conn, tunnel.local_port) if tunnel else conn
+    shell = tunnel_command(tunnel, tunnel.local_port) if tunnel else ""
     app = dest / f"{name}.app"
     dest.mkdir(parents=True, exist_ok=True)
-    source = render(TEMPLATE.read_text(), conn, shell, spec.fallback_app or "")
+    source = render(TEMPLATE.read_text(), target, shell, spec.fallback_app or "")
     compile_app(source, app, connection_label(conn))
     via = f" through {tunnel.host}:{tunnel.port}" if tunnel else ""
-    print(f'Built {app} for "{conn.name}" ({conn.url}){via}.')
+    print(f'Built {app} for "{conn.name}" ({target.url}){via}.')
     if dock and add_to_dock(app):
         print("Added to the Dock.")
     return app

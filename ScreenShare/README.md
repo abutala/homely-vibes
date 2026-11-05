@@ -44,30 +44,34 @@ router port forward to its SSH port. The server must run a shell command (`sleep
 forwarding-only key or a server with no `sleep` closes the tunnel before Screen Sharing
 connects.
 
-1. Check that key-only SSH works, and accept the host key:
-   `ssh -o BatchMode=yes -p <ssh port> <user>@<fqdn> true`.
-2. Start a tunnel by hand: `ssh -N -L 5901:localhost:5900 -p <ssh port> <user>@<fqdn>`.
-3. In Screen Sharing, connect to `localhost:5901` and let it remember the password. In All
-   Connections, rename the new entry to the name the app should use. If the home-network entry
-   has that name, rename or delete that one first. Stop the tunnel (Ctrl-C).
-4. Add the tunnel to the entry in `config/local.yaml`, then run `make screenshare-app` again:
+The app starts the tunnel itself. Setup is config only:
+
+1. Check that key-only SSH works, which also saves the host key:
+   `ssh -p <ssh port> <user>@<fqdn> true` (answer `yes` to the host key once).
+2. Add `ssh_tunnel` to the entry in `config/local.yaml`. `connection` stays the home-network
+   entry: the app takes its name, user and screen sharing type from it.
 
    ```yaml
    screen_share:
      apps:
-       - connection: "Studio Mac"   # the localhost:5901 entry from step 3
+       - connection: "Studio Mac"
          ssh_tunnel:
            host: vnc.example.com    # FQDN or IP of the SSH server
            port: 2222               # default 22
            user: alex               # default: ~/.ssh/config, then your login name
            # remote_port: 5900      # VNC port as seen from the SSH server
+           # local_port: 5901       # tunnel end on this Mac
          fallback_app: "Splashtop Personal"
    ```
 
-The local port comes from the saved connection (`5901` above). On launch the app starts
-`ssh -L` in the background, unless that port already listens, which means a tunnel is up. The
-tunnel closes when the session ends, or about 30 s after its link dies. If SSH fails, or no session shows within 90 s, the app
-says why and offers `fallback_app`.
+3. Run `make screenshare-app 2>&1 | tee /tmp/screenshare-app.log`.
+4. Launch the app. The first launch asks for the remote password once: tick "Remember this
+   password in my keychain". Screen Sharing then saves a `localhost` entry with the same name.
+
+On launch the app starts `ssh -L <local_port>:localhost:<remote_port>` in the background,
+unless that port already listens, which means a tunnel is up. The tunnel closes when the
+session ends, about 30 s after its link dies, or after 5 minutes unused. If SSH fails, or no
+session shows within 90 s, the app says why and offers `fallback_app`.
 
 The fit needs no setting: from Actual Size the app zooms in until a scroll bar appears, then
 zooms out one step. A remote larger than this screen gets scaling instead.

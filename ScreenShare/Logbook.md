@@ -78,12 +78,19 @@ SSH error. `ServerAliveInterval` ends a tunnel whose link died; without it, a st
 the local port, the next launch reused it, and the session hung. Checked on the real host: the command returns in about 1 s, and the forwarded port
 answers with an `RFB` banner.
 
-### A tunnel needs its own saved connection
+### A tunnel saves its own connection on first use
 
-The URL must be a saved connection (see the first landmine), so the tunneled host is a second
-entry at `localhost:<port>`, saved once by hand through a tunnel. The builder takes the local
-port from that entry, so the config holds only the SSH side. A `localhost` address names no
-host, so the app name and icon come from the entry's saved name.
+A hand-built `vnc://user@localhost:5901?numVirtualDisplays=0` makes a new saved entry, as the
+first landmine says, but with the user in the URL that is harmless. Screen Sharing asks for the
+password once, then saves `localhost:5901` with that user and with the **remote Mac's own
+name** as `displayName`. The session window gets that name too, so the launcher's window title
+is the home-network entry's name. The second launch connected with no prompt. The new entry
+does not save the screen sharing type, so the builder takes the user and type from the
+home-network entry and only moves the address. Two entries now share a name:
+`find_connection` prefers the one that is not `localhost`.
+
+A first launch can sit on the password prompt for a while, so an unused tunnel lasts
+5 minutes (`sleep 300`), not the launcher's 90 s wait.
 
 ### Each View menu click must settle before the next
 

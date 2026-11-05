@@ -21,8 +21,8 @@ from ScreenShare.build_app import (
     find_connection,
     parse_connections,
     render,
+    through_tunnel,
     tunnel_command,
-    tunnel_port,
 )
 
 
@@ -55,6 +55,8 @@ def test_parse_builds_url_with_user_and_port() -> None:
         address="Studio%20Mac._rfb._tcp.local",
         url="vnc://alex@Studio%20Mac._rfb._tcp.local:5900?numVirtualDisplays=0",
         port=5900,
+        user="alex",
+        query="?numVirtualDisplays=0",
     )
 
 
@@ -160,20 +162,17 @@ def test_dest_expands_tilde_to_absolute() -> None:
     assert dest == Path.home() / "Apps"
 
 
-def test_tunnel_port_is_the_saved_localhost_port() -> None:
-    assert tunnel_port(TUNNELED) == 5901
+def test_through_tunnel_keeps_name_user_and_type() -> None:
+    [conn] = parse_connections(_prefs(BONJOUR))
+    tunneled = through_tunnel(conn, 5901)
+    assert tunneled.name == "Studio Mac"
+    assert tunneled.url == "vnc://alex@localhost:5901?numVirtualDisplays=0"
 
 
-@pytest.mark.parametrize(
-    "conn",
-    [
-        Connection(name="m", address="Studio%20Mac._rfb._tcp.local", url="vnc://x", port=5900),
-        Connection(name="m", address="localhost", url="vnc://localhost"),
-    ],
-)
-def test_tunnel_port_rejects_remote_or_portless(conn: Connection) -> None:
-    with pytest.raises(ValueError, match="localhost:<port>"):
-        tunnel_port(conn)
+def test_find_prefers_the_real_host_over_its_tunnel_entry() -> None:
+    saved_by_tunnel = {"displayName": "Studio Mac", "address": "localhost", "port": 5901}
+    conns = parse_connections(_prefs(saved_by_tunnel, BONJOUR))
+    assert find_connection(conns, "Studio Mac").address == "Studio%20Mac._rfb._tcp.local"
 
 
 def test_tunnel_command_forwards_local_to_remote_port() -> None:
