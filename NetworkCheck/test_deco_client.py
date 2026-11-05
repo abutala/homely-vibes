@@ -441,6 +441,12 @@ class TestBlocklist:
         with pytest.raises(DecoAPIError, match="error_code=-1"):
             make_client(session).block("02-00-00-00-00-01", "", "phone")
 
+    def test_a_reply_with_neither_data_nor_error_code_is_not_success(self) -> None:
+        session = FakeDecoSession()
+        session.command_reply = {}
+        with pytest.raises(DecoAPIError, match="returned no data"):
+            make_client(session).block("02-00-00-00-00-01", "", "phone")
+
     def test_unblock_sends_the_macs(self) -> None:
         session = FakeDecoSession()
         make_client(session).unblock(["02-00-00-00-00-01"])

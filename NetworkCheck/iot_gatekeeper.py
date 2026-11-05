@@ -119,7 +119,6 @@ class IotGatekeeper:
         state_file: str,
     ) -> None:
         self.cfg = cfg
-        self.allowed = canonical_allowlist(list(cfg.allowed_macs))
         self.deco = deco
         self.notifier = notifier
         self.logger = logger
@@ -137,12 +136,25 @@ class IotGatekeeper:
             plan = self._plan(now, dry_run)
             return [] if plan is None else self._apply(plan, now, dry_run)
         finally:
-            save_state(self.state_file, self.state)
+            # A dry run must not pause or reset the live job's counters.
+            if not dry_run:
+                self._prune_notices(now)
+                save_state(self.state_file, self.state)
 
     def _plan(self, now: float, dry_run: bool) -> Optional[Plan]:
+        # Parsed per tick, not at start: `snapshot` and `unblock` -- the fix
+        # for a wrong block -- must still run when the allowlist is malformed.
+        try:
+            allowed = canonical_allowlist(list(self.cfg.allowed_macs))
+        except ValueError as err:
+            self._notice("allowlist", f"Blocked nothing: bad allowed_macs: {err}", 1, now, dry_run)
+            return None
         try:
             clients = self.deco.list_clients()
             blocked = frozenset(canonical_mac(e["mac"]) for e in self.deco.list_blocked())
+            # Inside the guard: a client row with an unparsable MAC must count
+            # as a failed read and alert, not crash every tick in silence.
+            plan = plan_blocks(clients, allowed, blocked, self.cfg.max_blocks_per_tick)
         except DecoAuthError as err:
             self.state.auth_paused_until = now + AUTH_PAUSE_S
             self._notice("auth", f"Deco login failed; paused for an hour: {err}", 0, now, dry_run)
@@ -163,7 +175,7 @@ class IotGatekeeper:
 
         self.state.read_failures = 0
         self.state.auth_paused_until = None
-        return plan_blocks(clients, self.allowed, blocked, self.cfg.max_blocks_per_tick)
+        return plan
 
     def _apply(self, plan: Plan, now: float, dry_run: bool) -> list[str]:
         if plan.shared_macs:
@@ -215,6 +227,11 @@ class IotGatekeeper:
             return
         if self._send(message, priority):
             self.state.notices[key] = now
+
+    def _prune_notices(self, now: float) -> None:
+        self.state.notices = {
+            k: ts for k, ts in self.state.notices.items() if now - ts < NOTICE_INTERVAL_S
+        }
 
     def _send(self, message: str, priority: int) -> bool:
         try:
@@ -282,6 +299,8 @@ def main() -> None:
             _run(args, logger)
     except LockTimeoutError:
         logger.warning("Another script holds the Deco admin session; skipping this tick")
+        if args.command != "check":
+            raise SystemExit(f"{args.command}: the Deco admin session is busy; try again") from None
 
 
 if __name__ == "__main__":

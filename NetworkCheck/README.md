@@ -276,7 +276,7 @@ network_check:
 | Key | Default | Meaning |
 |---|---|---|
 | `enabled` | `false` | `check` does nothing until set; `--dry-run` works regardless |
-| `allowed_macs` | `[]` | Quoted MACs, any separator or case. One malformed entry stops the script |
+| `allowed_macs` | `[]` | Quoted MACs, any separator or case. One malformed entry blocks nothing and alerts |
 | `max_blocks_per_tick` | `3` | More unknown devices than this in one tick blocks none of them |
 | `state_file` | `iot_gatekeeper_state.json` | Failure count, login pause, alert dedupe; under `logging_dir` |
 
@@ -294,7 +294,9 @@ as they talk to the Deco: the admin account is single-session.
 
 ### Alert priorities
 
-- **P1** — blocked nothing because of a refusal (cap, empty IoT network); the
-  Deco unreadable for 3 ticks; a block the router refused. At most once a day each.
-- **P0** — devices blocked (MAC and device type, never names); a MAC skipped
+- **P1** — blocked nothing because of a refusal (cap, empty IoT network, a
+  malformed `allowed_macs`); the Deco unreadable for 3 ticks; a block the router
+  refused. At most once a day each.
+- **P0** — devices blocked: one push per tick that blocks, naming each MAC and
+  device type, never names. Also, at most once a day each: a MAC skipped
   because it is also on another network; a failed login.

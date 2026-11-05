@@ -316,7 +316,12 @@ class DecoClient:
         response = self._post(
             self._admin_path(path), {"form": form}, self._encode_payload(payload), retry=False
         )
-        data = response if "data" not in response else self._decrypt_data(response, form)
+        if "data" in response:
+            data = self._decrypt_data(response, form)
+        elif "error_code" in response or "errorcode" in response:
+            data = response
+        else:
+            raise DecoAPIError(f"Deco {form} returned no data")
         self._raise_for_error(data, form)
         return data
 

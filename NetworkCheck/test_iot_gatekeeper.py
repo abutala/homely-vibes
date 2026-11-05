@@ -5,8 +5,6 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-import pytest
-
 from lib.config import IotGatekeeperConfig
 from NetworkCheck.conftest import NOW, FakeNotifier
 from NetworkCheck.deco_client import DecoAPIError, DecoAuthError
@@ -101,9 +99,43 @@ def test_a_dry_run_blocks_nothing_and_pushes_nothing(tmp_path: Path) -> None:
     assert deco.block_calls == [] and notifier.sent == []
 
 
-def test_a_malformed_allowlist_fails_at_start(tmp_path: Path) -> None:
-    with pytest.raises(ValueError):
-        make(tmp_path, FakeDeco([]), allowed=[KNOWN, 123456])
+def test_a_malformed_allowlist_blocks_nothing_and_alerts(tmp_path: Path) -> None:
+    deco = FakeDeco([iot(STRANGER)])
+    gk, notifier = make(tmp_path, deco, allowed=[KNOWN, 123456])
+    assert gk.check_once(NOW) == []
+    assert deco.block_calls == []
+    assert len(notifier.sent) == 1 and notifier.sent[0][2] == 1
+
+
+def test_unblock_works_while_the_allowlist_is_malformed(tmp_path: Path) -> None:
+    deco = FakeDeco([])
+    gk, _ = make(tmp_path, deco, allowed=["not-a-mac"])
+    assert gk.unblock(STRANGER) == STRANGER
+
+
+def test_a_client_with_a_bad_mac_counts_as_a_failed_read(tmp_path: Path) -> None:
+    deco = FakeDeco([iot(KNOWN), iot(STRANGER), {**iot("N/A"), "interface": "main"}])
+    gk, _ = make(tmp_path, deco)
+    assert gk.check_once(NOW) == []
+    assert gk.state.read_failures == 1 and deco.block_calls == []
+
+
+def test_a_dry_run_leaves_the_live_state_alone(tmp_path: Path) -> None:
+    deco = FakeDeco([iot(STRANGER)], read_error=DecoAuthError("bad password"))
+    gk, _ = make(tmp_path, deco)
+    gk.check_once(NOW, dry_run=True)
+    again, _ = make(tmp_path, deco)
+    assert again.state.auth_paused_until is None
+
+
+def test_old_notices_are_pruned(tmp_path: Path) -> None:
+    deco = FakeDeco([iot(STRANGER)], read_error=DecoAuthError("bad password"))
+    gk, _ = make(tmp_path, deco)
+    gk.check_once(NOW)
+    assert "auth" in gk.state.notices
+    deco.read_error = None
+    gk.check_once(NOW + NOTICE_INTERVAL_S + AUTH_PAUSE_S)
+    assert "auth" not in gk.state.notices
 
 
 def test_a_refusal_alerts_once_a_day(tmp_path: Path) -> None:
