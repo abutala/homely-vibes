@@ -73,7 +73,7 @@ final class UsageTextTests: XCTestCase {
     private func snapshot(fiveHour: UsageWindow?, sevenDay: UsageWindow?) -> UsageSnapshot {
         UsageSnapshot(
             fiveHour: fiveHour, sevenDay: sevenDay, sevenDayOpus: nil, sevenDaySonnet: nil,
-            spend: nil, fetchedAt: now
+            spend: nil, hasFiveHourLimit: true, fetchedAt: now
         )
     }
 

@@ -18,6 +18,9 @@ struct UsageSnapshot {
     let sevenDayOpus: UsageWindow?
     let sevenDaySonnet: UsageWindow?
     let spend: SpendInfo?
+    /// False on a plan with no 5-hour limit (Ultra). Then an absent
+    /// `fiveHour` means no limit, not "nothing spent yet".
+    let hasFiveHourLimit: Bool
     let fetchedAt: Date
 }
 
@@ -107,7 +110,16 @@ enum UsageClient {
             sevenDayOpus: window("seven_day_opus"),
             sevenDaySonnet: window("seven_day_sonnet"),
             spend: spendInfo(),
+            hasFiveHourLimit: hasFiveHourLimit(json),
             fetchedAt: Date()
         )
+    }
+
+    /// The `limits` list names each meter the plan has; the 5-hour meter's
+    /// `kind` is `session` (from the `claude` CLI's schema). A payload with no
+    /// list predates it, so keep the 5-hour segment.
+    static func hasFiveHourLimit(_ json: [String: Any]) -> Bool {
+        guard let limits = json["limits"] as? [[String: Any]] else { return true }
+        return limits.contains { $0["kind"] as? String == "session" }
     }
 }
