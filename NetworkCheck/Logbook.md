@@ -373,8 +373,9 @@ cannot stop the Deco phone app from evicting us; the read retry covers that.
 - `block` and `unblock` answer with a plain, unencrypted `{"error_code": 0}`,
   not an encrypted `data` field. `_command` accepts both shapes.
 - The block entry's `name` is the base64 name exactly as `client_list` gives it.
-- The block cuts internet, per the SDK's docs. Whether a blocked client also
-  drops off the radio is not yet measured.
+- The block takes the client off the Wi-Fi, not only off the internet.
+  Measured 2026-11-05 with the first live block: 37 s later the phone was gone
+  from `client_list` and on the blocklist.
 
 **Fail toward blocking nothing.** A wrong block takes an IoT device offline
 until a human notices, so the gatekeeper is the opposite of the watchdog's

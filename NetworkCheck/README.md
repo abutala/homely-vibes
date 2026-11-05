@@ -245,7 +245,7 @@ blocked. It blocks **nothing** that tick, and alerts, when:
 A MAC that is unknown on IoT but also present on another network is reported,
 not blocked: the Deco blocklist is mesh-wide.
 
-The block cuts the device's internet. A blocked device stays blocked on every
+The block takes the device off the Wi-Fi. A blocked device stays blocked on every
 later join until you unblock it.
 
 ### Setup
