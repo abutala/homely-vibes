@@ -169,4 +169,5 @@ desktop app:
 
 A working display is never blanked by a failed refresh: the last good numbers
 stay with a `↻` and the reason. So "Claude: —" means it has *never* succeeded
-since launch. Check each step with `.build/debug/ClaudeUsageBar --probe-token`.
+since launch, or a successful response held neither window — likelier on
+Ultra, where `five_hour` is always absent. Check each step with `.build/debug/ClaudeUsageBar --probe-token`.

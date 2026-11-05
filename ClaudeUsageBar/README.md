@@ -47,7 +47,7 @@ can be launched from Finder/Spotlight/login items like a normal app.
   minutes exactly as a window runs low. An absent `five_hour` window means
   nothing has been spent yet and renders `100% 5.0h` — unless the plan has no
   5-hour limit (Ultra): then the title shows the 7-day segment alone
-  (`63% 4.4d`) and the dropdown drops the 5-hour row. The signal is the
+  (`63% 4.4d`). The dropdown, as for any absent window, has no 5-hour row. The signal is the
   response's `limits` list: no meter of `kind` `session` means no 5-hour limit. The dropdown keeps the
   opposite convention — percent *consumed* plus a precise reset time: absolute
   wall-clock with a two-unit countdown (`resets 11:20 PM (in 1h 43m)`,
