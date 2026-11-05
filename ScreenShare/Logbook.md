@@ -65,6 +65,33 @@ With the session in full screen and another Space active, `windows of process
 "Screen Sharing"` is empty while the connection is up (`lsof -i` shows port 5900
 established). `open location` switches to the session's Space, so the launcher then finds it.
 
+### `do shell script` hangs on `ssh -f`
+
+`do shell script` returns only when the command's stdout and stderr close. `ssh -f` goes to the
+background and keeps them open, so the launcher would wait until the tunnel closes. The tunnel
+command sends ssh's stdout to `/dev/null` and its stderr to a temp file, then prints that file,
+so an SSH error still reaches the dialog. `BatchMode=yes` stops a password prompt that nobody
+can answer, and `ExitOnForwardFailure=yes` makes ssh fail, not go to the background, when the
+local port cannot be bound. It does not check the far side: a wrong `remote_port`, or VNC off
+on the server, shows only when Screen Sharing connects, as the 90 s timeout and not as an
+SSH error. `ServerAliveInterval` ends a tunnel whose link died; without it, a stale ssh kept
+the local port, the next launch reused it, and the session hung. Checked on the real host: the command returns in about 1 s, and the forwarded port
+answers with an `RFB` banner.
+
+### A tunnel saves its own connection on first use
+
+A hand-built `vnc://user@localhost:5901?numVirtualDisplays=0` makes a new saved entry, as the
+first landmine says, but with the user in the URL that is harmless. Screen Sharing asks for the
+password once, then saves `localhost:5901` with that user and with the **remote Mac's own
+name** as `displayName`. The session window gets that name too, so the launcher's window title
+is the home-network entry's name. The second launch connected with no prompt. The new entry
+does not save the screen sharing type, so the builder takes the user and type from the
+home-network entry and only moves the address. Two entries now share a name:
+`find_connection` prefers the one that is not `localhost`.
+
+A first launch can sit on the password prompt for a while, so an unused tunnel lasts
+5 minutes (`sleep 300`), not the launcher's 90 s wait.
+
 ### Each View menu click must settle before the next
 
 In full screen with scaling on, the window is capped at the remote size (2048 wide). Actual

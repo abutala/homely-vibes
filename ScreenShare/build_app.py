@@ -4,12 +4,13 @@ connection in full screen, fitted to the screen.
 
 The app opens the connection Screen Sharing already has saved (same address and user), so
 it never creates a second entry. It goes to ~/Applications and the Dock, named
-"VNC <Host Name>". See README.md.
+"VNC <Host Name>". With `ssh_tunnel`, the app opens an SSH tunnel first. See README.md.
 """
 
 import argparse
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -19,13 +20,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote, unquote
 
-from lib.config import ScreenShareAppConfig, get_config
+from lib.config import ScreenShareAppConfig, SshTunnelConfig, get_config
 from ScreenShare.icon import make_icon, write_icns
 
 TEMPLATE = Path(__file__).with_name("launcher.applescript")
 NAME_PATTERN = re.compile(r"^[\w][\w .-]*$")
 IP_PATTERN = re.compile(r"^[0-9.]+$|:")
 HOST_SUFFIXES = ("._rfb._tcp.local.", "._rfb._tcp.local", ".local.", ".local")
+LOOPBACK = ("localhost", "127.0.0.1")
+PLACEHOLDER = re.compile(r"__(URL|TITLE|TUNNEL|FALLBACK|WAIT)__")
+WAIT_SECONDS = 90  # the launcher waits this long for the session window
+TUNNEL_HOLD_SECONDS = 300  # an unused tunnel lasts this long; a first launch asks for a password
 
 
 @dataclass(frozen=True)
@@ -33,6 +38,13 @@ class Connection:
     name: str
     address: str
     url: str
+    port: int | None = None
+    user: str = ""
+    query: str = ""  # the saved screen sharing type, e.g. "?numVirtualDisplays=0"
+
+
+def is_loopback(conn: Connection) -> bool:
+    return unquote(conn.address) in LOOPBACK
 
 
 def parse_connections(prefs: bytes) -> list[Connection]:
@@ -49,8 +61,25 @@ def _connection(entry: dict) -> Connection:
     address = target["address"]  # already percent-encoded, e.g. a Bonjour name
     user = target.get("username") or ""
     port = target.get("port")
-    url = "vnc://" + (f"{quote(user)}@" if user else "") + address + (f":{port}" if port else "")
-    return Connection(name=target["displayName"], address=address, url=url + _type_query(target))
+    query = _type_query(target)
+    return Connection(
+        name=target["displayName"],
+        address=address,
+        url=_url(user, address, port, query),
+        port=port,
+        user=user,
+        query=query,
+    )
+
+
+def _url(user: str, address: str, port: int | None, query: str) -> str:
+    return (
+        "vnc://"
+        + (f"{quote(user)}@" if user else "")
+        + address
+        + (f":{port}" if port else "")
+        + query
+    )
 
 
 def _type_query(target: dict) -> str:
@@ -60,9 +89,12 @@ def _type_query(target: dict) -> str:
 
 
 def find_connection(connections: list[Connection], wanted: str) -> Connection:
-    """Match on the name Screen Sharing shows, or on the address. Case-insensitive."""
+    """Match on the name Screen Sharing shows, or on the address. Case-insensitive.
+
+    A tunnel's first use saves a localhost entry under the same name: the real host wins.
+    """
     key = wanted.casefold()
-    for conn in connections:
+    for conn in sorted(connections, key=is_loopback):
         if key in (conn.name.casefold(), conn.address.casefold()):
             return conn
     names = ", ".join(f'"{c.name}"' for c in connections) or "none"
@@ -76,9 +108,63 @@ def applescript_string(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render(template: str, conn: Connection) -> str:
-    return template.replace("__URL__", applescript_string(conn.url)).replace(
-        "__TITLE__", applescript_string(conn.name)
+def render(template: str, conn: Connection, tunnel: str = "", fallback: str = "") -> str:
+    """One pass, so a value that holds a placeholder is not replaced again."""
+    values = {
+        "URL": applescript_string(conn.url),
+        "TITLE": applescript_string(conn.name),
+        "TUNNEL": applescript_string(tunnel),
+        "FALLBACK": applescript_string(fallback),
+        "WAIT": str(WAIT_SECONDS),
+    }
+    return PLACEHOLDER.sub(lambda match: values[match.group(1)], template)
+
+
+def through_tunnel(conn: Connection, local_port: int) -> Connection:
+    """The saved connection, moved to the tunnel's end on this Mac. Same name, user and type.
+
+    Screen Sharing saves the first use as a new entry and names its window after the remote
+    Mac, so the window title stays the saved name.
+    """
+    return Connection(
+        name=conn.name,
+        address="localhost",
+        url=_url(conn.user, "localhost", local_port, conn.query),
+        port=local_port,
+        user=conn.user,
+        query=conn.query,
+    )
+
+
+def tunnel_command(tunnel: SshTunnelConfig, local_port: int) -> str:
+    """Shell that starts `ssh -L` unless the local port already listens (a live tunnel).
+
+    `ssh -f` goes to the background once the forward is up. It exits when its `sleep` ends and
+    the last forwarded connection closes, so the tunnel lasts as long as the session. Keepalives
+    end a tunnel whose link died (sleep, a new network), so it does not hold the port. Its stderr
+    goes to a file: `do shell script` waits for its pipes to close, and a background ssh holds
+    them open.
+    """
+    destination = f"{tunnel.user}@{tunnel.host}" if tunnel.user else tunnel.host
+    ssh = shlex.join(
+        [
+            "/usr/bin/ssh",
+            "-f",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=10",
+            "-o", "ExitOnForwardFailure=yes",
+            "-o", "ServerAliveInterval=10",
+            "-o", "ServerAliveCountMax=2",
+            "-p", str(tunnel.port),
+            "-L", f"{local_port}:localhost:{tunnel.remote_port}",
+            destination,
+            f"sleep {TUNNEL_HOLD_SECONDS}",
+        ]
+    )  # fmt: skip
+    return (
+        f"/usr/bin/nc -z localhost {local_port} 2>/dev/null && exit 0; "
+        f'err=$(/usr/bin/mktemp); {ssh} >/dev/null 2>"$err"; rc=$?; '
+        '/bin/cat "$err" >&2; /bin/rm -f "$err"; exit $rc'
     )
 
 
@@ -94,8 +180,13 @@ def host_label(address: str) -> str:
     return " ".join(w[:1].upper() + w[1:] for w in words)
 
 
+def connection_label(conn: Connection) -> str:
+    """Host label for the app name and icon. A tunnel's localhost names nothing: use the name."""
+    return host_label(conn.name if is_loopback(conn) else conn.address)
+
+
 def default_app_name(conn: Connection) -> str:
-    return f"VNC {host_label(conn.address)}"
+    return f"VNC {connection_label(conn)}"
 
 
 def bundle_id(app_name: str) -> str:
@@ -178,10 +269,15 @@ def install(spec: ScreenShareAppConfig, conn: Connection, dest: Path, dock: bool
     name = spec.name or default_app_name(conn)
     if not NAME_PATTERN.match(name):
         raise ValueError(f"App name may hold letters, digits, space, '.', '_' and '-': {name}")
+    tunnel = spec.ssh_tunnel
+    target = through_tunnel(conn, tunnel.local_port) if tunnel else conn
+    shell = tunnel_command(tunnel, tunnel.local_port) if tunnel else ""
     app = dest / f"{name}.app"
     dest.mkdir(parents=True, exist_ok=True)
-    compile_app(render(TEMPLATE.read_text(), conn), app, host_label(conn.address))
-    print(f'Built {app} for "{conn.name}" ({conn.url}).')
+    source = render(TEMPLATE.read_text(), target, shell, spec.fallback_app or "")
+    compile_app(source, app, connection_label(conn))
+    via = f" through {tunnel.host}:{tunnel.port}" if tunnel else ""
+    print(f'Built {app} for "{conn.name}" ({target.url}){via}.')
     if dock and add_to_dock(app):
         print("Added to the Dock.")
     return app

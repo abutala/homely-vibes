@@ -483,4 +483,8 @@ screen_share:
   # One app per saved Screen Sharing connection, e.g. in local.yaml:
   #   apps:
   #     - connection: "Studio Mac"   # name in Screen Sharing's All Connections list
+  #       ssh_tunnel:                  # optional: reach it from anywhere (ScreenShare/README.md)
+  #         host: vnc.example.com
+  #         port: 2222
+  #       fallback_app: "Splashtop Personal"   # optional: offered when the connection fails
   apps: []

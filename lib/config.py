@@ -15,6 +15,7 @@ Usage:
 """
 
 import os
+import types
 from dataclasses import dataclass, is_dataclass
 from enum import StrEnum
 from typing import Dict, get_origin, get_args
@@ -511,11 +512,24 @@ class AppleNotesBackupConfig:
 
 
 @dataclass
+class SshTunnelConfig:
+    """SSH server that forwards the saved connection's local port to the remote VNC port"""
+
+    host: str  # FQDN or IP of the SSH server, e.g. a dynamic DNS name
+    port: int = 22
+    user: str | None = None  # default: ~/.ssh/config, then the login name
+    remote_port: int = 5900  # VNC port, as seen from the SSH server
+    local_port: int = 5901  # tunnel end on this Mac; 5900 is this Mac's own Screen Sharing
+
+
+@dataclass
 class ScreenShareAppConfig:
     """One launcher app for a saved Screen Sharing connection"""
 
     connection: str  # name in Screen Sharing's All Connections list, or its address
     name: str | None = None  # default "VNC <Host Name>"
+    ssh_tunnel: SshTunnelConfig | None = None  # reach the connection's host through SSH
+    fallback_app: str | None = None  # offered when the connection fails, e.g. "Splashtop Personal"
 
 
 @dataclass
@@ -663,6 +677,8 @@ def _dict_to_config(cfg_dict: dict) -> Config:  # type: ignore
             elif is_dataclass(field_type):
                 # Nested dataclass
                 kwargs[field_name] = build_nested(value, field_type)
+            elif (inner := _optional_dataclass(field_type)) is not None:
+                kwargs[field_name] = None if value is None else build_nested(value, inner)
             elif isinstance(field_type, type) and issubclass(field_type, StrEnum):
                 # StrEnum - convert string to enum
                 kwargs[field_name] = field_type(value)
@@ -673,6 +689,16 @@ def _dict_to_config(cfg_dict: dict) -> Config:  # type: ignore
         return cls(**kwargs)
 
     return build_nested(cfg_dict, Config)  # type: ignore
+
+
+def _optional_dataclass(field_type: object) -> type | None:
+    """The dataclass in `SomeDataclass | None`, else None."""
+    if get_origin(field_type) is not types.UnionType:
+        return None
+    members = [a for a in get_args(field_type) if a is not type(None)]
+    if len(members) == 1 and isinstance(members[0], type) and is_dataclass(members[0]):
+        return members[0]
+    return None
 
 
 def reset_config() -> None:
