@@ -121,6 +121,17 @@ schema can move without notice — a payload that no longer parses surfaces as
 (`Unavailable (…)` on a cold start, `Stale data (…)` after a good fetch). The response also carries further
 fields (per-channel overage, codenamed feature flags) not surfaced yet.
 
+### Ultra plan has no 5-hour limit; the plan name does not say so
+
+On Ultra, `five_hour` is `null` and the `limits` list holds only `weekly_all`
+and `weekly_scoped` (captured 2026-11-05). A `null` `five_hour` alone is
+ambiguous: on a plan with the limit it means nothing spent yet. So the app
+reads the `limits` list: the 5-hour meter has `kind` `session` (from the
+`claude` CLI's schema, found with `strings`). The desktop token cache is no
+help: its `subscriptionType` and `rateLimitTier` still read `max` and
+`default_claude_max_20x` after the move to Ultra. A payload with no `limits`
+list keeps the 5-hour segment.
+
 ### `utilization` above 100 is unconfirmed
 
 `!` fires at 100% used, not only above it. No captured response, doc or bug

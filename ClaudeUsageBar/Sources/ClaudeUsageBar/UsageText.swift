@@ -16,7 +16,8 @@ enum UsageText {
     /// Title reports what is *left* (budget and clock); the dropdown reports
     /// what was consumed. An absent five_hour window means nothing has been
     /// spent yet, so it reads as a full budget on a full clock — but only when
-    /// the response is otherwise healthy, hence the guard.
+    /// the response is otherwise healthy, hence the guard. A plan with no
+    /// 5-hour limit (Ultra) shows the 7-day segment alone.
     static func title(
         for snapshot: UsageSnapshot, font: NSFont = .menuBarFont(ofSize: 0), now: Date = Date()
     ) -> NSAttributedString {
@@ -27,11 +28,11 @@ enum UsageText {
         }
         if let fiveHour = snapshot.fiveHour {
             result.append(titleSegment(fiveHour, length: PaceAlert.fiveHourLength, font: font, now: now))
-        } else {
+        } else if snapshot.hasFiveHourLimit {
             result.append(plain("100% \(fullFiveHourWindow)", font: font))
         }
         if let sevenDay = snapshot.sevenDay {
-            result.append(plain(" \u{00B7} ", font: font))
+            if result.length > 0 { result.append(plain(" \u{00B7} ", font: font)) }
             result.append(titleSegment(sevenDay, length: PaceAlert.sevenDayLength, font: font, now: now))
         }
         return result

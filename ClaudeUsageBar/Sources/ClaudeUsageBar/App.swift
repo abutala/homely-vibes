@@ -39,7 +39,11 @@ struct ClaudeUsageBarApp {
                     }
                     print("\(label): \(Int(window.utilization.rounded()))% — resets \(window.resetsAt)")
                 }
-                describe("five_hour", snapshot.fiveHour)
+                if snapshot.hasFiveHourLimit {
+                    describe("five_hour", snapshot.fiveHour)
+                } else {
+                    print("five_hour: (no 5-hour limit on this plan)")
+                }
                 describe("seven_day", snapshot.sevenDay)
                 describe("seven_day_opus", snapshot.sevenDayOpus)
                 describe("seven_day_sonnet", snapshot.sevenDaySonnet)
