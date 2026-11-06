@@ -2,7 +2,7 @@
 
 A test rig for one question that no Simulator can answer and no one should
 stand at a door for: **can a Home Screen widget's tap talk Bluetooth, and
-from which process and state?** It is AugustUnlock's widget shape (two
+from which process and state?** It is AugustUnlock's widget shape (three
 `Button(intent:)`s, the intent compiled into the app and the widget, the
 tap run in the app's process) against a Bluetooth peripheral that lives on
 the Mac and echoes every write back as a notification, which is the shape
@@ -20,11 +20,13 @@ of the lock's key exchange.
   retrieve the remembered peripheral (or scan for the service once), connect,
   discover, subscribe, write 16 random bytes, wait for the echo; every stage
   stamped in ms, the summary in `Library/Caches/rig.log`.
-- `Shared/RigIntents.swift` — the two widget buttons. **Background**: the
+- `Shared/RigIntents.swift` — the three widget buttons. **Background**: the
   intent runs in the app's process in the background (`supportedModes` with
   `.foreground(.dynamic)`), which is how AugustUnlock's widget unlocks.
   **Foreground**: `openAppWhenRun`, the trade-off Tesla's widget takes; the
-  app opens and the probe runs in it.
+  app opens and the probe runs in it. **Detached**: the intent returns at
+  once and the probe runs detached under a background task (the section
+  "Detached tap measurement" below).
 - `BLEWidgetRig/ContentView.swift` — pairs on first launch (a foreground
   scan), a button for a foreground probe from the app itself, and the log.
 - `BLEWidgetRig/Info.plist` — `bluetooth-central` background mode. Remove it
@@ -54,8 +56,8 @@ written 1150, echoed 16 bytes 1870]`, with the app's state at the start.
 
 ## Detached tap measurement
 
-The question behind "progress on the widget while a tap runs" (AugustUnlock,
-2026-11-05): WidgetKit defers every reload until the tap's intent returns,
+The question behind "progress on the widget while a tap runs" (AugustUnlock
+PR #71's Logbook entry): WidgetKit defers every reload until the tap's intent returns,
 so a stage can only be drawn if `perform()` returns at once and the unlock
 runs detached. Apple exempts reloads from the widget's budget only while
 the widget performs an intent, so a reload asked after the return may run
@@ -86,6 +88,10 @@ xcrun devicectl device copy from --device <UDID> --domain-type appDataContainer 
 xcrun devicectl device copy from --device <UDID> --domain-type appDataContainer --domain-identifier com.deviationlabs.BLEWidgetRig.<TEAMID>.Widget --source Library/Caches/rig-widget.log --destination /tmp/rig-widget.log 2>&1 | tee /tmp/rig-widget-copy.log
 ```
 
+The widget's bundle id under Sideloadly's re-sign is the pattern AugustUnlock's
+widget uses; `xcrun devicectl device info apps --device <UDID>` lists the
+exact one.
+
 What decides the design, per tap: `rig.log` says when `perform()` returned,
 how many `+N s alive` lines followed (the process's life; 25 or more means
 the unlock fits), whether the background task expired, and whether
@@ -95,4 +101,4 @@ The locked tap says whether a locked phone runs the intent at all.
 
 ## Findings
 
-See `AugustUnlock/Logbook.md`, 2026-11-03 and 2026-11-05.
+See `AugustUnlock/Logbook.md`, 2026-11-03, and PR #71's entry.

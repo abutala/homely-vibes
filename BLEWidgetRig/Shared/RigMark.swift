@@ -13,11 +13,13 @@ enum RigMark {
         let data = Data(String(started.timeIntervalSince1970).utf8)
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: account]
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        guard status == errSecItemNotFound else { return }
+        if status == errSecSuccess { return }
+        guard status == errSecItemNotFound else { return RigNote.write("rig.log", "mark: update failed, status \(status)") }
         var attributes = query
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
-        SecItemAdd(attributes as CFDictionary, nil)
+        let added = SecItemAdd(attributes as CFDictionary, nil)
+        if added != errSecSuccess { RigNote.write("rig.log", "mark: add failed, status \(added)") }
     }
 
     static func get() -> Date? {
@@ -25,7 +27,9 @@ enum RigMark {
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess, let data = item as? Data,
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        if status != errSecSuccess, status != errSecItemNotFound { RigNote.write("rig-widget.log", "mark: read failed, status \(status)") }
+        guard status == errSecSuccess, let data = item as? Data,
             let seconds = String(data: data, encoding: .utf8).flatMap(Double.init)
         else { return nil }
         return Date(timeIntervalSince1970: seconds)
@@ -51,7 +55,7 @@ enum RigNote {
     }
 }
 
-extension ISO8601DateFormatter {
+nonisolated extension ISO8601DateFormatter {
     static let withFractionalSeconds: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

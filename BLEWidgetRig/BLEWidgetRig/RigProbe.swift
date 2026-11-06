@@ -182,21 +182,14 @@ nonisolated final class RigProbe: NSObject, CBCentralManagerDelegate, CBPeripher
 /// `xcrun devicectl device copy from --domain-type appDataContainer
 /// --domain-identifier <app bundle id> --source Library/Caches/rig.log`.
 enum RigLog {
-    private static let lock = OSAllocatedUnfairLock()
-    private static let log = Logger(subsystem: "BLEWidgetRig", category: "probe")
-
     private static var url: URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("rig.log")
     }
 
+    /// One writer for `rig.log`: the detached loop writes the same file
+    /// through `RigNote`, so this goes through it too.
     static func note(_ message: String) {
-        log.notice("\(message, privacy: .public)")
-        lock.withLock {
-            let stamp = ISO8601DateFormatter().string(from: Date())
-            var lines = (try? String(contentsOf: url, encoding: .utf8))?.split(separator: "\n").map(String.init) ?? []
-            lines.append("\(stamp) \(message)")
-            try? lines.suffix(300).joined(separator: "\n").appending("\n").write(to: url, atomically: true, encoding: .utf8)
-        }
+        RigNote.write("rig.log", message)
     }
 
     static func tail(_ count: Int = 30) -> String {

@@ -26,8 +26,10 @@ final class RigUITests: XCTestCase {
         }
         XCTAssertTrue(springboard.buttons["Detached"].waitForExistence(timeout: 20), springboard.debugDescription)
         springboard.buttons["Detached"].tap()
-        // The reloads asked at 2, 6 and 12 s after the return redraw the
-        // caption with the provider's lag after the tap.
+        // The system's own reload after the intent returns draws the
+        // caption with the provider's lag after the tap, which proves the
+        // mark crosses the Keychain; whether the reloads asked at 2, 6 and
+        // 12 s also run is read from the logs (the phone decides).
         let redrawn = springboard.staticTexts.matching(NSPredicate(format: "label CONTAINS 'tap +'")).firstMatch
         XCTAssertTrue(redrawn.waitForExistence(timeout: 20), springboard.debugDescription)
         XCTAssertFalse(app.wait(for: .runningForeground, timeout: 1), "a detached tap opened the app")
