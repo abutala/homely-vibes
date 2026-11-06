@@ -64,6 +64,7 @@ temperature. Prompts for a sudo password only if the remote requires one
 - **`FoscamNode`**: Camera operations (image capture, HTTP reboot)
 - **`WindowsNode`**: SSH commands, uptime checks
 - **`GenericNode`**: Ping-only monitoring; the base class of the others
+- **`SomfyMyLinkNode`**: Ping, then a JSON-RPC `mylink.status.info` round-trip on TCP 44100 (`port` overrides it) when `auth_token` is set
 - **`ArpNode`**: Presence via ARP cache — for WiFi devices that drop ICMP under power-save (e.g. iPhones)
 - **`SshNode`**: Reads the sshd banner from `ssh_host:port` (default `ip:22`) — for a host with no LAN path, reached through the router's WAN port forward. Needs no SSH key
 
