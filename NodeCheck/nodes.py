@@ -15,12 +15,34 @@ logger = SystemLogger.get_logger(__name__)
 # Nagios-style max_check_attempts=3 convention and tolerates a single radio sleep.
 HEARTBEAT_PING_COUNT = 3
 
+# One budget for a TCP connect and for each read. The heartbeat loop probes nodes one by one.
+TCP_TIMEOUT_S = 4
+
 
 class GenericNode:
-    def __init__(self, name: str, config: NodeConfig):
+    def __init__(
+        self,
+        name: str,
+        config: NodeConfig,
+        connect: Callable[..., socket.socket] | None = None,
+    ):
         self.name = name
         self.config = config
         self.is_online = False
+        self._connect = connect
+
+    def _open_tcp(self, default_port: int) -> socket.socket:
+        """Connect to `host or ip` on `port or default_port`. Reads time out after TCP_TIMEOUT_S."""
+        connect = self._connect or socket.create_connection
+        target = (self.config.host or self.config.ip, self.config.port or default_port)
+        sock = connect(target, timeout=TCP_TIMEOUT_S)
+        sock.settimeout(TCP_TIMEOUT_S)
+        return sock
+
+    def _probe_failed(self, reason: str) -> bool:
+        logger.warning(f"{self.name}: {reason}")
+        self.is_online = False
+        return False
 
     def check_state(self, desired_up: bool = True, attempts: int = 5) -> bool:
         """Check if node is in desired state (up/down) - used for reboot verification"""
@@ -104,7 +126,6 @@ class SomfyMyLinkNode(GenericNode):
     """Somfy myLink controller. Layered check: ping then JSON-RPC over TCP:44100."""
 
     DEFAULT_PORT = 44100
-    RPC_TIMEOUT_S = 4
 
     def heartbeat(self) -> bool:
         """Check myLink health: ping + JSON-RPC mylink.status.info round-trip"""
@@ -117,7 +138,6 @@ class SomfyMyLinkNode(GenericNode):
             logger.warning(f"{self.name}: no auth_token configured; myLink API check skipped")
             return True
 
-        port = self.config.port or self.DEFAULT_PORT
         request = (
             json.dumps(
                 {
@@ -134,10 +154,7 @@ class SomfyMyLinkNode(GenericNode):
         # newline / FIN). Parse incrementally and stop on first complete object —
         # waiting for a delimiter or EOF would block until socket timeout.
         try:
-            with socket.create_connection(
-                (self.config.ip, port), timeout=self.RPC_TIMEOUT_S
-            ) as sock:
-                sock.settimeout(self.RPC_TIMEOUT_S)
+            with self._open_tcp(self.DEFAULT_PORT) as sock:
                 sock.sendall(request)
                 buf = b""
                 response: dict | None = None
@@ -152,24 +169,16 @@ class SomfyMyLinkNode(GenericNode):
                     except json.JSONDecodeError:
                         continue  # partial — keep reading
             if response is None:
-                logger.warning(
-                    f"{self.name}: myLink API check failed: incomplete response ({len(buf)} bytes)"
+                return self._probe_failed(
+                    f"myLink API check failed: incomplete response ({len(buf)} bytes)"
                 )
-                self.is_online = False
-                return False
         except OSError as e:
-            logger.warning(f"{self.name}: myLink API check failed: {e!r}")
-            self.is_online = False
-            return False
+            return self._probe_failed(f"myLink API check failed: {e!r}")
 
         if "error" in response:
-            logger.warning(f"{self.name}: myLink RPC error: {response['error']}")
-            self.is_online = False
-            return False
+            return self._probe_failed(f"myLink RPC error: {response['error']}")
         if "result" not in response:
-            logger.warning(f"{self.name}: unexpected myLink response: {response!r}")
-            self.is_online = False
-            return False
+            return self._probe_failed(f"unexpected myLink response: {response!r}")
 
         logger.debug(f"{self.name}: myLink API live, target={response['result'].get('targetID')}")
         return True
@@ -249,27 +258,20 @@ class SshNode(GenericNode):
     """
 
     DEFAULT_PORT = 22
-    TIMEOUT_S = 10
-
-    def __init__(
-        self,
-        name: str,
-        config: NodeConfig,
-        connect: Callable[..., socket.socket] = socket.create_connection,
-    ):
-        super().__init__(name, config)
-        self._connect = connect
 
     def heartbeat(self) -> bool:
-        target = (self.config.ssh_host or self.config.ip, self.config.port or self.DEFAULT_PORT)
+        """No ping first: the host is reachable only through its forwarded SSH port."""
         try:
-            with self._connect(target, timeout=self.TIMEOUT_S) as sock:
-                sock.settimeout(self.TIMEOUT_S)
+            with self._open_tcp(self.DEFAULT_PORT) as sock:
                 banner = sock.recv(256)
+        except socket.gaierror as e:
+            return self._probe_failed(f"DNS lookup of {self.config.host} failed: {e!r}")
         except OSError as e:
-            logger.warning(f"{self.name}: SSH probe of {target} failed: {e!r}")
-            self.is_online = False
-            return False
-        self.is_online = banner.startswith(b"SSH-")
-        logger.debug(f"{self.name}: SSH banner from {target}: {banner!r}")
-        return self.is_online
+            return self._probe_failed(f"SSH port unreachable: {e!r}")
+        if not banner.startswith(b"SSH-"):
+            return self._probe_failed(f"not an SSH banner: {banner!r}")
+        self.is_online = True
+        return True
+
+    def check_state(self, desired_up: bool = True, attempts: int = 5) -> bool:
+        raise NotImplementedError("check_state pings ip, which an SSH-only host does not answer")

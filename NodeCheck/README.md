@@ -66,7 +66,9 @@ temperature. Prompts for a sudo password only if the remote requires one
 - **`GenericNode`**: Ping-only monitoring; the base class of the others
 - **`SomfyMyLinkNode`**: Ping, then a JSON-RPC `mylink.status.info` round-trip on TCP 44100 (`port` overrides it) when `auth_token` is set
 - **`ArpNode`**: Presence via ARP cache — for WiFi devices that drop ICMP under power-save (e.g. iPhones)
-- **`SshNode`**: Reads the sshd banner from `ssh_host:port` (default `ip:22`) — for a host with no LAN path, reached through the router's WAN port forward. Needs no SSH key
+- **`SshNode`**: Reads the sshd banner from `host:port` (default `ip:22`) — for a host with no LAN path, reached through the router's WAN port forward. No ping first. Needs no SSH key
+
+TCP-probed nodes (`SomfyMyLinkNode`, `SshNode`) open their connection through `GenericNode._open_tcp`: it connects to `host` when set, else `ip`, on `port` when set, else the class default, with one 4 s timeout. A new TCP probe type is one subclass that calls it and judges the reply, plus a `NodeType` value and an entry in `_NODE_CLASS_BY_TYPE`.
 
 ## Configuration
 
@@ -100,7 +102,7 @@ node_check:
     "GuestWifiMac":
       ip: "192.168.1.xxx"      # LAN address, for the record; not probed
       node_type: ssh
-      ssh_host: "home.example.com"
+      host: "home.example.com"
       port: 2222
 ```
 

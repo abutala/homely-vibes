@@ -89,8 +89,8 @@ class NodeConfig:
     # API-authenticated nodes (e.g. Somfy myLink) use auth_token; port overrides default API port
     auth_token: str | None = None
     port: int | None = None
-    # SSH nodes: hostname to probe instead of ip, for a host reached through a WAN port forward
-    ssh_host: str | None = None
+    # TCP-probed nodes connect to host (when set) instead of ip, e.g. a WAN port forward by DNS name
+    host: str | None = None
 
 
 @dataclass
