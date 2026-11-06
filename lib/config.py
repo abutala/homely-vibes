@@ -32,6 +32,7 @@ class NodeType(StrEnum):
     MYLINK = "mylink"
     ARP = "arp"
     SSH = "ssh"
+    DECO = "deco"
 
 
 class OpMode(StrEnum):
@@ -91,6 +92,8 @@ class NodeConfig:
     port: int | None = None
     # TCP-probed nodes connect to host (when set) instead of ip, e.g. a WAN port forward by DNS name
     host: str | None = None
+    # Deco-probed nodes are found by this MAC on the Deco client list
+    mac: str | None = None
 
 
 @dataclass

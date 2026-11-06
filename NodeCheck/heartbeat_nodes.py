@@ -8,6 +8,7 @@ from lib.logger import SystemLogger
 from lib.MyPushover import Pushover
 from NodeCheck.nodes import (
     ArpNode,
+    DecoNode,
     FoscamNode,
     GenericNode,
     SomfyMyLinkNode,
@@ -22,6 +23,7 @@ _NODE_CLASS_BY_TYPE: dict[NodeType, type[GenericNode]] = {
     NodeType.GENERIC: GenericNode,
     NodeType.ARP: ArpNode,
     NodeType.SSH: SshNode,
+    NodeType.DECO: DecoNode,
 }
 
 # Flap suppression: require this many consecutive down probes before alerting.
