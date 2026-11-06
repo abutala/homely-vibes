@@ -88,6 +88,7 @@ See `config/default.yaml` for the full structure and `config/local.yaml.example`
 | 🚗 **GarageCheck** | Machine learning-based garage door status detection using image classification and computer vision. | [📖 README](GarageCheck/README.md) |
 | 🗺️ **GPXParser** | GPX track analysis and processing tools for GPS data visualization and route analysis. | [📖 README](GPXParser/README.md) |
 | 🛠️ **lib** | Shared utilities: OmegaConf config, Pushover / Mailer / Twilio, atomic secret I/O, POSIX file lock. Used by every Python module. | [📖 README](lib/README.md) · [📓 Logbook](lib/Logbook.md) |
+| 🚦 **MergeQueueBar** | macOS menu-bar widget showing today's merge-queue (pr-lander) and my-PR counts, with PR links. Swift, reads GitHub through `gh`. | [📖 README](MergeQueueBar/README.md) · [📓 Logbook](MergeQueueBar/Logbook.md) |
 | 🌐 **NetworkCheck** | Network uplink speedtest with outcome-driven Pushover priority and external IP reporter. | [📖 README](NetworkCheck/README.md) · [📓 Logbook](NetworkCheck/Logbook.md) |
 | 🖥️ **NodeCheck** | System node monitoring with continuous heartbeat tracking and automated device management. | [📖 README](NodeCheck/README.md) · [📓 Logbook](NodeCheck/Logbook.md) |
 | 📵 **NoShorts** | iOS app that wraps YouTube and strips all Shorts content via JS injection — clean YouTube without vertical video. | [📖 README](NoShorts/README.md) · [📓 Logbook](NoShorts/Logbook.md) |

@@ -41,6 +41,11 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 - **Stack**: Quint models (Node tooling, NOT Python). `make formal-deps` then `make formal`; deliberately outside `setup`, `lint` and `test`, so the prod host never installs it.
 - **Result semantics**: `make formal` (`quint run`) is a randomized search, so "holds" there is never "proved"; `make formal-verify` (Apalache) is exhaustive and needs JDK 21. See [formal/Logbook.md](../formal/Logbook.md) before trusting or extending a model.
 
+## MergeQueueBar Module (`MergeQueueBar/`)
+- **Stack**: Swift Package Manager executable wrapped into a `.app` bundle, same pattern as `ClaudeUsageBar/` (NOT Python). `swift test` runs the XCTest target; `./Scripts/build_app.sh --install` builds, copies to `/Applications` and relaunches.
+- **Data**: one `gh api graphql` call per tick with five GitHub searches over the pr-lander labels. `gh` is found by absolute path: a GUI app gets launchd's PATH, which lacks Homebrew.
+- **Diagnostics**: `swift run MergeQueueBar --probe` prints one fetch.
+
 ## NodeCheck Module (`NodeCheck/`)
 - **Purpose**: System node monitoring with continuous heartbeat tracking and automated device management
 - **Testing**: Runs in isolation due to subprocess management patterns (uses pytest-forked)

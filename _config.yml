@@ -64,6 +64,7 @@ exclude:
 - GarageCheck/
 - GPXParser/
 - lib/
+- MergeQueueBar/
 - NetworkCheck/
 - NodeCheck/
 - NoShorts/
