@@ -462,9 +462,9 @@ class TestBlocklist:
         with pytest.raises(ValueError):
             make_client(FakeDecoSession()).unblock([])
 
-    def test_rename_sends_a_base64_user_set_name(self) -> None:
+    def test_rename_sends_a_base64_user_set_name_and_keeps_the_type(self) -> None:
         session = FakeDecoSession()
-        make_client(session).rename("02-00-00-00-00-01", "Kitchen plug")
+        make_client(session).rename("02-00-00-00-00-01", "Kitchen plug", "iot_device")
         assert session.commands == [
             {
                 "operation": "write",
@@ -474,6 +474,7 @@ class TestBlocklist:
                             "mac": "02-00-00-00-00-01",
                             "name": "S2l0Y2hlbiBwbHVn",
                             "user_set_name_type": True,
+                            "client_type": "iot_device",
                         }
                     ]
                 },
@@ -483,7 +484,7 @@ class TestBlocklist:
     def test_rename_to_a_blank_name_is_rejected(self) -> None:
         session = FakeDecoSession()
         with pytest.raises(ValueError):
-            make_client(session).rename("02-00-00-00-00-01", "  ")
+            make_client(session).rename("02-00-00-00-00-01", "  ", "phone")
         assert session.commands == []
 
 

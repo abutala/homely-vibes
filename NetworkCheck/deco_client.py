@@ -272,11 +272,13 @@ class DecoClient:
         )
         logger.info("Deco unblock issued for %s", ", ".join(macs))
 
-    def rename(self, mac: str, name: str) -> None:
+    def rename(self, mac: str, name: str, client_type: str) -> None:
         """Set the client's display name, as the Deco app does.
 
         ``mac`` is sent as ``client_list`` returns it. The firmware ignores an
-        entry without ``user_set_name_type``, so it is always set.
+        entry without ``user_set_name_type``, so it is always set. Pass the
+        client's current ``client_type``: measured on XE75 Pro 1.4.5, a write
+        without it lets the firmware re-guess the type from the new name.
         """
         if not name.strip():
             raise ValueError("rename() requires a non-blank name")
@@ -284,6 +286,7 @@ class DecoClient:
             "mac": mac,
             "name": base64.b64encode(name.encode()).decode(),
             "user_set_name_type": True,
+            "client_type": client_type,
         }
         self._command(
             "admin/client",
