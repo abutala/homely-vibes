@@ -2,34 +2,48 @@ import XCTest
 @testable import MergeQueueBar
 
 final class ClientTests: XCTestCase {
-    func testDayStartIsLocalMidnightWithOffset() {
+    private let pst: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
-        // 2026-11-05 15:00 PST
+        return calendar
+    }()
+
+    func testDayStartsAreSevenLocalMidnightsAcrossDST() {
+        // 2026-11-05 15:00 PST; 2026-11-01 is the DST change.
         let now = Date(timeIntervalSince1970: 1_793_919_600)
-        XCTAssertEqual(DayStart.isoString(now: now, calendar: calendar), "2026-11-05T00:00:00-08:00")
+        let days = DayStart.isoStrings(now: now, calendar: pst)
+        XCTAssertEqual(days.count, 7)
+        XCTAssertEqual(days.first, "2026-10-30T00:00:00-07:00")
+        XCTAssertEqual(days.last, "2026-11-05T00:00:00-08:00")
     }
 
     func testQueriesScopeToOrgAndDay() {
-        let q = QueueQueries(org: "acme", dayStart: "2026-11-05T00:00:00-08:00")
-        XCTAssertEqual(q.queued, "org:acme is:pr is:open label:\"ready to review\" -label:\"automerge failed\" -label:nomerge")
-        XCTAssertEqual(q.landedToday, "org:acme is:pr is:merged label:autolanded merged:>=2026-11-05T00:00:00-08:00")
-        XCTAssertEqual(q.mineOpen, "org:acme is:pr is:open author:@me")
+        let q = QueueQueries(org: "acme", dayStarts: ["2026-11-04T00:00:00-08:00", "2026-11-05T00:00:00-08:00"])
+        let byAlias = Dictionary(uniqueKeysWithValues: q.searches.map { ($0.alias, $0.query) })
+        XCTAssertEqual(byAlias["queued"], "org:acme is:pr is:open label:\"ready to review\" -label:\"automerge failed\" -label:nomerge")
+        XCTAssertEqual(byAlias["landed"], "org:acme is:pr is:merged label:autolanded merged:>=2026-11-05T00:00:00-08:00")
+        XCTAssertEqual(byAlias["mineOpen"], "is:pr author:@me is:open")
+        XCTAssertEqual(byAlias["mineMerged"], "is:pr author:@me is:merged -label:autolanded merged:>=2026-11-05T00:00:00-08:00")
+        XCTAssertEqual(byAlias["landedDay0"], "org:acme is:pr is:merged label:autolanded merged:2026-11-04T00:00:00-08:00..2026-11-05T00:00:00-08:00")
+        XCTAssertEqual(byAlias["mineMergedDay0"], "is:pr author:@me is:merged -label:autolanded merged:2026-11-04T00:00:00-08:00..2026-11-05T00:00:00-08:00")
+        XCTAssertNil(byAlias["landedDay1"])
     }
 
-    func testFetchPassesEveryQueryVariableToGh() throws {
+    func testFetchPassesEverySearchToGh() throws {
         var captured: [String] = []
-        let body = #"{"data":{"queued":{"issueCount":0,"nodes":[]},"landed":{"issueCount":3},"failed":{"issueCount":0,"nodes":[]},"mineOpen":{"issueCount":0,"nodes":[]},"mineMerged":{"issueCount":2}}}"#
+        let history = (0..<6).map { #""landedDay\#($0)":{"issueCount":1},"mineMergedDay\#($0)":{"issueCount":2}"# }
+        let body = #"{"data":{"queued":{"issueCount":0,"nodes":[]},"landed":{"issueCount":3},"failed":{"issueCount":0,"nodes":[]},"mineOpen":{"issueCount":0,"nodes":[]},"mineMerged":{"issueCount":2},"#
+            + history.joined(separator: ",") + "}}"
         let s = try GitHubClient.fetch(
             org: "acme", now: Date(),
             locate: { URL(fileURLWithPath: "/bin/gh") },
             run: { _, args in captured = args; return Data(body.utf8) }
         )
-        XCTAssertEqual(s.landedToday, 3)
+        XCTAssertEqual(s.landedByDay, [1, 1, 1, 1, 1, 1, 3])
         XCTAssertEqual(Array(captured.prefix(2)), ["api", "graphql"])
-        for name in ["queued", "landed", "failed", "mineOpen", "mineMerged"] {
-            XCTAssertTrue(captured.contains { $0.hasPrefix("\(name)=org:acme ") }, name)
-        }
+        // Queue searches are org-scoped; my searches cover every repo.
+        XCTAssertEqual(captured.filter { $0.contains("=org:acme ") }.count, 3 + 6)
+        XCTAssertEqual(captured.filter { $0.contains("=is:pr author:@me ") }.count, 2 + 6)
     }
 
     func testMissingGhIsReported() {

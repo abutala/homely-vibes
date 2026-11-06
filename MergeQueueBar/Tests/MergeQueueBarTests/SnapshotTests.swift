@@ -13,9 +13,13 @@ final class SnapshotTests: XCTestCase {
     }
 
     private func response(queued: [String] = [], queuedCount: Int? = nil, landed: Int = 0,
-                          failed: [String] = [], mine: [String] = [], mineMerged: Int = 0) -> Data {
-        """
+                          failed: [String] = [], mine: [String] = [], mineMerged: Int = 0,
+                          landedPast: [Int] = [0, 0, 0, 0, 0, 0], minePast: [Int] = [0, 0, 0, 0, 0, 0]) -> Data {
+        let history = landedPast.enumerated().map { "\"landedDay\($0.offset)\":{\"issueCount\":\($0.element)}" }
+            + minePast.enumerated().map { "\"mineMergedDay\($0.offset)\":{\"issueCount\":\($0.element)}" }
+        return """
         {"data":{
+          \(history.joined(separator: ",")),
           "queued":{"issueCount":\(queuedCount ?? queued.count),"nodes":[\(queued.joined(separator: ","))]},
           "landed":{"issueCount":\(landed)},
           "failed":{"issueCount":\(failed.count),"nodes":[\(failed.joined(separator: ","))]},
@@ -40,11 +44,28 @@ final class SnapshotTests: XCTestCase {
         XCTAssertEqual(SummaryText.title(s), "MQ 0/28 \u{00B7} Me 0/24")
     }
 
-    func testMineNotQueuedDropsQueuedAndLandingPRs() throws {
+    func testMyOpenPRsLeaveOutOnlyTheOnesWithTheLander() throws {
         let mine = [node(1), node(2, labels: ["ready to review"]),
-                    node(3, labels: ["ready to review", "autolanding"]), node(4, draft: true)]
+                    node(3, labels: ["ready to review", "autolanding"]), node(4, draft: true),
+                    node(5, labels: ["ready to review", "automerge failed"]),
+                    node(6, labels: ["ready to review", "nomerge"])]
         let s = try SnapshotDecoder.decode(response(mine: mine), fetchedAt: now)
-        XCTAssertEqual(s.mineNotQueued.map(\.number), [1, 4])
+        XCTAssertEqual(s.mineOpen.map(\.number), [1, 4, 5, 6])
+        XCTAssertEqual(s.mineOpenCount, 4)
+    }
+
+    func testHistoryIsOldestFirstEndingToday() throws {
+        let data = response(landed: 7, mineMerged: 3, landedPast: [1, 2, 3, 4, 5, 6], minePast: [0, 0, 0, 0, 0, 9])
+        let s = try SnapshotDecoder.decode(data, fetchedAt: now)
+        XCTAssertEqual(s.landedByDay, [1, 2, 3, 4, 5, 6, 7])
+        XCTAssertEqual(SummaryText.historyLine(s.landedByDay), "7d: 1 2 3 4 5 6 7 = 28")
+        XCTAssertEqual(s.mineMergedByDay, [0, 0, 0, 0, 0, 9, 3])
+    }
+
+    func testMissingHistoryDayIsMalformed() {
+        XCTAssertThrowsError(try SnapshotDecoder.decode(response(landedPast: [1, 2]), fetchedAt: now)) {
+            XCTAssertEqual($0 as? SnapshotDecodeError, .malformed)
+        }
     }
 
     func testCountsComeFromIssueCountNotTheList() throws {
@@ -70,13 +91,6 @@ final class SnapshotTests: XCTestCase {
         XCTAssertThrowsError(try SnapshotDecoder.decode(data, fetchedAt: now)) {
             XCTAssertEqual($0 as? SnapshotDecodeError, .graphQL("Bad credentials"))
         }
-    }
-
-    func testBouncedOrHeldPRIsNotQueued() throws {
-        let mine = [node(1, labels: ["ready to review", "automerge failed"]),
-                    node(2, labels: ["ready to review", "nomerge"])]
-        let s = try SnapshotDecoder.decode(response(mine: mine), fetchedAt: now)
-        XCTAssertEqual(s.mineNotQueued.map(\.number), [1, 2])
     }
 
     func testNonJSONIsMalformed() {

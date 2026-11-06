@@ -2,25 +2,36 @@
 
 Gotchas and learnings: [Logbook.md](Logbook.md).
 
-A macOS menu bar app that shows today's merge queue and your own PRs in one
-GitHub org:
+A macOS menu bar app that shows today's pr-lander merge queue (MQ) and
+your own PRs that the lander does not handle:
 
 ```
-MQ 1/30 · Me 2/26 ✗1
+MQ 1/29 · Me 1/12 ✗1
 ```
 
-- **`MQ tagged/total`**: PRs in the pr-lander queue now (label
-  `ready to review`, not bounced, not `nomerge`) / every PR the queue held
-  today (still tagged + landed today + failed today).
-- **`Me pending/total`**: your open PRs in the org / your open PRs + yours
-  merged today.
+- **`MQ tagged/total`**: PRs in the queue now (label `ready to review`, not
+  bounced, not `nomerge`) / every PR the queue held today (still tagged +
+  landed today + failed today). Scoped to one org.
+- **`Me open/total`**: your open PRs in every repo, without the ones in the
+  queue / those + yours merged today without `autolanded`. A bounced or
+  `nomerge` PR counts as yours: the lander is not handling it.
 - **`✗N`**: shown only when N PRs bounced today (label `automerge failed`).
 
-The dropdown lists the queue (`▶` marks the PR the lander is on now, label
-`autolanding`), the PRs that failed today, and your open PRs not yet in the
-queue (a bounced PR counts as not queued: a bounce keeps `ready to review`
-but adds `automerge failed`). A click on a PR opens it. Two links open
-[github.com/pulls](https://github.com/pulls) and
+The dropdown:
+
+```
+Merge queue: 1 tagged · 28 landed · 0 failed today
+Landed 7d: 13 4 2 14 10 20 28 = 91
+  ▶ repo#50 Title…                        ← ▶: the lander is on it now
+Failed today (N)                          ← only when N > 0
+My PRs, not with MQ: 1 open · 11 merged today
+Merged 7d: 10 0 7 9 2 5 11 = 44
+  repo#69 Title… (draft)
+Open PRs on GitHub · My PRs on GitHub · Updated · Refresh · Refresh Every · Quit
+```
+
+The `7d` lines count per day, oldest first, ending today. A click on a PR
+opens it; the two links open [github.com/pulls](https://github.com/pulls) and
 [github.com/pulls/authored](https://github.com/pulls/authored).
 
 No Dock icon (`LSUIElement`), no Xcode project: a Swift Package Manager
@@ -28,20 +39,26 @@ executable wrapped in a minimal `.app` bundle.
 
 ## How it counts
 
-One `gh api graphql` call per refresh runs five GitHub searches, all scoped
-to `org:<org>`. "Today" starts at local midnight, sent with its UTC offset.
+One `gh api graphql` call per refresh runs 17 GitHub searches. Days start at
+local midnight, sent with their UTC offset. MQ searches add `org:<org>`.
 
 | Number | Search |
 |---|---|
 | Tagged | `is:pr is:open label:"ready to review" -label:"automerge failed" -label:nomerge` |
 | Landed today | `is:pr is:merged label:autolanded merged:>=<midnight>` |
 | Failed today | `is:pr is:open label:"automerge failed" updated:>=<midnight>` |
-| My open | `is:pr is:open author:@me` |
-| My merged today | `is:pr is:merged author:@me merged:>=<midnight>` |
+| My open | `is:pr author:@me is:open`, then the app drops the PRs in the queue |
+| My merged today | `is:pr author:@me is:merged -label:autolanded merged:>=<midnight>` |
+| 7d lines | the landed and my-merged searches, one per past day: `merged:<midnight>..<next midnight>` |
 
 GitHub search cannot filter on the time a label was added, so "failed today"
 means an open, bounced PR that changed today. Counts come from GitHub's
-`issueCount`; each list shows at most 50 PRs and then `… and N more`.
+`issueCount`. The queue and failed lists show at most 50 PRs and then
+`… and N more`; my open list holds 100, so its count is exact up to 100.
+
+**API cost**: the whole query costs 2 GraphQL points (measured 2026-11-05),
+from the 5,000 points an hour your account gets. A 2-minute refresh uses 60
+points an hour; a 1-minute refresh, 120.
 
 ## Setup
 

@@ -12,49 +12,75 @@ enum LanderLabel {
     static let noMerge = "nomerge"
 }
 
-/// GitHub search strings for one snapshot. "Today" starts at local midnight,
-/// sent with its UTC offset so "today" is local, not left to GitHub.
+/// One GitHub search in the query. `listSize` PRs come back with the count; 0 means the count only.
+struct SearchSpec: Equatable {
+    let alias: String
+    let query: String
+    let listSize: Int
+}
+
+/// The GitHub searches for one snapshot. MQ searches are scoped to the org.
+/// My searches cover every repo and leave out what the lander handles: the
+/// app drops queued PRs from my open list, and `-label:autolanded` drops the
+/// PRs it merged. Day bounds are local midnights sent
+/// with their UTC offset, so "today" is local, not left to GitHub.
 struct QueueQueries: Equatable {
-    let queued: String
-    let landedToday: String
-    let failedToday: String
-    let mineOpen: String
-    let mineMergedToday: String
+    static let historyDays = 7
 
-    init(org: String, dayStart: String) {
+    let searches: [SearchSpec]
+
+    /// `dayStarts`: local midnights, oldest first; the last is today.
+    init(org: String, dayStarts: [String]) {
         let base = "org:\(org) is:pr"
-        queued = "\(base) is:open label:\"\(LanderLabel.queued)\" -label:\"\(LanderLabel.failed)\" -label:\(LanderLabel.noMerge)"
-        landedToday = "\(base) is:merged label:\(LanderLabel.landed) merged:>=\(dayStart)"
-        failedToday = "\(base) is:open label:\"\(LanderLabel.failed)\" updated:>=\(dayStart)"
-        mineOpen = "\(base) is:open author:@me"
-        mineMergedToday = "\(base) is:merged author:@me merged:>=\(dayStart)"
+        let landed = "\(base) is:merged label:\(LanderLabel.landed)"
+        let mine = "is:pr author:@me"
+        let mineMerged = "\(mine) is:merged -label:\(LanderLabel.landed)"
+        let today = dayStarts.last ?? ""
+        var searches = [
+            SearchSpec(alias: "queued", query: "\(base) is:open label:\"\(LanderLabel.queued)\" -label:\"\(LanderLabel.failed)\" -label:\(LanderLabel.noMerge)", listSize: 50),
+            SearchSpec(alias: "landed", query: "\(landed) merged:>=\(today)", listSize: 0),
+            SearchSpec(alias: "failed", query: "\(base) is:open label:\"\(LanderLabel.failed)\" updated:>=\(today)", listSize: 50),
+            SearchSpec(alias: "mineOpen", query: "\(mine) is:open", listSize: 100),
+            SearchSpec(alias: "mineMerged", query: "\(mineMerged) merged:>=\(today)", listSize: 0),
+        ]
+        for (day, (start, end)) in zip(dayStarts, dayStarts.dropFirst()).enumerated() {
+            let range = "merged:\(start)..\(end)"
+            searches.append(SearchSpec(alias: Self.landedAlias(day), query: "\(landed) \(range)", listSize: 0))
+            searches.append(SearchSpec(alias: Self.mineAlias(day), query: "\(mineMerged) \(range)", listSize: 0))
+        }
+        self.searches = searches
     }
 
-    var variables: [(name: String, value: String)] {
-        [("queued", queued), ("landed", landedToday), ("failed", failedToday),
-         ("mineOpen", mineOpen), ("mineMerged", mineMergedToday)]
-    }
+    static func landedAlias(_ day: Int) -> String { "landedDay\(day)" }
+    static func mineAlias(_ day: Int) -> String { "mineMergedDay\(day)" }
 
-    static let graphQL = """
-    query($queued:String!,$landed:String!,$failed:String!,$mineOpen:String!,$mineMerged:String!){
-      queued: search(query:$queued,type:ISSUE,first:50){issueCount nodes{...pr}}
-      landed: search(query:$landed,type:ISSUE,first:1){issueCount}
-      failed: search(query:$failed,type:ISSUE,first:50){issueCount nodes{...pr}}
-      mineOpen: search(query:$mineOpen,type:ISSUE,first:50){issueCount nodes{...pr}}
-      mineMerged: search(query:$mineMerged,type:ISSUE,first:1){issueCount}
+    var graphQL: String {
+        let params = searches.map { "$\($0.alias):String!" }.joined(separator: ",")
+        let fields = searches.map { s in
+            let nodes = s.listSize > 0 ? " nodes{...pr}" : ""
+            return "  \(s.alias): search(query:$\(s.alias),type:ISSUE,first:\(max(s.listSize, 1))){issueCount\(nodes)}"
+        }.joined(separator: "\n")
+        return """
+        query(\(params)){
+        \(fields)
+        }
+        fragment pr on PullRequest {
+          number title url isDraft repository{name} labels(first:20){nodes{name}}
+        }
+        """
     }
-    fragment pr on PullRequest {
-      number title url isDraft repository{name} labels(first:20){nodes{name}}
-    }
-    """
 }
 
 enum DayStart {
-    /// Local midnight of `now` as ISO-8601 with offset, e.g. `2026-11-05T00:00:00-08:00`.
-    static func isoString(now: Date, calendar: Calendar = .current) -> String {
+    /// The local midnights of the last `days` days as ISO-8601 with offset,
+    /// oldest first, ending with today's, e.g. `2026-11-05T00:00:00-08:00`.
+    static func isoStrings(now: Date, days: Int = QueueQueries.historyDays, calendar: Calendar = .current) -> [String] {
         let formatter = ISO8601DateFormatter()
         formatter.timeZone = calendar.timeZone
         formatter.formatOptions = [.withInternetDateTime]
-        return formatter.string(from: calendar.startOfDay(for: now))
+        let today = calendar.startOfDay(for: now)
+        return (0..<days).reversed().compactMap { back in
+            calendar.date(byAdding: .day, value: -back, to: today).map(formatter.string(from:))
+        }
     }
 }

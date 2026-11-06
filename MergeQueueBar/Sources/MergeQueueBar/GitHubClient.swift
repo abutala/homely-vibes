@@ -25,15 +25,15 @@ enum GitHubClient {
         run: CommandRunner = runProcess
     ) throws -> QueueSnapshot {
         guard let gh = locate() else { throw GitHubClientError.ghNotFound }
-        let queries = QueueQueries(org: org, dayStart: DayStart.isoString(now: now))
+        let queries = QueueQueries(org: org, dayStarts: DayStart.isoStrings(now: now))
         let data = try run(gh, arguments(for: queries))
         return try SnapshotDecoder.decode(data, fetchedAt: now)
     }
 
     static func arguments(for queries: QueueQueries) -> [String] {
-        var args = ["api", "graphql", "-f", "query=\(QueueQueries.graphQL)"]
-        for variable in queries.variables {
-            args += ["-f", "\(variable.name)=\(variable.value)"]
+        var args = ["api", "graphql", "-f", "query=\(queries.graphQL)"]
+        for search in queries.searches {
+            args += ["-f", "\(search.alias)=\(search.query)"]
         }
         return args
     }

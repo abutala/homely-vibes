@@ -9,8 +9,8 @@ struct PullRequest: Equatable {
     let labels: [String]
 
     var isLanding: Bool { labels.contains(LanderLabel.landing) }
-    /// In the queue: tagged, and neither bounced nor held with `nomerge`.
-    var isQueued: Bool {
+    /// The lander handles it: tagged, and neither bounced nor held with `nomerge`.
+    var isWithLander: Bool {
         labels.contains(LanderLabel.queued)
             && !labels.contains(LanderLabel.failed) && !labels.contains(LanderLabel.noMerge)
     }
@@ -24,16 +24,21 @@ struct QueueSnapshot: Equatable {
     let landedToday: Int
     let failedToday: [PullRequest]
     let failedTodayCount: Int
+    /// My open PRs in every repo, without the ones the lander handles.
     let mineOpen: [PullRequest]
     let mineOpenCount: Int
+    /// My PRs merged today in every repo, without the ones the lander merged.
     let mineMergedToday: Int
+    /// PRs the lander merged per day, oldest first, ending with today.
+    let landedByDay: [Int]
+    /// My PRs merged per day, oldest first, ending with today.
+    let mineMergedByDay: [Int]
     let fetchedAt: Date
 
     /// Every PR the queue held today: still tagged, landed, or bounced.
     var queueTotalToday: Int { queuedCount + landedToday + failedTodayCount }
     /// Every PR of mine alive today: still open, or merged today.
     var mineTotalToday: Int { mineOpenCount + mineMergedToday }
-    var mineNotQueued: [PullRequest] { mineOpen.filter { !$0.isQueued && !$0.isLanding } }
 }
 
 enum SnapshotDecodeError: Error, Equatable {
@@ -55,31 +60,38 @@ enum SnapshotDecoder {
             throw SnapshotDecodeError.graphQL(message)
         }
         guard let d = response.data else { throw SnapshotDecodeError.malformed }
+        func search(_ alias: String) throws -> Search {
+            guard let s = d[alias] else { throw SnapshotDecodeError.malformed }
+            return s
+        }
+        let pastDays = 0..<(QueueQueries.historyDays - 1)
+        let queued = try search("queued"), failed = try search("failed"), mineOpen = try search("mineOpen")
+        let landedToday = try search("landed").issueCount
+        let mineMergedToday = try search("mineMerged").issueCount
         return QueueSnapshot(
-            queued: d.queued.pullRequests,
-            queuedCount: d.queued.issueCount,
-            landedToday: d.landed.issueCount,
-            failedToday: d.failed.pullRequests,
-            failedTodayCount: d.failed.issueCount,
-            mineOpen: d.mineOpen.pullRequests,
-            mineOpenCount: d.mineOpen.issueCount,
-            mineMergedToday: d.mineMerged.issueCount,
+            queued: queued.pullRequests,
+            queuedCount: queued.issueCount,
+            landedToday: landedToday,
+            failedToday: failed.pullRequests,
+            failedTodayCount: failed.issueCount,
+            mineOpen: mineOpen.pullRequests.filter { !$0.isWithLander },
+            // Exact while all my open PRs fit in the list (100).
+            mineOpenCount: mineOpen.issueCount - mineOpen.pullRequests.filter(\.isWithLander).count,
+            mineMergedToday: mineMergedToday,
+            landedByDay: try pastDays.map { try search(QueueQueries.landedAlias($0)).issueCount } + [landedToday],
+            mineMergedByDay: try pastDays.map { try search(QueueQueries.mineAlias($0)).issueCount } + [mineMergedToday],
             fetchedAt: fetchedAt
         )
     }
 
     private struct Response: Decodable {
-        let data: Searches?
+        let data: [String: Search]?
         let errors: [GraphQLError]?
         let message: String?
     }
 
     private struct GraphQLError: Decodable {
         let message: String
-    }
-
-    private struct Searches: Decodable {
-        let queued, landed, failed, mineOpen, mineMerged: Search
     }
 
     private struct Search: Decodable {

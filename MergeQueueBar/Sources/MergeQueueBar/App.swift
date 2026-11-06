@@ -21,10 +21,12 @@ struct MergeQueueBarApp {
             let s = try GitHubClient.fetch()
             print(SummaryText.title(s))
             print(SummaryText.queueLine(s))
+            print("Landed \(SummaryText.historyLine(s.landedByDay))")
             s.queued.forEach { print("  queued: \(SummaryText.row($0))") }
             s.failedToday.forEach { print("  failed: \(SummaryText.row($0))") }
             print(SummaryText.mineLine(s))
-            s.mineNotQueued.forEach { print("  not queued: \(SummaryText.row($0))") }
+            print("Merged \(SummaryText.historyLine(s.mineMergedByDay))")
+            s.mineOpen.forEach { print("  mine: \(SummaryText.row($0))") }
         } catch {
             print("fetch failed: \(SummaryText.describe(error))")
             exit(1)

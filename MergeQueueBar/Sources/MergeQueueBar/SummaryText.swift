@@ -17,7 +17,12 @@ enum SummaryText {
     }
 
     static func mineLine(_ s: QueueSnapshot) -> String {
-        "My PRs: \(s.mineOpenCount) open · \(s.mineMergedToday) merged today"
+        "My PRs, not with MQ: \(s.mineOpenCount) open · \(s.mineMergedToday) merged today"
+    }
+
+    /// `7d: 22 30 25 31 19 0 28 = 155`: per day, oldest first, ending today.
+    static func historyLine(_ byDay: [Int]) -> String {
+        "\(byDay.count)d: \(byDay.map(String.init).joined(separator: " ")) = \(byDay.reduce(0, +))"
     }
 
     /// `▶ repo#12 Title…`: `▶` marks the PR the lander is on now; `(draft)` a draft.
