@@ -48,7 +48,7 @@ if __name__ == "__main__":
     send_email = args.always_email
     model = None
     msg = ""
-    garage_node = cfg.node_check.node_configs["Garage Backup"]
+    garage_node = cfg.node_check.node_configs["Foscam Cam - Garage Backup"]
     mycam = FoscamImager(garage_node.ip, args.display_image)
 
     if args.model_file and os.path.isfile(args.model_file):
