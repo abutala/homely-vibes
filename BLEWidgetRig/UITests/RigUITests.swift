@@ -25,13 +25,22 @@ final class RigUITests: XCTestCase {
             try addWidget()
         }
         XCTAssertTrue(springboard.buttons["Detached"].waitForExistence(timeout: 20), springboard.debugDescription)
+        let captions = springboard.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'run '"))
+        XCTAssertTrue(captions.firstMatch.waitForExistence(timeout: 10), springboard.debugDescription)
+        let before = captions.firstMatch.label
         springboard.buttons["Detached"].tap()
-        // The system's own reload after the intent returns draws the
-        // caption with the provider's lag after the tap, which proves the
-        // mark crosses the Keychain; whether the reloads asked at 2, 6 and
-        // 12 s also run is read from the logs (the phone decides).
-        let redrawn = springboard.staticTexts.matching(NSPredicate(format: "label CONTAINS 'tap +'")).firstMatch
-        XCTAssertTrue(redrawn.waitForExistence(timeout: 20), springboard.debugDescription)
+        // The system's own reload after the intent returns draws a new
+        // caption with the provider's lag after this tap, which proves the
+        // mark crosses the Keychain; a caption left by an earlier tap does
+        // not count. Whether the reloads asked at 2, 6 and 12 s also run is
+        // read from the logs (the phone decides).
+        let fresh = NSPredicate { object, _ in
+            guard let label = (object as? XCUIElementAttributes)?.label, label != before, let range = label.range(of: "tap +") else { return false }
+            let seconds = Double(label[range.upperBound...].prefix { "0123456789.".contains($0) }) ?? .infinity
+            return seconds < 20
+        }
+        let redrawn = springboard.staticTexts.matching(fresh).firstMatch
+        XCTAssertTrue(redrawn.waitForExistence(timeout: 20), "no fresh caption after the tap; before: \(before)\n\(springboard.debugDescription)")
         XCTAssertFalse(app.wait(for: .runningForeground, timeout: 1), "a detached tap opened the app")
     }
 
