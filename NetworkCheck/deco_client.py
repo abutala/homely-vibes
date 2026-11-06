@@ -272,6 +272,26 @@ class DecoClient:
         )
         logger.info("Deco unblock issued for %s", ", ".join(macs))
 
+    def rename(self, mac: str, name: str) -> None:
+        """Set the client's display name, as the Deco app does.
+
+        ``mac`` is sent as ``client_list`` returns it. The firmware ignores an
+        entry without ``user_set_name_type``, so it is always set.
+        """
+        if not name.strip():
+            raise ValueError("rename() requires a non-blank name")
+        entry = {
+            "mac": mac,
+            "name": base64.b64encode(name.encode()).decode(),
+            "user_set_name_type": True,
+        }
+        self._command(
+            "admin/client",
+            "client_list",
+            {"operation": "write", "params": {"client_list": [entry]}},
+        )
+        logger.info("Deco rename issued for %s", mac)
+
     def reboot(self, macs: list[str]) -> None:
         """Reboot the named Deco units.
 
