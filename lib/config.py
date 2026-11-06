@@ -31,6 +31,7 @@ class NodeType(StrEnum):
     GENERIC = "generic"
     MYLINK = "mylink"
     ARP = "arp"
+    SSH = "ssh"
 
 
 class OpMode(StrEnum):
@@ -88,6 +89,8 @@ class NodeConfig:
     # API-authenticated nodes (e.g. Somfy myLink) use auth_token; port overrides default API port
     auth_token: str | None = None
     port: int | None = None
+    # SSH nodes: hostname to probe instead of ip, for a host reached through a WAN port forward
+    ssh_host: str | None = None
 
 
 @dataclass

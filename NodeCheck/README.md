@@ -48,7 +48,7 @@ temperature. Prompts for a sudo password only if the remote requires one
 - Multi-device support for foscam, windows, and generic devices
 - Pushover alerts with configurable cooloff periods  
 - Case-insensitive filtering
-- Uniform ping-based health checks
+- Ping-based health checks; ARP and SSH-banner probes for hosts ping cannot reach
 - Recovery detection notifications
 
 ### Device Management (`manage_nodes.py`)
@@ -66,6 +66,7 @@ temperature. Prompts for a sudo password only if the remote requires one
 - **`WindowsNode`**: SSH commands, uptime checks
 - **`GenericNode`**: Ping-only monitoring
 - **`ArpNode`**: Presence via ARP cache — for WiFi devices that drop ICMP under power-save (e.g. iPhones)
+- **`SshNode`**: Reads the sshd banner from `ssh_host:port` (default `ip:22`) — for a host with no LAN path, reached through the router's WAN port forward. Needs no SSH key
 
 ## Configuration
 
@@ -96,6 +97,11 @@ node_check:
     "PhoneOnWifi":
       ip: "192.168.1.xxx"
       node_type: arp
+    "GuestWifiMac":
+      ip: "192.168.1.xxx"      # LAN address, for the record; not probed
+      node_type: ssh
+      ssh_host: "home.example.com"
+      port: 2222
 ```
 
 ## Command Reference

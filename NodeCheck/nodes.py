@@ -4,6 +4,7 @@ import re
 import socket
 import subprocess
 import time
+from collections.abc import Callable
 from lib import NetHelpers
 from lib.config import NodeConfig
 from lib.logger import SystemLogger
@@ -238,4 +239,37 @@ class ArpNode(GenericNode):
         is_incomplete = "incomplete" in stdout.lower()
         self.is_online = has_mac and not is_incomplete
         logger.debug(f"ARP check for {self.name}: {self.is_online} ({stdout!r})")
+        return self.is_online
+
+
+class SshNode(GenericNode):
+    """Host with no LAN path: probe its sshd banner, through a WAN port forward if configured.
+
+    The banner proves the forward and the sshd answer. It needs no key on the probing host.
+    """
+
+    DEFAULT_PORT = 22
+    TIMEOUT_S = 10
+
+    def __init__(
+        self,
+        name: str,
+        config: NodeConfig,
+        connect: Callable[..., socket.socket] = socket.create_connection,
+    ):
+        super().__init__(name, config)
+        self._connect = connect
+
+    def heartbeat(self) -> bool:
+        target = (self.config.ssh_host or self.config.ip, self.config.port or self.DEFAULT_PORT)
+        try:
+            with self._connect(target, timeout=self.TIMEOUT_S) as sock:
+                sock.settimeout(self.TIMEOUT_S)
+                banner = sock.recv(256)
+        except OSError as e:
+            logger.warning(f"{self.name}: SSH probe of {target} failed: {e!r}")
+            self.is_online = False
+            return False
+        self.is_online = banner.startswith(b"SSH-")
+        logger.debug(f"{self.name}: SSH banner from {target}: {banner!r}")
         return self.is_online
