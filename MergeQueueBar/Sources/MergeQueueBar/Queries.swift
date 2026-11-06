@@ -2,16 +2,18 @@ import Foundation
 
 /// Label names the pr-lander uses. `ready to review` queues a PR,
 /// `autolanding` marks the one being landed, `autolanded` marks a PR the
-/// lander merged, `automerge failed` marks a bounce.
+/// lander merged, `automerge failed` marks a bounce. A bounce keeps
+/// `ready to review`, so the queue search excludes bounced and `nomerge` PRs.
 enum LanderLabel {
     static let queued = "ready to review"
     static let landing = "autolanding"
     static let landed = "autolanded"
     static let failed = "automerge failed"
+    static let noMerge = "nomerge"
 }
 
 /// GitHub search strings for one snapshot. "Today" starts at local midnight,
-/// sent with its UTC offset so GitHub does not read it as UTC.
+/// sent with its UTC offset so "today" is local, not left to GitHub.
 struct QueueQueries: Equatable {
     let queued: String
     let landedToday: String
@@ -21,7 +23,7 @@ struct QueueQueries: Equatable {
 
     init(org: String, dayStart: String) {
         let base = "org:\(org) is:pr"
-        queued = "\(base) is:open label:\"\(LanderLabel.queued)\""
+        queued = "\(base) is:open label:\"\(LanderLabel.queued)\" -label:\"\(LanderLabel.failed)\" -label:\(LanderLabel.noMerge)"
         landedToday = "\(base) is:merged label:\(LanderLabel.landed) merged:>=\(dayStart)"
         failedToday = "\(base) is:open label:\"\(LanderLabel.failed)\" updated:>=\(dayStart)"
         mineOpen = "\(base) is:open author:@me"

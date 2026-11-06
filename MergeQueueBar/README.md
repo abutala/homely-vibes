@@ -10,15 +10,16 @@ MQ 1/30 · Me 2/26 ✗1
 ```
 
 - **`MQ tagged/total`**: PRs in the pr-lander queue now (label
-  `ready to review`) / every PR the queue held today (still tagged + landed
-  today + failed today).
+  `ready to review`, not bounced, not `nomerge`) / every PR the queue held
+  today (still tagged + landed today + failed today).
 - **`Me pending/total`**: your open PRs in the org / your open PRs + yours
   merged today.
 - **`✗N`**: shown only when N PRs bounced today (label `automerge failed`).
 
 The dropdown lists the queue (`▶` marks the PR the lander is on now, label
 `autolanding`), the PRs that failed today, and your open PRs not yet in the
-queue. A click on a PR opens it. Two links open
+queue (a bounced PR counts as not queued: a bounce keeps `ready to review`
+but adds `automerge failed`). A click on a PR opens it. Two links open
 [github.com/pulls](https://github.com/pulls) and
 [github.com/pulls/authored](https://github.com/pulls/authored).
 
@@ -32,7 +33,7 @@ to `org:<org>`. "Today" starts at local midnight, sent with its UTC offset.
 
 | Number | Search |
 |---|---|
-| Tagged | `is:pr is:open label:"ready to review"` |
+| Tagged | `is:pr is:open label:"ready to review" -label:"automerge failed" -label:nomerge` |
 | Landed today | `is:pr is:merged label:autolanded merged:>=<midnight>` |
 | Failed today | `is:pr is:open label:"automerge failed" updated:>=<midnight>` |
 | My open | `is:pr is:open author:@me` |

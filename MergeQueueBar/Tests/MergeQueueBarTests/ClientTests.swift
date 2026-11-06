@@ -12,7 +12,7 @@ final class ClientTests: XCTestCase {
 
     func testQueriesScopeToOrgAndDay() {
         let q = QueueQueries(org: "acme", dayStart: "2026-11-05T00:00:00-08:00")
-        XCTAssertEqual(q.queued, "org:acme is:pr is:open label:\"ready to review\"")
+        XCTAssertEqual(q.queued, "org:acme is:pr is:open label:\"ready to review\" -label:\"automerge failed\" -label:nomerge")
         XCTAssertEqual(q.landedToday, "org:acme is:pr is:merged label:autolanded merged:>=2026-11-05T00:00:00-08:00")
         XCTAssertEqual(q.mineOpen, "org:acme is:pr is:open author:@me")
     }

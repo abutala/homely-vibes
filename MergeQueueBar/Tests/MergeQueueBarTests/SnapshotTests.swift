@@ -65,6 +65,20 @@ final class SnapshotTests: XCTestCase {
         }
     }
 
+    func testHTTPErrorBodyIsReported() {
+        let data = #"{"message":"Bad credentials","status":"401"}"#.data(using: .utf8)!
+        XCTAssertThrowsError(try SnapshotDecoder.decode(data, fetchedAt: now)) {
+            XCTAssertEqual($0 as? SnapshotDecodeError, .graphQL("Bad credentials"))
+        }
+    }
+
+    func testBouncedOrHeldPRIsNotQueued() throws {
+        let mine = [node(1, labels: ["ready to review", "automerge failed"]),
+                    node(2, labels: ["ready to review", "nomerge"])]
+        let s = try SnapshotDecoder.decode(response(mine: mine), fetchedAt: now)
+        XCTAssertEqual(s.mineNotQueued.map(\.number), [1, 2])
+    }
+
     func testNonJSONIsMalformed() {
         XCTAssertThrowsError(try SnapshotDecoder.decode(Data("oops".utf8), fetchedAt: now)) {
             XCTAssertEqual($0 as? SnapshotDecodeError, .malformed)

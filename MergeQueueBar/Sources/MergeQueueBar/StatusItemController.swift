@@ -7,6 +7,8 @@ final class StatusItemController {
     private let logger = Logger(subsystem: "com.deviationlabs.MergeQueueBar", category: "refresh")
     private var timer: Timer?
     private var state: State = .loading
+    /// One fetch at a time: a slow fetch can neither pile up nor overwrite a newer one.
+    private var isRefreshing = false
 
     private static let allPullsURL = URL(string: "https://github.com/pulls")!
     private static let myPullsURL = URL(string: "https://github.com/pulls/authored")!
@@ -40,7 +42,10 @@ final class StatusItemController {
     }
 
     private func refresh() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
         Task {
+            defer { isRefreshing = false }
             let result = await Task.detached { Result { try GitHubClient.fetch() } }.value
             switch result {
             case .success(let snapshot):

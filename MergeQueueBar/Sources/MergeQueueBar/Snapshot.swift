@@ -9,7 +9,11 @@ struct PullRequest: Equatable {
     let labels: [String]
 
     var isLanding: Bool { labels.contains(LanderLabel.landing) }
-    var isQueued: Bool { labels.contains(LanderLabel.queued) }
+    /// In the queue: tagged, and neither bounced nor held with `nomerge`.
+    var isQueued: Bool {
+        labels.contains(LanderLabel.queued)
+            && !labels.contains(LanderLabel.failed) && !labels.contains(LanderLabel.noMerge)
+    }
 }
 
 /// One fetch of the queue and of my PRs. Counts come from GitHub's
@@ -45,7 +49,9 @@ enum SnapshotDecoder {
         } catch {
             throw SnapshotDecodeError.malformed
         }
-        if let message = response.errors?.first?.message {
+        // `errors[]` is a GraphQL error; a top-level `message` is an HTTP
+        // error body (bad token, rate limit) that `gh` prints on stdout.
+        if let message = response.errors?.first?.message ?? response.message {
             throw SnapshotDecodeError.graphQL(message)
         }
         guard let d = response.data else { throw SnapshotDecodeError.malformed }
@@ -65,6 +71,7 @@ enum SnapshotDecoder {
     private struct Response: Decodable {
         let data: Searches?
         let errors: [GraphQLError]?
+        let message: String?
     }
 
     private struct GraphQLError: Decodable {
