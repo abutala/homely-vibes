@@ -17,12 +17,24 @@ old IP, and the heartbeat sent "back online".
 
 `DecoNode` asks the Deco client list for the MAC instead of probing an IP. The Deco sees
 clients on every network (main, guest, IoT). The MAC must be stable: an iPhone's Private Wi-Fi
-Address must be Fixed, not Rotating, for that network. The Deco admin
-account is single-session ([NetworkCheck Logbook](../NetworkCheck/Logbook.md)), so the probe
-takes the same `deco_admin_lock` as the NetworkCheck scripts. Each deco node logs in once per
-poll, and each login evicts a person signed in to the Deco app; at one node an hour that cost
-is small. If the list cannot be read, the
-node reads as down: the log names the cause, and two failed polls are needed for a page.
+Address must be Fixed, not Rotating, for that network. If the list cannot be read, the node
+reads as down: the log names the cause, and two failed polls are needed for a page.
+
+**Sharing the Deco admin session.** The Deco admin account allows one session at a time: a
+second login evicts the first ([NetworkCheck Logbook](../NetworkCheck/Logbook.md)).
+
+- Our scripts on the prod host take one file lock, `deco_admin_lock`: the uplink watchdog
+  (every 10 min), the IoT gatekeeper (every 5 min) and each deco node (once per poll). It is a
+  mutex on purpose. A semaphore that let N scripts in would cause the evictions it should stop.
+- The lock is local to the prod host. It cannot stop the Deco phone app (same owner account)
+  or a script run from another machine. Either one can evict a script; a read then logs in
+  again once. A script login can also send an open app session back to its login screen.
+- The cost of `DecoNode` is one login per deco node per poll. The gatekeeper already logs in
+  every 5 min, so one node an hour adds little. No eviction problem was seen as of 2026-11-06.
+- `DecoNode` waits 30 s for the lock, less than the watchdog's 240 s. A poll that cannot get
+  the lock (for example, during a mesh reboot) reads as down once; flap suppression absorbs it.
+- Open: a dedicated Deco user for the scripts, apart from the owner account the app uses.
+  Not yet tested: whether a Manager account has its own session or shares the owner's.
 
 ## A host on the guest Wi-Fi cannot be pinged — probe its SSH forward (2026-11-05)
 
