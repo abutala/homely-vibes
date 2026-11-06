@@ -4,9 +4,13 @@ import re
 import socket
 import subprocess
 import time
+from collections.abc import Callable
+from typing import Any
 from lib import NetHelpers
-from lib.config import NodeConfig
+from lib.config import NodeConfig, get_config
 from lib.logger import SystemLogger
+from NetworkCheck.common import deco_admin_lock
+from NetworkCheck.deco_client import DecoAPIError, DecoAuthError, DecoClient
 
 logger = SystemLogger.get_logger(__name__)
 
@@ -14,12 +18,34 @@ logger = SystemLogger.get_logger(__name__)
 # Nagios-style max_check_attempts=3 convention and tolerates a single radio sleep.
 HEARTBEAT_PING_COUNT = 3
 
+# One budget for a TCP connect and for each read. The heartbeat loop probes nodes one by one.
+TCP_TIMEOUT_S = 4
+
 
 class GenericNode:
-    def __init__(self, name: str, config: NodeConfig):
+    def __init__(
+        self,
+        name: str,
+        config: NodeConfig,
+        connect: Callable[..., socket.socket] | None = None,
+    ):
         self.name = name
         self.config = config
         self.is_online = False
+        self._connect = connect
+
+    def _open_tcp(self, default_port: int) -> socket.socket:
+        """Connect to `host or ip` on `port or default_port`. Reads time out after TCP_TIMEOUT_S."""
+        connect = self._connect or socket.create_connection
+        target = (self.config.host or self.config.ip, self.config.port or default_port)
+        sock = connect(target, timeout=TCP_TIMEOUT_S)
+        sock.settimeout(TCP_TIMEOUT_S)
+        return sock
+
+    def _probe_failed(self, reason: str) -> bool:
+        logger.warning(f"{self.name}: {reason}")
+        self.is_online = False
+        return False
 
     def check_state(self, desired_up: bool = True, attempts: int = 5) -> bool:
         """Check if node is in desired state (up/down) - used for reboot verification"""
@@ -103,7 +129,6 @@ class SomfyMyLinkNode(GenericNode):
     """Somfy myLink controller. Layered check: ping then JSON-RPC over TCP:44100."""
 
     DEFAULT_PORT = 44100
-    RPC_TIMEOUT_S = 4
 
     def heartbeat(self) -> bool:
         """Check myLink health: ping + JSON-RPC mylink.status.info round-trip"""
@@ -116,7 +141,6 @@ class SomfyMyLinkNode(GenericNode):
             logger.warning(f"{self.name}: no auth_token configured; myLink API check skipped")
             return True
 
-        port = self.config.port or self.DEFAULT_PORT
         request = (
             json.dumps(
                 {
@@ -133,10 +157,7 @@ class SomfyMyLinkNode(GenericNode):
         # newline / FIN). Parse incrementally and stop on first complete object —
         # waiting for a delimiter or EOF would block until socket timeout.
         try:
-            with socket.create_connection(
-                (self.config.ip, port), timeout=self.RPC_TIMEOUT_S
-            ) as sock:
-                sock.settimeout(self.RPC_TIMEOUT_S)
+            with self._open_tcp(self.DEFAULT_PORT) as sock:
                 sock.sendall(request)
                 buf = b""
                 response: dict | None = None
@@ -151,24 +172,16 @@ class SomfyMyLinkNode(GenericNode):
                     except json.JSONDecodeError:
                         continue  # partial — keep reading
             if response is None:
-                logger.warning(
-                    f"{self.name}: myLink API check failed: incomplete response ({len(buf)} bytes)"
+                return self._probe_failed(
+                    f"myLink API check failed: incomplete response ({len(buf)} bytes)"
                 )
-                self.is_online = False
-                return False
         except OSError as e:
-            logger.warning(f"{self.name}: myLink API check failed: {e!r}")
-            self.is_online = False
-            return False
+            return self._probe_failed(f"myLink API check failed: {e!r}")
 
         if "error" in response:
-            logger.warning(f"{self.name}: myLink RPC error: {response['error']}")
-            self.is_online = False
-            return False
+            return self._probe_failed(f"myLink RPC error: {response['error']}")
         if "result" not in response:
-            logger.warning(f"{self.name}: unexpected myLink response: {response!r}")
-            self.is_online = False
-            return False
+            return self._probe_failed(f"unexpected myLink response: {response!r}")
 
         logger.debug(f"{self.name}: myLink API live, target={response['result'].get('targetID')}")
         return True
@@ -239,3 +252,83 @@ class ArpNode(GenericNode):
         self.is_online = has_mac and not is_incomplete
         logger.debug(f"ARP check for {self.name}: {self.is_online} ({stdout!r})")
         return self.is_online
+
+
+class SshNode(GenericNode):
+    """Host with no LAN path: probe its sshd banner, through a WAN port forward if configured.
+
+    The banner proves the forward and the sshd answer. It needs no key on the probing host.
+    """
+
+    DEFAULT_PORT = 22
+
+    def heartbeat(self) -> bool:
+        """No ping first: the host is reachable only through its forwarded SSH port."""
+        try:
+            with self._open_tcp(self.DEFAULT_PORT) as sock:
+                banner = sock.recv(256)
+        except socket.gaierror as e:
+            return self._probe_failed(f"DNS lookup of {self.config.host} failed: {e!r}")
+        except OSError as e:
+            return self._probe_failed(f"SSH port unreachable: {e!r}")
+        if not banner.startswith(b"SSH-"):
+            return self._probe_failed(f"not an SSH banner: {banner!r}")
+        self.is_online = True
+        return True
+
+    def check_state(self, desired_up: bool = True, attempts: int = 5) -> bool:
+        raise NotImplementedError("check_state pings ip, which an SSH-only host does not answer")
+
+
+# Short of the watchdog's own wait: a poll that cannot get the lock fails, and the
+# flap suppression absorbs one miss.
+DECO_LOCK_WAIT_S = 30
+
+
+def read_deco_clients() -> list[dict[str, Any]]:
+    """The Deco client list, under the lock every Deco login shares (the admin is single-session)."""
+    wd = get_config().network_check.uplink_watchdog
+    with deco_admin_lock(timeout_s=DECO_LOCK_WAIT_S):
+        return DecoClient(wd.deco_host, wd.deco_username, wd.deco_password).list_clients()
+
+
+def _normalize_mac(mac: str) -> str:
+    return mac.upper().replace(":", "-")
+
+
+class DecoNode(GenericNode):
+    """Presence by MAC on the Deco client list, on any network: main, guest or IoT.
+
+    For a host ping cannot reach. The MAC must be stable: an iPhone needs its
+    Private Wi-Fi Address set to Fixed, not Rotating.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        config: NodeConfig,
+        list_clients: Callable[[], list[dict[str, Any]]] = read_deco_clients,
+    ):
+        super().__init__(name, config)
+        self._list_clients = list_clients
+
+    def heartbeat(self) -> bool:
+        """No ping first: the Deco sees the client where the prod host cannot."""
+        if not self.config.mac:
+            return self._probe_failed("deco node has no mac configured")
+        try:
+            clients = self._list_clients()
+        except (DecoAPIError, DecoAuthError, OSError) as e:
+            return self._probe_failed(f"Deco client list unreadable: {e!r}")
+        want = _normalize_mac(self.config.mac)
+        client = next((c for c in clients if _normalize_mac(str(c.get("mac") or "")) == want), None)
+        if client is None:
+            return self._probe_failed(f"{want} not on the Deco client list")
+        # Some firmware omits `online`; then presence in the list is the signal.
+        if not client.get("online", True):
+            return self._probe_failed(f"{want} is offline on the Deco")
+        self.is_online = True
+        return True
+
+    def check_state(self, desired_up: bool = True, attempts: int = 5) -> bool:
+        raise NotImplementedError("check_state pings ip, which a Deco-probed host does not answer")

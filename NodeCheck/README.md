@@ -2,7 +2,7 @@
 
 Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
 
-NodeCheck provides monitoring and management for Foscam cameras, Windows machines, and generic IoT devices.
+NodeCheck provides monitoring and management for Foscam cameras, Windows machines, and other network devices, including ones ping cannot reach.
 
 ## Architecture
 
@@ -45,10 +45,10 @@ temperature. Prompts for a sudo password only if the remote requires one
 
 ### Continuous Monitoring (`heartbeat_nodes.py`)
 
-- Multi-device support for foscam, windows, and generic devices
+- One node class per type: foscam, windows, mylink, generic, arp, ssh, deco
 - Pushover alerts with configurable cooloff periods  
 - Case-insensitive filtering
-- Uniform ping-based health checks
+- Ping-based health checks; ARP, SSH-banner and Deco client-list probes for hosts ping cannot reach
 - Recovery detection notifications
 
 ### Device Management (`manage_nodes.py`)
@@ -61,11 +61,17 @@ temperature. Prompts for a sudo password only if the remote requires one
 
 ### Node Classes (`nodes.py`)
 
-- **`Node`**: Abstract base class
 - **`FoscamNode`**: Camera operations (image capture, HTTP reboot)
 - **`WindowsNode`**: SSH commands, uptime checks
-- **`GenericNode`**: Ping-only monitoring
+- **`GenericNode`**: Ping-only monitoring; the base class of the others
+- **`SomfyMyLinkNode`**: Ping, then a JSON-RPC `mylink.status.info` round-trip on TCP 44100 (`port` overrides it) when `auth_token` is set
 - **`ArpNode`**: Presence via ARP cache — for WiFi devices that drop ICMP under power-save (e.g. iPhones)
+- **`SshNode`**: Reads the sshd banner from `host:port` (default `ip:22`) — for a host with no LAN path, reached through the router's WAN port forward. No ping first. Needs no SSH key
+- **`DecoNode`**: Presence by `mac` on the Deco client list, on the main, guest or IoT network — for a host ping cannot reach. No ping first. Logs in with the `network_check.uplink_watchdog` Deco credentials, under the same lock as the NetworkCheck scripts. An iPhone needs its Private Wi-Fi Address set to Fixed
+
+Use `deco` only for a node that does not answer ping; a node that does keeps a ping-based type.
+
+TCP-probed nodes (`SomfyMyLinkNode`, `SshNode`) open their connection through `GenericNode._open_tcp`: it connects to `host` when set, else `ip`, on `port` when set, else the class default, with one 4 s timeout. A new TCP probe type is one subclass that calls it and judges the reply, plus a `NodeType` value and an entry in `_NODE_CLASS_BY_TYPE`.
 
 ## Configuration
 
@@ -96,6 +102,15 @@ node_check:
     "PhoneOnWifi":
       ip: "192.168.1.xxx"
       node_type: arp
+    "GuestWifiMac":
+      ip: "192.168.1.xxx"      # LAN address, for the record; not probed
+      node_type: ssh
+      host: "home.example.com"
+      port: 2222
+    "PhoneWithFixedMac":
+      ip: "192.168.1.xxx"      # for the record; not probed
+      node_type: deco
+      mac: "AA-BB-CC-DD-EE-FF"
 ```
 
 ## Command Reference
@@ -167,4 +182,4 @@ NodeCheck integrates with the broader home automation system:
 - **Coordinated monitoring** with other system components
 - **Centralized alerting** through Pushover and email
 
-The modular design allows NodeCheck to operate independently while sharing resources with other automation components.
+The modular design allows NodeCheck to operate independently while sharing resources with other automation components. The one exception is `deco` nodes: they use NetworkCheck's Deco client, lock and `network_check.uplink_watchdog` credentials.

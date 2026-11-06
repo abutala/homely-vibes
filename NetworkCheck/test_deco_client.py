@@ -137,6 +137,10 @@ class FakeDecoSession:
                 {"data": self._encrypt({"result": {"device_list": self.device_list}})}
             )
         if form == "client_list":
+            payload = self._decrypt_body(data or "")
+            if payload["operation"] == "write":
+                self.commands.append(payload)
+                return FakeResponse(self.command_reply)
             result: dict[str, Any] = (
                 {} if self.omit_client_list else {"client_list": self.client_list}
             )
@@ -457,6 +461,31 @@ class TestBlocklist:
     def test_unblock_with_no_macs_is_rejected(self) -> None:
         with pytest.raises(ValueError):
             make_client(FakeDecoSession()).unblock([])
+
+    def test_rename_sends_a_base64_user_set_name_and_keeps_the_type(self) -> None:
+        session = FakeDecoSession()
+        make_client(session).rename("02-00-00-00-00-01", "Kitchen plug", "iot_device")
+        assert session.commands == [
+            {
+                "operation": "write",
+                "params": {
+                    "client_list": [
+                        {
+                            "mac": "02-00-00-00-00-01",
+                            "name": "S2l0Y2hlbiBwbHVn",
+                            "user_set_name_type": True,
+                            "client_type": "iot_device",
+                        }
+                    ]
+                },
+            }
+        ]
+
+    def test_rename_to_a_blank_name_is_rejected(self) -> None:
+        session = FakeDecoSession()
+        with pytest.raises(ValueError):
+            make_client(session).rename("02-00-00-00-00-01", "  ", "phone")
+        assert session.commands == []
 
 
 class TestEviction:

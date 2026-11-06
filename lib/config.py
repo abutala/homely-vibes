@@ -31,6 +31,8 @@ class NodeType(StrEnum):
     GENERIC = "generic"
     MYLINK = "mylink"
     ARP = "arp"
+    SSH = "ssh"
+    DECO = "deco"
 
 
 class OpMode(StrEnum):
@@ -88,6 +90,10 @@ class NodeConfig:
     # API-authenticated nodes (e.g. Somfy myLink) use auth_token; port overrides default API port
     auth_token: str | None = None
     port: int | None = None
+    # TCP-probed nodes connect to host (when set) instead of ip, e.g. a WAN port forward by DNS name
+    host: str | None = None
+    # Deco-probed nodes are found by this MAC on the Deco client list
+    mac: str | None = None
 
 
 @dataclass
