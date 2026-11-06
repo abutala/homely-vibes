@@ -5,9 +5,12 @@ import socket
 import subprocess
 import time
 from collections.abc import Callable
+from typing import Any
 from lib import NetHelpers
-from lib.config import NodeConfig
+from lib.config import NodeConfig, get_config
 from lib.logger import SystemLogger
+from NetworkCheck.common import deco_admin_lock
+from NetworkCheck.deco_client import DecoAPIError, DecoAuthError, DecoClient
 
 logger = SystemLogger.get_logger(__name__)
 
@@ -275,3 +278,57 @@ class SshNode(GenericNode):
 
     def check_state(self, desired_up: bool = True, attempts: int = 5) -> bool:
         raise NotImplementedError("check_state pings ip, which an SSH-only host does not answer")
+
+
+# Short of the watchdog's own wait: a poll that cannot get the lock fails, and the
+# flap suppression absorbs one miss.
+DECO_LOCK_WAIT_S = 30
+
+
+def read_deco_clients() -> list[dict[str, Any]]:
+    """The Deco client list, under the lock every Deco login shares (the admin is single-session)."""
+    wd = get_config().network_check.uplink_watchdog
+    with deco_admin_lock(timeout_s=DECO_LOCK_WAIT_S):
+        return DecoClient(wd.deco_host, wd.deco_username, wd.deco_password).list_clients()
+
+
+def _normalize_mac(mac: str) -> str:
+    return mac.upper().replace(":", "-")
+
+
+class DecoNode(GenericNode):
+    """Presence by MAC on the Deco client list, on any network: main, guest or IoT.
+
+    For a host ping cannot reach. The MAC must be stable: an iPhone needs its
+    Private Wi-Fi Address set to Fixed, not Rotating.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        config: NodeConfig,
+        list_clients: Callable[[], list[dict[str, Any]]] = read_deco_clients,
+    ):
+        super().__init__(name, config)
+        self._list_clients = list_clients
+
+    def heartbeat(self) -> bool:
+        """No ping first: the Deco sees the client where the prod host cannot."""
+        if not self.config.mac:
+            return self._probe_failed("deco node has no mac configured")
+        try:
+            clients = self._list_clients()
+        except (DecoAPIError, DecoAuthError, OSError) as e:
+            return self._probe_failed(f"Deco client list unreadable: {e!r}")
+        want = _normalize_mac(self.config.mac)
+        client = next((c for c in clients if _normalize_mac(str(c.get("mac") or "")) == want), None)
+        if client is None:
+            return self._probe_failed(f"{want} not on the Deco client list")
+        # Some firmware omits `online`; then presence in the list is the signal.
+        if not client.get("online", True):
+            return self._probe_failed(f"{want} is offline on the Deco")
+        self.is_online = True
+        return True
+
+    def check_state(self, desired_up: bool = True, attempts: int = 5) -> bool:
+        raise NotImplementedError("check_state pings ip, which a Deco-probed host does not answer")
