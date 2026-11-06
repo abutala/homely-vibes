@@ -711,7 +711,8 @@ Three causes, none visible on the Simulator (no Bluetooth, no August cloud):
 3. The garage's cloud unlock took 21.1 s (200) against the tap's 20 s
    deadline, so the widget said "Failed" for an unlock that happened; a
    second tap on the same door waited at the gate and timed out too. The
-   deadline is 25 s, and a tap on a door still running is ignored.
+   deadline became 25 s (one 28 s limit for the whole tap since
+   2026-11-05), and a tap on a door still running is ignored.
 
 Nothing above is in the 2026-11-02 learnings' Simulator-first rule's
 favour or against it: the Simulator proved the mechanism and the phone
@@ -724,10 +725,11 @@ setup timed out while exchanging keys; using the cloud`, then the cloud in
 did not finish within the 3 s setup budget, which was measured in the
 foreground app (session at 1.3–1.7 s). A background process gets slower
 Bluetooth from iOS (longer connection intervals), and the fallback costs
-~20 s, so a widget tap now gives Bluetooth setup 6 s; the screen keeps
-3 s. The cloud leg has its own 25 s deadline from the moment it starts,
-so the Bluetooth attempt never eats the cloud's time (a reviewer's catch:
-8 + 20 did not fit one 25 s deadline). One sample; the next taps' stage
+~20 s, so a widget tap now gives Bluetooth setup 6 s; the screen kept
+3 s (12 s since 2026-11-03). The cloud leg got its own 25 s deadline from
+the moment it started, so the Bluetooth attempt never ate the cloud's time
+(a reviewer's catch: 8 + 20 did not fit one 25 s deadline; one 28 s limit
+for the whole tap replaced it on 2026-11-05). One sample; the next taps' stage
 timings in `app.log` say whether 6 s is enough or the stall is the lock's. Measured on the
 Simulator: the tapped door shows "Failed" (no sign-in there) and clears;
 the other door does not move; the seven app flows still pass.
@@ -759,8 +761,9 @@ outcome was seen on the widget, and both names blinked. Three answers:
    some seconds after it is asked for; a 4 s hold measured from the write
    was over before the draw. The hold is 12 s.
 3. **Both names blinked** because I put `.invalidatableContent()` back
-   after the per-door redraw proved impossible mid-tap. Amit: no. There is
-   no cue during a tap now; the outcome after it is the feedback.
+   after the per-door redraw proved impossible mid-tap. Amit: no. There was
+   no cue during a tap after that (the toggle brought one back on
+   2026-11-03); the outcome after it was the feedback.
 
 ## 2026-11-03 — PR B: the tapped door blinks by itself, and the Bluetooth link outlives a command
 
@@ -918,7 +921,12 @@ at 35 s. The screen's 5-minute exit waits for a widget tap in its process.
 Keychain writes update in place instead of delete-then-add, so the widget
 never reads an empty state mid-write. The widget's tap goes through a
 `DoorUnlocking` parameter, so the Simulator test runs it against
-`FakeAugust` end to end.
+`FakeAugust` end to end. The pre-push code reviewer then caught a leak the
+first draft of the tap bound had: with the gate's `enter` alone under the
+deadline, a deadline that fires as the gate is handed over discards the
+hand-over and leaves the gate held for good, so every later command in that
+process waits forever (38 of 300 in its stress run). The gate is taken and
+left inside the one task the deadline cancels; `CommandGateTests` pins it.
 
 **Progress on the widget while a tap runs** (Amit's second ask) is not in
 this change. WidgetKit defers every reload until the tap's intent returns,

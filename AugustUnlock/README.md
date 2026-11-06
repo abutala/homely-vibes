@@ -85,19 +85,20 @@ no state and never locks (unlock is a no-op on an unlocked door, so a
 repeat is harmless). Each door's whole half is its button. The tapped
 door's name reads "Unlocking…" the moment you tap (the button is a toggle,
 which WidgetKit redraws at once; the other door does not move); when the
-tap ends it says "Unlocked", "Failed" or "No reply" for about ten seconds,
+tap ends it says "Unlocked", "Failed" or "No reply" for about twelve seconds,
 then the name again. "No reply" means the cloud request went out and the
 tap ran out of time before August answered; August may still open the
 door. A second tap on a door still unlocking does nothing, though its cue
 may flicker until the result. Each tap runs in the app's own process in
 the background (the app never comes forward), so it takes the same path as
 the app's button: Bluetooth when the lock has a loaded key (~1–3 s), the
-cloud otherwise or when Bluetooth fails (1–25 s). The sign-in line under
+cloud otherwise or when Bluetooth fails (the screen allows it 1–25 s; a
+widget tap, what is left of its 28 s). The sign-in line under
 the doors, when shown, is a link that opens the app. A whole tap has 28 s: iOS ends a background intent at about
 30 s, and a tap ended that way shows nothing. Bluetooth gets 6 s to set
 up, the cloud gets what is left. With both doors tapped, the first door's
-result draws when the second door's tap ends: WidgetKit redraws the widget
-only once no tap of its runs. A tap on a locked phone (the Today view
+result draws when the second door's tap ends, if its hold has not passed
+by then: WidgetKit redraws the widget only once no tap of its runs. A tap on a locked phone (the Today view
 before Face ID) does nothing at all, by iOS's rule for widget buttons.
 "Open the app to sign in" under the buttons means August rejected the
 sign-in; opening the app renews it.
@@ -142,7 +143,8 @@ sign-in; opening the app renews it.
   peripheral remembered from the last connection, while the scan runs.
 - `KeychainStore.swift` — thin wrapper over `SecItem*` for on-device storage
   of the August email/password, install ID, access token, selected lock ID
-  and name, and that lock's offline key, slot and serial. Standard practice for a
+  and name, the offline key, slot and serial of every lock on the account
+  (one map by lock ID), and the widget's per-door tap state. Standard practice for a
   personal-use app — this is the same trust model the official August app
   uses.
 - `CommandMachine.swift` — the command state machine as a pure value: what a
@@ -152,7 +154,7 @@ sign-in; opening the app renews it.
   cloud replies, naps and returns.
 - `AugustService.swift` — the protocol `ContentView` talks to (`August.shared`):
   `AugustClient` on a device, or `FakeAugust` when the launch environment sets
-  `AUGUST_FAKE=1`. The fake is scripted by `AUGUST_FAKE_SIGNED_IN`,
+  `AUGUST_FAKE=1` or a launch left that marker (`TestHooks`). The fake is scripted by `AUGUST_FAKE_SIGNED_IN`,
   `AUGUST_FAKE_REPLY_SECONDS`, `AUGUST_FAKE_PATH` and `AUGUST_FAKE_FAIL`, and
   counts the commands it got (the timing caption shows "N sent").
 - `ContentView.swift` — the whole UI: sign-in form → one-time verification
@@ -263,8 +265,8 @@ xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnloc
 
 `Package.swift` exists only for these tests: it builds the pure files alone
 (`AugustBLEProtocol.swift`, `AugustBLEEngine.swift`, `BackgroundExitPolicy.swift`,
-`CommandDeadline.swift`, `CommandMachine.swift`, `CommandGate.swift`,
-`AugustUnlockWidget/DoorNames.swift`, `Shared/DoorState.swift`). The command machine's properties are also pinned by
+`CommandDeadline.swift`, `CommandMachine.swift`, `CommandGate.swift`, `AugustBLETiming.swift`,
+`AugustUnlockWidget/DoorNames.swift`, `Shared/DoorState.swift`, `Shared/Deadline.swift`). The command machine's properties are also pinned by
 `make formal` (see [formal/README.md](../formal/README.md)). The app builds from `AugustUnlock.xcodeproj`.
 
 The same properties run through the real screens on the Simulator against

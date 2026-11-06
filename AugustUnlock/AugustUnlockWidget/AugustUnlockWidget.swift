@@ -79,7 +79,7 @@ struct DoorsProvider: TimelineProvider {
         if marks.contains(.running), !WidgetStore.locks.isEmpty {
             return DoorsEntry(
                 date: now, names: DoorNames.names(cached: WidgetStore.locks.map(\.name)), locks: DoorNames.ids(cached: WidgetStore.locks.map(\.id)),
-                marks: marks, message: nil)
+                marks: marks, message: WidgetStore.signedOut ? WidgetCloud.Failure.signedOut.errorDescription : nil)
         }
         do {
             let locks = try await withDeadline(seconds: Self.fetchDeadline) { try await WidgetCloud.fetchLocks() }

@@ -369,15 +369,36 @@ final class AugustClient {
         operationBudget: TimeInterval = CommandDeadline.screenBluetoothOperation,
         deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true
     ) async throws -> OperationReply {
-        try await bounded(by: deadline) { try await self.gate.enter() }
-        defer { gate.leave() }
+        // The gate is taken and released inside the one task the deadline
+        // cancels: a deadline that fires as the gate is handed over would
+        // otherwise discard the hand-over and leave the gate held for good
+        // (38 of 300 in a stress run, pre-flight 2026-11-05).
+        let sent = OSAllocatedUnfairLock(initialState: false)
+        do {
+            return try await bounded(by: deadline) {
+                try await self.gate.enter()
+                defer { self.gate.leave() }
+                return try await self.operateHoldingGate(
+                    lockID: lockID, action: action, opcode: opcode, success: success,
+                    setupBudget: setupBudget, operationBudget: operationBudget, deadline: deadline, keepLink: keepLink, sent: sent)
+            }
+        } catch is DoorTimeout where sent.withLock({ $0 }) {
+            throw AugustError.cloudNoReply
+        }
+    }
+
+    /// `sent` turns true the moment the cloud request goes out: a deadline
+    /// after that is `cloudNoReply`, before it a plain timeout.
+    private func operateHoldingGate(
+        lockID: String, action: String, opcode: UInt8, success: LockState,
+        setupBudget: TimeInterval, operationBudget: TimeInterval, deadline: ContinuousClock.Instant?, keepLink: Bool,
+        sent: OSAllocatedUnfairLock<Bool>
+    ) async throws -> OperationReply {
         if let credentials = bluetoothCredentials(for: lockID) {
             let start = ContinuousClock.now
             do {
-                let timing = try await bounded(by: deadline) {
-                    try await AugustBLELink.run(
-                        opcode: opcode, credentials: credentials, setupBudget: setupBudget, operationBudget: operationBudget, keepLink: keepLink)
-                }
+                let timing = try await AugustBLELink.run(
+                    opcode: opcode, credentials: credentials, setupBudget: setupBudget, operationBudget: operationBudget, keepLink: keepLink)
                 Self.note("BLE \(action) -> ok in \(Self.ms(since: start)) ms (\(timing.description))")
                 return OperationReply(state: success, path: .bluetooth)
             } catch is CancellationError {
@@ -390,18 +411,10 @@ final class AugustClient {
                 Self.note("BLE \(action) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription); using the cloud")
             }
         }
-        let state: LockState
-        if let deadline {
-            // Under a second left: nothing is sent, so the failure says so.
-            guard secondsLeft(until: deadline) >= 1 else { throw DoorTimeout() }
-            do {
-                state = try await bounded(by: deadline) { try await self.cloudOperate(lockID: lockID, action: action) }
-            } catch is DoorTimeout {
-                throw AugustError.cloudNoReply
-            }
-        } else {
-            state = try await cloudOperate(lockID: lockID, action: action)
-        }
+        // Under a second left: nothing is sent, so the failure says so.
+        if let deadline, secondsLeft(until: deadline) < 1 { throw DoorTimeout() }
+        sent.withLock { $0 = true }
+        let state = try await cloudOperate(lockID: lockID, action: action)
         refreshBluetoothKeyOnce(lockID: lockID)
         return OperationReply(state: state, path: .cloud)
     }

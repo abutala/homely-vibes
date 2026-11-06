@@ -62,8 +62,8 @@ enum WidgetCloud {
         return data
     }
 
-    /// The app writes its token with delete-then-add, so a read can land in
-    /// the gap and find nothing; one retry after a moment rides it out.
+    /// A token missing at the first read may be the app's first sign-in
+    /// landing right now; one retry after a moment costs nothing.
     private static func accessToken() async -> String? {
         if let token = KeychainStore.get("august_access_token") { return token }
         try? await Task.sleep(for: .milliseconds(300))

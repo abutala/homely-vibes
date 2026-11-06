@@ -13,8 +13,8 @@ enum AppDoorAction {
     /// The widget's Bluetooth budgets: a background process gets slower
     /// Bluetooth from iOS, so setup gets 6 s; the whole tap is bounded by
     /// `DoorState.tapLimit` (iOS ends a background intent at about 30 s),
-    /// so a miss costs the cloud leg at most 6 s. (The screen waits longer:
-    /// `CommandDeadline`.)
+    /// so a setup miss costs the cloud leg 6 s, a failure after the session
+    /// up to 18 s. (The screen waits longer: `CommandDeadline`.)
     static let bluetoothSetupBudget: TimeInterval = 6
     static let bluetoothOperationBudget: TimeInterval = 12
 
