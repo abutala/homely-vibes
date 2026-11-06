@@ -410,6 +410,15 @@ network or more strangers than the cap all block nothing that tick.
   `max_actions_per_day` is the brake.
 - **Never `> /dev/null` the cron entry** — a pre-logger crash (import error,
   `uv` failure) would vanish.
+- **A client rename without `client_type` changes the type.** Measured
+  2026-11-06 on XE75 Pro 1.4.5: 10 of 74 renames flipped to `other` or `pc`.
+  The firmware re-guesses the type from the new name. `DecoClient.rename`
+  always sends the current type. Names are cosmetic to our scripts: the
+  gatekeeper, the watchdog and NodeCheck's Deco probe key on MAC, `interface`
+  and `connection_type`.
+- **A burst of admin writes times the Deco out.** Two of 74 back-to-back renames
+  got a read timeout. Both writes still landed, so read back after a write;
+  never resend one.
 
 ---
 
