@@ -16,7 +16,7 @@ final class DoorStateTests: XCTestCase {
     func testAResultHoldsThenClears() {
         var state = DoorState()
         _ = state.start(0, at: t0)
-        state.finish(0, ok: true, at: t0)
+        state.finish(0, outcome: .ok, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0), [.ok, .none])
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.hold - 0.1), [.ok, .none])
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.hold), [.none, .none])
@@ -26,7 +26,7 @@ final class DoorStateTests: XCTestCase {
 
     func testAFailureShowsAndANewTapReplacesIt() {
         var state = DoorState()
-        state.finish(1, ok: false, at: t0)
+        state.finish(1, outcome: .failed, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0 + 1), [.none, .failed])
         _ = state.start(1, at: t0 + 1)
         XCTAssertEqual(state.marks(count: 2, at: t0 + 1), [.none, .running])
@@ -37,7 +37,7 @@ final class DoorStateTests: XCTestCase {
         var state = DoorState()
         _ = state.start(0, at: t0)
         _ = state.start(1, at: t0)
-        state.finish(0, ok: true, at: t0)
+        state.finish(0, outcome: .ok, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0), [.ok, .running])
         // Door 1 clears at its own hold; door 2's limit is a later entry.
         XCTAssertEqual(state.clearDates(at: t0), [t0 + DoorState.hold, t0 + DoorState.runningLimit])
@@ -60,10 +60,26 @@ final class DoorStateTests: XCTestCase {
         XCTAssertTrue(state.start(0, at: t0 + DoorState.runningLimit), "an expired tap is over")
     }
 
+    func testACloudLegCutOffAfterItsSendShowsNoReply() {
+        var state = DoorState()
+        _ = state.start(0, at: t0)
+        state.finish(0, outcome: .noReply, at: t0 + 28)
+        XCTAssertEqual(state.marks(count: 2, at: t0 + 28), [.noReply, .none])
+        XCTAssertEqual(state.marks(count: 2, at: t0 + 28 + DoorState.hold), [.none, .none])
+    }
+
+    /// iOS ends a background intent at about 30 s (Apple, `LongRunningIntent`):
+    /// a tap must write its result before that, and a mark must outlive a tap
+    /// that died, with room for the result write and the reload.
+    func testATapFitsTheIntentCapAndTheLimitOutlivesIt() {
+        XCTAssertLessThan(DoorState.tapLimit, 30)
+        XCTAssertGreaterThanOrEqual(DoorState.runningLimit, DoorState.tapLimit + 5)
+    }
+
     func testRoundTripsThroughJSON() throws {
         var state = DoorState()
         _ = state.start(0, at: t0)
-        state.finish(1, ok: false, at: t0)
+        state.finish(1, outcome: .failed, at: t0)
         let data = try JSONEncoder().encode(state)
         XCTAssertEqual(try JSONDecoder().decode(DoorState.self, from: data), state)
     }

@@ -2,9 +2,11 @@ import XCTest
 
 /// The widget on the Simulator: added through SpringBoard's own gallery, it
 /// draws two buttons before it has a lock list and shows its sign-in caption
-/// (the 2026-11-01 bug), and a tap on a button runs in the app's process in
-/// the background: the tapped door shows its progress and result, the app
-/// stays closed.
+/// (the 2026-11-01 bug), and a tap anywhere on a door's half runs in the
+/// app's process in the background against `FakeAugust`: the tapped door
+/// shows its progress and result, the app stays closed. A tap on the
+/// widget's body (the caption under the doors) opens the app, as on any
+/// widget, and the app logs it.
 ///
 /// Run: `xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme
 /// AugustUnlockUITests -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
@@ -17,7 +19,7 @@ final class WidgetTapTests: XCTestCase {
     private let app = XCUIApplication()
 
     func testWidgetTapStaysInWidget() throws {
-        app.launchEnvironment = ["AUGUST_SLOW_WIDGET_TAP": "1"]
+        app.launchEnvironment = ["AUGUST_SLOW_WIDGET_TAP": "1", "AUGUST_FAKE": "1"]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         XCUIDevice.shared.press(.home)
@@ -40,18 +42,25 @@ final class WidgetTapTests: XCTestCase {
 
         // The Simulator dispatches the intent (`OpenFirstDoorIntent.perform()
         // finished` in its log, 2026-11-02); a tap that opens the app is the
-        // inert-button bug, not a Simulator limit (Logbook, 2026-11-02).
-        door.tap()
+        // inert-button bug, not a Simulator limit (Logbook, 2026-11-02). The
+        // tap lands near the corner of the half: with only the icon and the
+        // caption live, this opened the app (2026-11-05).
+        door.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.12)).tap()
         // The toggle flips at once: the tapped door alone reads "Unlocking…"
         // while the (slowed) tap runs in the app's background process.
         XCTAssertTrue(springboard.staticTexts["Unlocking\u{2026}"].waitForExistence(timeout: 2), springboard.debugDescription)
         XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "the other door must not move")
-        // Then the widget reads its result from the Keychain (a failure
-        // here: the Simulator's app has no sign-in), holds it, then clears it.
-        XCTAssertTrue(springboard.staticTexts["Failed"].waitForExistence(timeout: 15), springboard.debugDescription)
+        // Then the widget reads its result from the Keychain (the fake's
+        // one-second reply), holds it, then clears it.
+        XCTAssertTrue(springboard.staticTexts["Unlocked"].waitForExistence(timeout: 15), springboard.debugDescription)
         XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "the other door must not move")
         XCTAssertTrue(springboard.staticTexts["Door 1"].waitForExistence(timeout: DoorStateHold + 10), "the result must clear")
         XCTAssertFalse(app.wait(for: .runningForeground, timeout: 1), "a widget tap opened the app")
+
+        // The caption is the widget's body: a tap there opens the app, which
+        // logs "opened by the widget body" (checked by hand in app.log).
+        springboard.staticTexts["Open the app to sign in"].tap()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10), "a body tap must open the app")
     }
 
     /// Long-press the Home Screen → Edit → Add Widget → search → add.

@@ -1,6 +1,10 @@
 import AppIntents
 import WidgetKit
 
+#if !WIDGET_EXTENSION
+    import UIKit
+#endif
+
 /// The widget's button: one intent, with the door's position (for the
 /// widget's own per-door state) and the lock ID it shows, so a tap opens
 /// exactly the door under the finger whatever lock list the app holds.
@@ -38,12 +42,17 @@ struct OpenDoorIntent: AppIntent {
 }
 
 enum DoorTap {
+    /// The first line of every tap is written from whatever process runs
+    /// it, before anything can fail: a tap with no line in either log never
+    /// reached the intent (the toggle's hit area, or a locked phone).
     static func unlock(position: Int, lockID: String) async {
         #if WIDGET_EXTENSION
             // Not expected: the modes above put the tap in the app's process.
             WidgetLog.note("tap position=\(position) ran in the extension; nothing sent")
             WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
         #else
+            let state = await MainActor.run { UIApplication.shared.applicationState.rawValue }
+            AppLog.note("widget intent position=\(position) in the app, state \(state)")
             await AppDoorAction.unlock(position: position, lockID: lockID)
         #endif
     }

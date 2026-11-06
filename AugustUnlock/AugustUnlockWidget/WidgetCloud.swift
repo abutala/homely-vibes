@@ -73,8 +73,9 @@ enum WidgetCloud {
     }
 }
 
-/// `Library/Caches/widget.log` in the widget's container, last 60 lines.
-let WidgetLog = LineLog(file: "widget.log", keep: 60, category: "widget")
+/// `Library/Caches/widget.log` in the widget's container, last 300 lines
+/// (60 held two days of taps).
+let WidgetLog = LineLog(file: "widget.log", keep: 300, category: "widget")
 
 /// The widget's own memory: the lock list and the sign-in flag, in the
 /// extension's UserDefaults. The app never reads or writes it.

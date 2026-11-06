@@ -82,20 +82,23 @@ Long-press the Home Screen → **+** → AugustUnlock → **Doors**. One size, f
 width: an unlock button per lock, named as August names it, in lock-ID
 order. A tap sends unlock for that door and nothing else: the widget shows
 no state and never locks (unlock is a no-op on an unlocked door, so a
-repeat is harmless). The button is the lock icon. The tapped door's name
-reads "Unlocking…" the moment you tap (the button is a toggle, which
-WidgetKit redraws at once; the other door does not move); when the tap
-ends it says "Unlocked" or "Failed" for about ten seconds, then the name
-again. A second tap on a door still unlocking does nothing, though its
-cue may flicker until the result. Each tap runs in the app's own
-process in the background (the app never comes forward), so it takes the
-same path as the app's button: Bluetooth when the lock has a loaded key
-(~1–3 s), the cloud otherwise or when Bluetooth fails (1–25 s). A second
-tap on a door whose unlock is still running does nothing. A tap on the
-name or on empty space is a tap on the widget's body, which opens the app,
-as on any widget. Bluetooth gets 6 s to set up, then the cloud gets 25 s;
-past that the request is dropped by the phone, though August may still
-run it.
+repeat is harmless). Each door's whole half is its button. The tapped
+door's name reads "Unlocking…" the moment you tap (the button is a toggle,
+which WidgetKit redraws at once; the other door does not move); when the
+tap ends it says "Unlocked", "Failed" or "No reply" for about ten seconds,
+then the name again. "No reply" means the cloud request went out and the
+tap ran out of time before August answered; August may still open the
+door. A second tap on a door still unlocking does nothing, though its cue
+may flicker until the result. Each tap runs in the app's own process in
+the background (the app never comes forward), so it takes the same path as
+the app's button: Bluetooth when the lock has a loaded key (~1–3 s), the
+cloud otherwise or when Bluetooth fails (1–25 s). The sign-in line under
+the doors, when shown, is a link that opens the app. A whole tap has 28 s: iOS ends a background intent at about
+30 s, and a tap ended that way shows nothing. Bluetooth gets 6 s to set
+up, the cloud gets what is left. With both doors tapped, the first door's
+result draws when the second door's tap ends: WidgetKit redraws the widget
+only once no tap of its runs. A tap on a locked phone (the Today view
+before Face ID) does nothing at all, by iOS's rule for widget buttons.
 "Open the app to sign in" under the buttons means August rejected the
 sign-in; opening the app renews it.
 
@@ -188,7 +191,10 @@ The screen shows how long the last lock/unlock took ("Last unlock: 1.2 s"),
 after an icon for the path that carried it: a blue Bluetooth rune, or a grey
 cloud. Every timing line (each cloud request, each Bluetooth attempt with
 its stages, each widget tap) is also in the app's own file,
-`Library/Caches/app.log` (last 200 lines), which the phone keeps:
+`Library/Caches/app.log` (last 200 lines), which the phone keeps. A widget
+tap writes `widget intent position=N` first, from the app's process; a tap
+on the widget's body writes `opened by the widget body`; a tap with
+neither line never reached the widget (a locked phone):
 
 ```bash
 xcrun devicectl device copy from --device <UDID> --domain-type appDataContainer --domain-identifier com.deviationlabs.AugustUnlock.<TEAMID> --source Library/Caches/app.log --destination /tmp/august-app.log 2>&1 | tee /tmp/augustunlock-app-log.log
@@ -233,9 +239,12 @@ buttons and the sign-in caption, then taps a button with the app quit and
 checks that the tapped door reads "Unlocking…" at once and alone (the tap
 is slowed 5 s with `AUGUST_SLOW_WIDGET_TAP=1` on the app's launch, a marker
 the tap's background launch reads), then its result, holds it and clears
-it, and that the app stays closed. The tap runs in the app's process (Logbook
-2026-11-02); the Simulator's app has no sign-in, so the result is "Failed"
-within milliseconds. The Simulator has no Bluetooth and no August cloud:
+it, that the app stays closed, and that a tap on the sign-in line under
+the doors opens it. The tap lands near the corner of the door's half, where
+only the body was before 2026-11-05. The tap runs in the app's process
+(Logbook 2026-11-02) against `FakeAugust` (`AUGUST_FAKE=1` leaves a marker
+the background launch reads), so the result is "Unlocked" after the
+fake's one-second reply. The Simulator has no Bluetooth and no August cloud:
 the key carry-over, the cloud's timing and the phone's reload deferral
 (Logbook 2026-11-03) were all found on the phone. The widget
 reads the tap's state from the Keychain, which the Simulator shares between

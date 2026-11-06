@@ -5,8 +5,14 @@ import Foundation
 /// `DoorStateStore` keeps it in the Keychain, the one store both bundles
 /// share under this signing (no App Group).
 struct DoorState: Codable, Equatable {
+    /// How a tap ended. `noReply`: the cloud request was sent and the tap ran
+    /// out of time before August answered; August may still run it.
+    enum Outcome: String, Codable {
+        case ok, failed, noReply
+    }
+
     struct Result: Codable, Equatable {
-        let ok: Bool
+        let outcome: Outcome
         let at: Date
     }
 
@@ -19,14 +25,17 @@ struct DoorState: Codable, Equatable {
     /// seconds after it is asked for, so a short hold was gone before it
     /// was drawn (phone, 2026-11-03).
     static let hold: TimeInterval = 12
+    /// A tap's whole time, gate wait included, from the moment the intent
+    /// starts: iOS ends a background intent at about 30 s (Apple,
+    /// `LongRunningIntent`), and a tap ended that way writes no result.
+    static let tapLimit: TimeInterval = 28
     /// A tap older than this is over whatever happened: the process that ran
-    /// it may have died before it wrote the result. Longer than two taps
-    /// back to back at their worst (6 s Bluetooth + 25 s cloud each), since
-    /// the second door's tap waits at the gate for the first.
-    static let runningLimit: TimeInterval = 90
+    /// it may have died before it wrote the result. `tapLimit`, then the
+    /// result write and the reload.
+    static let runningLimit: TimeInterval = 35
 
     enum Mark: Equatable {
-        case none, running, ok, failed
+        case none, running, ok, failed, noReply
     }
 
     /// Starts the tap unless one is already running on that door: a repeat
@@ -38,9 +47,9 @@ struct DoorState: Codable, Equatable {
         return true
     }
 
-    mutating func finish(_ position: Int, ok: Bool, at now: Date) {
+    mutating func finish(_ position: Int, outcome: Outcome, at now: Date) {
         running[String(position)] = nil
-        results[String(position)] = Result(ok: ok, at: now)
+        results[String(position)] = Result(outcome: outcome, at: now)
     }
 
     /// The mark per position at `now`: a result older than `hold` is gone,
@@ -49,7 +58,11 @@ struct DoorState: Codable, Equatable {
         (0..<count).map { position in
             if let started = running[String(position)], now < started + Self.runningLimit { return .running }
             guard let result = results[String(position)], now < result.at + Self.hold else { return .none }
-            return result.ok ? .ok : .failed
+            switch result.outcome {
+            case .ok: return .ok
+            case .failed: return .failed
+            case .noReply: return .noReply
+            }
         }
     }
 
