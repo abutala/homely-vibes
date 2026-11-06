@@ -20,8 +20,5 @@ What was learned the hard way. Usage: [README.md](README.md).
 - **The title can sit behind a menu bar manager.** A new status item appears
   leftmost; with Hidden Bar (or Bartender) it starts hidden behind the
   chevron. Drag it right of the divider.
-- **A date range needs `..`.** `merged:<start>..<end>` with full ISO
-  timestamps works for a past day's count (checked live: 20 for one day,
-  48 for `>=` the same start).
-- **Cost.** 17 searches in one GraphQL query cost 2 points (`rateLimit{cost}`
-  on the query), not 17: GitHub prices by the nodes requested.
+- **Cost.** Searches in one GraphQL query are not priced one point each:
+  17 searches cost 2 points, and so do 7 (`rateLimit{cost}` on the query).

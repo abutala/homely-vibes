@@ -29,30 +29,25 @@ struct QueueQueries: Equatable {
 
     let searches: [SearchSpec]
 
-    /// `dayStarts`: local midnights, oldest first; the last is today.
+    /// `dayStarts`: local midnights, oldest first; the first starts the 7-day
+    /// window, the last is today.
     init(org: String, dayStarts: [String]) {
         let base = "org:\(org) is:pr"
         let landed = "\(base) is:merged label:\(LanderLabel.landed)"
         let mine = "is:pr author:@me"
         let mineMerged = "\(mine) is:merged -label:\(LanderLabel.landed)"
         let today = dayStarts.last ?? ""
-        var searches = [
+        let weekStart = dayStarts.first ?? ""
+        searches = [
             SearchSpec(alias: "queued", query: "\(base) is:open label:\"\(LanderLabel.queued)\" -label:\"\(LanderLabel.failed)\" -label:\(LanderLabel.noMerge)", listSize: 50),
             SearchSpec(alias: "landed", query: "\(landed) merged:>=\(today)", listSize: 0),
             SearchSpec(alias: "failed", query: "\(base) is:open label:\"\(LanderLabel.failed)\" updated:>=\(today)", listSize: 50),
             SearchSpec(alias: "mineOpen", query: "\(mine) is:open", listSize: 100),
             SearchSpec(alias: "mineMerged", query: "\(mineMerged) merged:>=\(today)", listSize: 0),
+            SearchSpec(alias: "landedWeek", query: "\(landed) merged:>=\(weekStart)", listSize: 0),
+            SearchSpec(alias: "mineMergedWeek", query: "\(mineMerged) merged:>=\(weekStart)", listSize: 0),
         ]
-        for (day, (start, end)) in zip(dayStarts, dayStarts.dropFirst()).enumerated() {
-            let range = "merged:\(start)..\(end)"
-            searches.append(SearchSpec(alias: Self.landedAlias(day), query: "\(landed) \(range)", listSize: 0))
-            searches.append(SearchSpec(alias: Self.mineAlias(day), query: "\(mineMerged) \(range)", listSize: 0))
-        }
-        self.searches = searches
     }
-
-    static func landedAlias(_ day: Int) -> String { "landedDay\(day)" }
-    static func mineAlias(_ day: Int) -> String { "mineMergedDay\(day)" }
 
     var graphQL: String {
         let params = searches.map { "$\($0.alias):String!" }.joined(separator: ",")

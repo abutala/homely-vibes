@@ -29,10 +29,9 @@ struct QueueSnapshot: Equatable {
     let mineOpenCount: Int
     /// My PRs merged today in every repo, without the ones the lander merged.
     let mineMergedToday: Int
-    /// PRs the lander merged per day, oldest first, ending with today.
-    let landedByDay: [Int]
-    /// My PRs merged per day, oldest first, ending with today.
-    let mineMergedByDay: [Int]
+    /// The last 7 days, today included.
+    let landedWeek: Int
+    let mineMergedWeek: Int
     let fetchedAt: Date
 
     /// Every PR the queue held today: still tagged, landed, or bounced.
@@ -64,7 +63,6 @@ enum SnapshotDecoder {
             guard let s = d[alias] else { throw SnapshotDecodeError.malformed }
             return s
         }
-        let pastDays = 0..<(QueueQueries.historyDays - 1)
         let queued = try search("queued"), failed = try search("failed"), mineOpen = try search("mineOpen")
         let landedToday = try search("landed").issueCount
         let mineMergedToday = try search("mineMerged").issueCount
@@ -78,8 +76,8 @@ enum SnapshotDecoder {
             // Exact while all my open PRs fit in the list (100).
             mineOpenCount: mineOpen.issueCount - mineOpen.pullRequests.filter(\.isWithLander).count,
             mineMergedToday: mineMergedToday,
-            landedByDay: try pastDays.map { try search(QueueQueries.landedAlias($0)).issueCount } + [landedToday],
-            mineMergedByDay: try pastDays.map { try search(QueueQueries.mineAlias($0)).issueCount } + [mineMergedToday],
+            landedWeek: try search("landedWeek").issueCount,
+            mineMergedWeek: try search("mineMergedWeek").issueCount,
             fetchedAt: fetchedAt
         )
     }

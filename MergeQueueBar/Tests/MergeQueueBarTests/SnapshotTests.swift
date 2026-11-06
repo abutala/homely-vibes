@@ -14,12 +14,11 @@ final class SnapshotTests: XCTestCase {
 
     private func response(queued: [String] = [], queuedCount: Int? = nil, landed: Int = 0,
                           failed: [String] = [], mine: [String] = [], mineMerged: Int = 0,
-                          landedPast: [Int] = [0, 0, 0, 0, 0, 0], minePast: [Int] = [0, 0, 0, 0, 0, 0]) -> Data {
-        let history = landedPast.enumerated().map { "\"landedDay\($0.offset)\":{\"issueCount\":\($0.element)}" }
-            + minePast.enumerated().map { "\"mineMergedDay\($0.offset)\":{\"issueCount\":\($0.element)}" }
+                          landedWeek: Int = 0, mineWeek: Int? = 0) -> Data {
+        let week = mineWeek.map { ",\"mineMergedWeek\":{\"issueCount\":\($0)}" } ?? ""
         return """
         {"data":{
-          \(history.joined(separator: ",")),
+          "landedWeek":{"issueCount":\(landedWeek)}\(week),
           "queued":{"issueCount":\(queuedCount ?? queued.count),"nodes":[\(queued.joined(separator: ","))]},
           "landed":{"issueCount":\(landed)},
           "failed":{"issueCount":\(failed.count),"nodes":[\(failed.joined(separator: ","))]},
@@ -54,16 +53,13 @@ final class SnapshotTests: XCTestCase {
         XCTAssertEqual(s.mineOpenCount, 4)
     }
 
-    func testHistoryIsOldestFirstEndingToday() throws {
-        let data = response(landed: 7, mineMerged: 3, landedPast: [1, 2, 3, 4, 5, 6], minePast: [0, 0, 0, 0, 0, 9])
-        let s = try SnapshotDecoder.decode(data, fetchedAt: now)
-        XCTAssertEqual(s.landedByDay, [1, 2, 3, 4, 5, 6, 7])
-        XCTAssertEqual(SummaryText.historyLine(s.landedByDay), "7d: 1 2 3 4 5 6 7 = 28")
-        XCTAssertEqual(s.mineMergedByDay, [0, 0, 0, 0, 0, 9, 3])
+    func testWeekLineShowsTotalsAndDailyAverage() throws {
+        let s = try SnapshotDecoder.decode(response(landedWeek: 91, mineWeek: 44), fetchedAt: now)
+        XCTAssertEqual(SummaryText.weekLine(s), "Last 7d: MQ 91 landed (13/day) \u{00B7} Me 44 merged (6/day)")
     }
 
-    func testMissingHistoryDayIsMalformed() {
-        XCTAssertThrowsError(try SnapshotDecoder.decode(response(landedPast: [1, 2]), fetchedAt: now)) {
+    func testMissingSearchIsMalformed() {
+        XCTAssertThrowsError(try SnapshotDecoder.decode(response(mineWeek: nil), fetchedAt: now)) {
             XCTAssertEqual($0 as? SnapshotDecodeError, .malformed)
         }
     }

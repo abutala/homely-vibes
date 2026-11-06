@@ -20,9 +20,12 @@ enum SummaryText {
         "My PRs, not with MQ: \(s.mineOpenCount) open · \(s.mineMergedToday) merged today"
     }
 
-    /// `7d: 22 30 25 31 19 0 28 = 155`: per day, oldest first, ending today.
-    static func historyLine(_ byDay: [Int]) -> String {
-        "\(byDay.count)d: \(byDay.map(String.init).joined(separator: " ")) = \(byDay.reduce(0, +))"
+    /// `Last 7d: MQ 91 landed (13/day) · Me 44 merged (6/day)`.
+    static func weekLine(_ s: QueueSnapshot) -> String {
+        let days = QueueQueries.historyDays
+        func perDay(_ n: Int) -> Int { Int((Double(n) / Double(days)).rounded()) }
+        return "Last \(days)d: MQ \(s.landedWeek) landed (\(perDay(s.landedWeek))/day)"
+            + " \u{00B7} Me \(s.mineMergedWeek) merged (\(perDay(s.mineMergedWeek))/day)"
     }
 
     /// `▶ repo#12 Title…`: `▶` marks the PR the lander is on now; `(draft)` a draft.

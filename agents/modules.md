@@ -43,7 +43,7 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 
 ## MergeQueueBar Module (`MergeQueueBar/`)
 - **Stack**: Swift Package Manager executable wrapped into a `.app` bundle, same pattern as `ClaudeUsageBar/` (NOT Python). `swift test` runs the XCTest target; `./Scripts/build_app.sh --install` builds, copies to `/Applications` and relaunches.
-- **Data**: one `gh api graphql` call per tick: queue searches over the pr-lander labels in one org, my-PR searches across every repo, and a 7-day history. `gh` is found by absolute path: a GUI app gets launchd's PATH, which lacks Homebrew.
+- **Data**: one `gh api graphql` call per tick: queue searches over the pr-lander labels in one org, my-PR searches across every repo, and 7-day totals. `gh` is found by absolute path: a GUI app gets launchd's PATH, which lacks Homebrew.
 - **Diagnostics**: `swift run MergeQueueBar --probe` prints one fetch.
 
 ## NodeCheck Module (`NodeCheck/`)

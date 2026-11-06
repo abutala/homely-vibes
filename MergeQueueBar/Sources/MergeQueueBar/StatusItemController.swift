@@ -101,7 +101,6 @@ final class StatusItemController {
 
     private func appendSnapshot(_ s: QueueSnapshot, to menu: NSMenu) {
         menu.addItem(info(SummaryText.queueLine(s)))
-        menu.addItem(info("Landed \(SummaryText.historyLine(s.landedByDay))"))
         appendPRs(s.queued, total: s.queuedCount, to: menu)
         if s.failedTodayCount > 0 {
             menu.addItem(.separator())
@@ -110,8 +109,9 @@ final class StatusItemController {
         }
         menu.addItem(.separator())
         menu.addItem(info(SummaryText.mineLine(s)))
-        menu.addItem(info("Merged \(SummaryText.historyLine(s.mineMergedByDay))"))
         appendPRs(s.mineOpen, total: s.mineOpenCount, to: menu)
+        menu.addItem(.separator())
+        menu.addItem(info(SummaryText.weekLine(s)))
     }
 
     private func appendPRs(_ prs: [PullRequest], total: Int, to menu: NSMenu) {

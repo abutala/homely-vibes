@@ -24,26 +24,23 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(byAlias["landed"], "org:acme is:pr is:merged label:autolanded merged:>=2026-11-05T00:00:00-08:00")
         XCTAssertEqual(byAlias["mineOpen"], "is:pr author:@me is:open")
         XCTAssertEqual(byAlias["mineMerged"], "is:pr author:@me is:merged -label:autolanded merged:>=2026-11-05T00:00:00-08:00")
-        XCTAssertEqual(byAlias["landedDay0"], "org:acme is:pr is:merged label:autolanded merged:2026-11-04T00:00:00-08:00..2026-11-05T00:00:00-08:00")
-        XCTAssertEqual(byAlias["mineMergedDay0"], "is:pr author:@me is:merged -label:autolanded merged:2026-11-04T00:00:00-08:00..2026-11-05T00:00:00-08:00")
-        XCTAssertNil(byAlias["landedDay1"])
+        XCTAssertEqual(byAlias["landedWeek"], "org:acme is:pr is:merged label:autolanded merged:>=2026-11-04T00:00:00-08:00")
+        XCTAssertEqual(byAlias["mineMergedWeek"], "is:pr author:@me is:merged -label:autolanded merged:>=2026-11-04T00:00:00-08:00")
     }
 
     func testFetchPassesEverySearchToGh() throws {
         var captured: [String] = []
-        let history = (0..<6).map { #""landedDay\#($0)":{"issueCount":1},"mineMergedDay\#($0)":{"issueCount":2}"# }
-        let body = #"{"data":{"queued":{"issueCount":0,"nodes":[]},"landed":{"issueCount":3},"failed":{"issueCount":0,"nodes":[]},"mineOpen":{"issueCount":0,"nodes":[]},"mineMerged":{"issueCount":2},"#
-            + history.joined(separator: ",") + "}}"
+        let body = #"{"data":{"queued":{"issueCount":0,"nodes":[]},"landed":{"issueCount":3},"failed":{"issueCount":0,"nodes":[]},"mineOpen":{"issueCount":0,"nodes":[]},"mineMerged":{"issueCount":2},"landedWeek":{"issueCount":9},"mineMergedWeek":{"issueCount":4}}}"#
         let s = try GitHubClient.fetch(
             org: "acme", now: Date(),
             locate: { URL(fileURLWithPath: "/bin/gh") },
             run: { _, args in captured = args; return Data(body.utf8) }
         )
-        XCTAssertEqual(s.landedByDay, [1, 1, 1, 1, 1, 1, 3])
+        XCTAssertEqual(s.landedWeek, 9)
         XCTAssertEqual(Array(captured.prefix(2)), ["api", "graphql"])
         // Queue searches are org-scoped; my searches cover every repo.
-        XCTAssertEqual(captured.filter { $0.contains("=org:acme ") }.count, 3 + 6)
-        XCTAssertEqual(captured.filter { $0.contains("=is:pr author:@me ") }.count, 2 + 6)
+        XCTAssertEqual(captured.filter { $0.contains("=org:acme ") }.count, 4)
+        XCTAssertEqual(captured.filter { $0.contains("=is:pr author:@me ") }.count, 3)
     }
 
     func testMissingGhIsReported() {

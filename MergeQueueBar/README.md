@@ -21,17 +21,16 @@ The dropdown:
 
 ```
 Merge queue: 1 tagged · 28 landed · 0 failed today
-Landed 7d: 13 4 2 14 10 20 28 = 91
   ▶ repo#50 Title…                        ← ▶: the lander is on it now
 Failed today (N)                          ← only when N > 0
 My PRs, not with MQ: 1 open · 11 merged today
-Merged 7d: 10 0 7 9 2 5 11 = 44
   repo#69 Title… (draft)
+Last 7d: MQ 92 landed (13/day) · Me 44 merged (6/day)
 Open PRs on GitHub · My PRs on GitHub · Updated · Refresh · Refresh Every · Quit
 ```
 
-The `7d` lines count per day, oldest first, ending today. A click on a PR
-opens it; the two links open [github.com/pulls](https://github.com/pulls) and
+The 7-day window starts at local midnight 6 days ago, so it includes today.
+A click on a PR opens it; the two links open [github.com/pulls](https://github.com/pulls) and
 [github.com/pulls/authored](https://github.com/pulls/authored).
 
 No Dock icon (`LSUIElement`), no Xcode project: a Swift Package Manager
@@ -39,7 +38,7 @@ executable wrapped in a minimal `.app` bundle.
 
 ## How it counts
 
-One `gh api graphql` call per refresh runs 17 GitHub searches. Days start at
+One `gh api graphql` call per refresh runs 7 GitHub searches. Days start at
 local midnight, sent with their UTC offset. MQ searches add `org:<org>`.
 
 | Number | Search |
@@ -49,14 +48,14 @@ local midnight, sent with their UTC offset. MQ searches add `org:<org>`.
 | Failed today | `is:pr is:open label:"automerge failed" updated:>=<midnight>` |
 | My open | `is:pr author:@me is:open`, then the app drops the PRs in the queue |
 | My merged today | `is:pr author:@me is:merged -label:autolanded merged:>=<midnight>` |
-| 7d lines | the landed and my-merged searches, one per past day: `merged:<midnight>..<next midnight>` |
+| Last 7d | the landed and my-merged searches with `merged:>=<midnight 6 days ago>` |
 
 GitHub search cannot filter on the time a label was added, so "failed today"
 means an open, bounced PR that changed today. Counts come from GitHub's
 `issueCount`. The queue and failed lists show at most 50 PRs and then
 `… and N more`; my open list holds 100, so its count is exact up to 100.
 
-**API cost**: the whole query costs 2 GraphQL points (measured 2026-11-05),
+**API cost**: the whole query costs 2 GraphQL points (`rateLimit{cost}`, 2026-11-05),
 from the 5,000 points an hour your account gets. A 2-minute refresh uses 60
 points an hour; a 1-minute refresh, 120.
 
