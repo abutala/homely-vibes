@@ -45,7 +45,7 @@ temperature. Prompts for a sudo password only if the remote requires one
 
 ### Continuous Monitoring (`heartbeat_nodes.py`)
 
-- Multi-device support for foscam, windows, and generic devices
+- One node class per type: foscam, windows, mylink, generic, arp, ssh
 - Pushover alerts with configurable cooloff periods  
 - Case-insensitive filtering
 - Ping-based health checks; ARP and SSH-banner probes for hosts ping cannot reach
@@ -61,10 +61,9 @@ temperature. Prompts for a sudo password only if the remote requires one
 
 ### Node Classes (`nodes.py`)
 
-- **`Node`**: Abstract base class
 - **`FoscamNode`**: Camera operations (image capture, HTTP reboot)
 - **`WindowsNode`**: SSH commands, uptime checks
-- **`GenericNode`**: Ping-only monitoring
+- **`GenericNode`**: Ping-only monitoring; the base class of the others
 - **`ArpNode`**: Presence via ARP cache — for WiFi devices that drop ICMP under power-save (e.g. iPhones)
 - **`SshNode`**: Reads the sshd banner from `ssh_host:port` (default `ip:22`) — for a host with no LAN path, reached through the router's WAN port forward. Needs no SSH key
 
