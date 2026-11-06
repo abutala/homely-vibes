@@ -81,6 +81,14 @@ struct ContentView: View {
             }
         }
         .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The build's date, time and commit, set by `scripts/build_ipa.sh`
+        // (`BUILD_STAMP` into Info.plist); an Xcode build has none.
+        .overlay(alignment: .bottom) {
+            if let stamp = Bundle.main.object(forInfoDictionaryKey: "BuildStamp") as? String, !stamp.isEmpty {
+                Text("Build \(stamp)").font(.caption2).foregroundStyle(.quaternary)
+            }
+        }
         .onAppear {
             phase = August.shared.isReady ? .ready : .needsLogin
             openUnlock()
