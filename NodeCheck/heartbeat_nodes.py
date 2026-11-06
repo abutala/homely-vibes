@@ -6,7 +6,14 @@ from typing import Dict, List, Set
 from lib.config import NodeType, get_config
 from lib.logger import SystemLogger
 from lib.MyPushover import Pushover
-from NodeCheck.nodes import ArpNode, FoscamNode, GenericNode, SomfyMyLinkNode, WindowsNode
+from NodeCheck.nodes import (
+    ArpNode,
+    FoscamNode,
+    GenericNode,
+    SomfyMyLinkNode,
+    SshNode,
+    WindowsNode,
+)
 
 _NODE_CLASS_BY_TYPE: dict[NodeType, type[GenericNode]] = {
     NodeType.FOSCAM: FoscamNode,
@@ -14,6 +21,7 @@ _NODE_CLASS_BY_TYPE: dict[NodeType, type[GenericNode]] = {
     NodeType.MYLINK: SomfyMyLinkNode,
     NodeType.GENERIC: GenericNode,
     NodeType.ARP: ArpNode,
+    NodeType.SSH: SshNode,
 }
 
 # Flap suppression: require this many consecutive down probes before alerting.
