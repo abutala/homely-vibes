@@ -939,3 +939,55 @@ and asks reloads at 2, 6 and 12 s; three taps on the phone answer it. Rig
 data first, then the feature. `LongRunningIntent` (iOS 27) lifts the 30 s
 cap but Apple's page says nothing about widgets or where its progress
 shows, so it waits too.
+
+## 2026-11-06 — Measured on the phone: a widget cannot show stages during a tap
+
+The TRIAL of 2026-11-05 left one blocker on "progress on the widget while
+a tap runs": the only design that could draw mid-tap returns from
+`perform()` at once and runs the unlock detached, and nobody had measured
+what WidgetKit does with reloads asked after an intent returned, or how
+long the process lives. `BLEWidgetRig`'s **Detached** button (README,
+"Detached tap measurement") measured both on the phone (iPhone 14 Pro,
+iOS 27.0.1, Sideloadly), three clean taps with the app closed and the
+phone untouched for 45 s each, plus one tap from the locked Today view.
+
+| Tap (UTC) | `perform()` returned | Reload asked at +2 s | +6 s | +12 s | Bluetooth echo after the return | Process after the return |
+|---|---|---|---|---|---|---|
+| 00:15:35 | 0.0 s | drawn at +2.1 s | not run | not run | ok, 2.2 s, in the background | logged to +28 s; background task expired at 28.5 s; suspended, resumed at the next tap 8 min later |
+| 00:23:34 | 0.0 s | drawn at +2.1 s | not run | not run | ok, 3.1 s | logged to +32 s; expired at 29.6 s; suspended |
+| 00:26:24 | 0.0 s | drawn at +2.2 s | not run | not run | ok, 1.7 s | logged to +24 s at the copy; expired later |
+| locked Today view | no intent, no reload, no line | | | | | |
+
+An earlier tap (00:12:18), contaminated by a Foreground tap that opened the
+app 2 s later, drew all three asked reloads (+2.2, +6.3, +12.6 s): with the
+app in the foreground, reloads are exempt from the budget (Apple). In the
+background, which is the widget's case, WidgetKit drew the system's own
+reload at the return and the first asked reload within 0.1 s, and dropped
+the next two; they did not appear later either, over the eight minutes
+before the next tap. The Simulator (iOS 27.2) had drawn all three, so it
+says nothing about this.
+
+What it decides:
+
+1. **The detached design is dead.** One redraw after the return is all a
+   background process gets, so a stage at +2 s could draw but the result
+   at the end of the tap (3–28 s) would not, which is worse than today,
+   where the result is guaranteed because it is written inside the intent.
+   The TRIAL's P1 stands on the phone.
+2. **Progress during a tap needs another surface**: a Live Activity on the
+   Dynamic Island and Lock Screen, started by the intent
+   (`LiveActivityIntent`: Apple says the system launches the app's process
+   without opening the app and starts the activity) and updated by the app
+   process at each stage. That is a new design with its own TRIAL; nothing
+   here starts it.
+3. **A background process lives about 30 s after `perform()` returns**
+   (the `UIBackgroundTask` budget: `backgroundTimeRemaining` read 32 s at
+   the start, the task expired at 28.5–29.6 s), then it is suspended, not
+   killed, and resumes at the next tap. Bluetooth delegate callbacks keep
+   coming in that window (the echo completed every time). So the 28 s tap
+   limit of 2026-11-05 is the right order; the intent's own cap and the
+   background task's are the same ~30 s.
+4. **A tap on a locked phone does nothing and leaves no trace**, as Apple
+   says: no intent, no reload, no log line. With PR #71's logging, a
+   "nothing" with no `widget intent` line and no `opened by the widget
+   body` line is this case.

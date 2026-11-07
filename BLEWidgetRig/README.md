@@ -101,4 +101,7 @@ The locked tap says whether a locked phone runs the intent at all.
 
 ## Findings
 
-See `AugustUnlock/Logbook.md`, 2026-11-03, and PR #71's entry.
+See `AugustUnlock/Logbook.md`: 2026-11-03 (a widget tap over Bluetooth),
+2026-11-05 (the hit area) and 2026-11-06 (the Detached measurement: one
+redraw after the return, the process suspended at ~30 s, a locked phone
+inert).
