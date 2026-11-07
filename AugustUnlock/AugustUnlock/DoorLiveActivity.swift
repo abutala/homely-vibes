@@ -26,12 +26,18 @@ final class DoorLiveActivity: Sendable {
     /// Ends any activity an earlier tap left (a process that died mid-tap, or
     /// one still in its hold), then starts this tap's at "Unlocking…". Call
     /// only when no other tap runs in this process: overlapping activities
-    /// empty the Island early (Logbook 2026-11-07). Nothing here waits: the
-    /// old ones end on their own tasks, and the request returns at once
-    /// (16–34 ms on the phone), so the unlock is not delayed.
-    static func start(door: String, at tap: Date) -> DoorLiveActivity? {
-        for old in Activity<DoorUnlockAttributes>.activities {
-            Task { await old.end(nil, dismissalPolicy: .immediate) }
+    /// empty the Island early (Logbook 2026-11-07). With no old one (the
+    /// usual tap) nothing waits; otherwise the old ones get up to 0.5 s to
+    /// end (an end took 14–23 ms on the phone), so two never show at once
+    /// and a hung end cannot hold the unlock.
+    static func start(door: String, at tap: Date) async -> DoorLiveActivity? {
+        let old = Activity<DoorUnlockAttributes>.activities
+        for activity in old {
+            Task { await activity.end(nil, dismissalPolicy: .immediate) }
+        }
+        let giveUp = ContinuousClock.now + .milliseconds(500)
+        while old.contains(where: { $0.activityState == .active }), ContinuousClock.now < giveUp {
+            try? await Task.sleep(for: .milliseconds(25))
         }
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
             AppLog.note("live activity off in Settings")

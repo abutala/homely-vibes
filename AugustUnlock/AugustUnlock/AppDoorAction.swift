@@ -32,7 +32,8 @@ enum AppDoorAction {
         // A repeat tap on a door whose unlock is still running would only
         // queue a duplicate command; the first tap answers both. The check
         // and the start are one locked step.
-        guard DoorStateStore.update({ $0.start(position, at: Date()) }) else {
+        let started = Date()
+        guard DoorStateStore.update({ $0.start(position, at: started) }) else {
             AppLog.note("widget tap position=\(position) ignored: still running")
             return
         }
@@ -44,7 +45,7 @@ enum AppDoorAction {
         AppLog.note("widget tap position=\(position) lock=\(lockID.suffix(4)) via \(type(of: client)) door state keychain=\(KeychainStore.lastStatus)")
         WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
         let start = ContinuousClock.now
-        let live = alone ? DoorLiveActivity.start(door: name.isEmpty ? "Door" : name, at: Date()) : nil
+        let live = alone ? await DoorLiveActivity.start(door: name.isEmpty ? "Door" : name, at: Date()) : nil
         if !alone { AppLog.note("widget tap position=\(position) without a live activity: another tap runs") }
         var outcome = DoorState.Outcome.failed
         if TestHooks.slowWidgetTap { try? await Task.sleep(for: .seconds(5)) }
@@ -62,7 +63,7 @@ enum AppDoorAction {
         let elapsed = start.duration(to: .now).components
         // The widget's result first: it is the one surface a tap cut off at
         // the ~30 s limit must not lose.
-        DoorStateStore.update { $0.finish(position, outcome: outcome, at: Date()) }
+        DoorStateStore.update { $0.finish(position, startedAt: started, outcome: outcome, at: Date()) }
         WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
         await live?.end(.final(outcome), seconds: Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18)
     }

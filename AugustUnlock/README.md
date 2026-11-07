@@ -196,18 +196,32 @@ turned off for the app in Settings change nothing else.
 ## Deadline and recovery
 
 Every lock/unlock has 30 s to answer. Past that the circle goes gray with
-"Timed out — tap to retry"; the command's late reply is discarded, though a
-cloud request August already holds may still move the door (a WiFi-bridge
-lock can take ~60 s — that reply is lost). A command that stalled while the
-phone slept is caught the same way when the app returns to the foreground,
-and the app does not unlock again by itself after a timeout. "Change Lock"
-and "Sign Out" stay live during a command: both cancel it, and the picker
-says the previous command may still complete.
+"Timed out — tap to retry" when nothing reached August. When the request is
+already with August, the screen says "Sent to August, no reply yet — tap to
+retry" and the request keeps running quietly to 60 s from its start (the
+garage sits behind a Wi-Fi bridge, which can take ~60 s); if it answers, a
+line says so ("Late reply: Locked after 41 s"), and the failure is never
+turned into a success. A command that stalled while the phone slept is
+caught the same way when the app returns to the foreground, and the app
+does not unlock again by itself after a timeout. "Change Lock" and "Sign
+Out" stay live during a command: both cancel it, and the picker says the
+previous command may still complete.
+
+After a failure or a timeout, a tap repeats the failed command: the door is
+unknown then, and a tap after a failed lock used to unlock. A reported jam
+works the same way: tap to retry.
 
 A tap while a command runs sends the opposite. While the command is still
 on Bluetooth, a cancel before the write drops it; once it has gone to the
 cloud, August runs the request it already holds, so the lock does both in
-turn. A second tap within 0.75 s is the same tap and sends nothing.
+turn. When the phone drops a request that reached August (a tap, or the
+background time running out), an orange line says "An earlier request may
+still move the door" for a minute; Change Lock and Sign Out drop a late
+request too, and the picker says it may still complete. A second tap within 0.75 s
+is the same tap and sends nothing.
+
+Each lock has its own command gate, so a tap on one door never waits for
+the other door's command.
 
 ## Measuring lag
 

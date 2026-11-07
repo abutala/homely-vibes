@@ -5,7 +5,7 @@ import os
 /// throws when its task is cancelled while waiting (a deadline must not
 /// wait out a slow holder). An actor's own methods do not serialise across
 /// an `await`, so the queue is explicit.
-final class CommandGate: Sendable {
+nonisolated final class CommandGate: Sendable {
     private struct Waiter {
         let id: UInt64
         /// Resumed with `true` when handed the gate, `false` when cancelled.

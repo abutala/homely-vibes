@@ -11,8 +11,8 @@ import WidgetKit
 /// the name it shows, for the tap's Live Activity. A `LiveActivityIntent`,
 /// so `perform()` may start that activity with the app in the background
 /// (Apple; measured on the phone, Logbook 2026-11-07).
-/// Apple: a plain `AppIntent` behind a widget button goes in the widget
-/// extension target AND the app target. `supportedModes` with
+/// The intent type goes in the widget extension target AND the app target
+/// (Apple). `supportedModes` with
 /// `.foreground(.dynamic)` makes the system run it in the app's process, in
 /// the background (measured, Logbook 2026-11-02): the app's Bluetooth-first
 /// client serves the tap, and the app never comes forward because nothing

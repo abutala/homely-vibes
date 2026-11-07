@@ -29,7 +29,7 @@ final class CommandMachineTests: XCTestCase {
     func testTapLocksWhenShownUnlocked() {
         var m = CommandMachine()
         _ = m.open(at: at(0))
-        m.replied(.unlocked)
+        m.replied(.unlocked, after: 1)
         m.settle()
         XCTAssertEqual(m.tap(at: at(5)), .send(unlocking: false))
     }
@@ -47,7 +47,7 @@ final class CommandMachineTests: XCTestCase {
     func testNoAutoUnlockAfterAwayTimeout() {
         var m = CommandMachine()
         _ = m.open(at: at(0))
-        XCTAssertEqual(m.deadlineFired(away: true), .cancel)
+        XCTAssertEqual(m.deadlineFired(away: true, at: at(31)), .cancel)
         m.settle()
         // The next return clears the flag and sends nothing.
         XCTAssertEqual(m.resume(at: at(40)), .none)
@@ -58,7 +58,7 @@ final class CommandMachineTests: XCTestCase {
     func testForegroundTimeoutDoesNotBlockTheNextOpen() {
         var m = CommandMachine()
         _ = m.open(at: at(0))
-        XCTAssertEqual(m.deadlineFired(away: false), .cancel)
+        XCTAssertEqual(m.deadlineFired(away: false, at: at(31)), .cancel)
         m.settle()
         XCTAssertEqual(m.resume(at: at(40)), .send(unlocking: true))
     }
@@ -67,7 +67,7 @@ final class CommandMachineTests: XCTestCase {
         var m = CommandMachine()
         _ = m.open(at: at(0))
         XCTAssertTrue(m.isOperating)
-        XCTAssertEqual(m.cancelForChange(), .cancel)
+        XCTAssertEqual(m.cancelForChange(at: at(0.5)), .cancel)
         XCTAssertEqual(m.op, .idle)
         XCTAssertEqual(m.open(at: at(1)), .send(unlocking: true))
     }
@@ -75,9 +75,130 @@ final class CommandMachineTests: XCTestCase {
     func testKeepAliveExpiryDropsTheCommand() {
         var m = CommandMachine()
         _ = m.open(at: at(0))
-        m.keepAliveExpired()
+        m.keepAliveExpired(at: at(2))
         XCTAssertEqual(m.op, .idle)
+        XCTAssertEqual(m.door, .unknown)
         XCTAssertEqual(m.resume(at: at(3)), .send(unlocking: true))
+    }
+
+    // MARK: - TRIAL 2026-11-07
+
+    func testATapAfterAFailedLockLocksAgain() {
+        var m = CommandMachine()
+        _ = m.open(at: at(0))
+        m.replied(.unlocked, after: 1)
+        m.settle()
+        XCTAssertEqual(m.tap(at: at(5)), .send(unlocking: false))
+        m.failed("The lock jammed")
+        XCTAssertEqual(m.door, .unknown)
+        XCTAssertEqual(m.tap(at: at(9)), .send(unlocking: false), "a retry repeats the failed lock, never unlocks")
+    }
+
+    func testATapAfterATimedOutLockLocksAgain() {
+        var m = CommandMachine()
+        _ = m.open(at: at(0))
+        m.replied(.unlocked, after: 1)
+        m.settle()
+        _ = m.tap(at: at(5))
+        XCTAssertEqual(m.deadlineFired(away: false, at: at(35)), .cancel)
+        XCTAssertEqual(m.tap(at: at(36)), .send(unlocking: false))
+    }
+
+    func testASuccessClearsTheRetry() {
+        var m = CommandMachine()
+        _ = m.open(at: at(0))
+        m.failed("no reply")
+        _ = m.tap(at: at(2))
+        m.replied(.unlocked, after: 1)
+        m.settle()
+        XCTAssertEqual(m.tap(at: at(5)), .send(unlocking: false))
+    }
+
+    func testATimeoutAfterTheCloudLetsTheRequestRunAndShowsItsLateReply() {
+        var m = CommandMachine()
+        _ = m.open(at: at(0))
+        m.reachedCloud()
+        XCTAssertEqual(m.deadlineFired(away: false, at: at(30)), .letRun)
+        XCTAssertEqual(m.op, .failure(CommandDeadline.sentNoReplyMessage))
+        XCTAssertEqual(m.warning(at: at(31)), CommandMachine.mayStillMoveWarning)
+        m.replied(.unlocked, after: 41.2)
+        XCTAssertEqual(m.op, .failure(CommandDeadline.sentNoReplyMessage), "a late reply is never shown as a success")
+        XCTAssertEqual(m.door, .unlocked)
+        XCTAssertEqual(m.lateNote, "Late reply: Unlocked after 41 s")
+        XCTAssertNil(m.warning(at: at(42)), "the late command is done")
+        XCTAssertEqual(m.tap(at: at(43)), .send(unlocking: false))
+    }
+
+    func testALateFailureKeepsTheSentMessage() {
+        var m = CommandMachine()
+        _ = m.open(at: at(0))
+        m.reachedCloud()
+        _ = m.deadlineFired(away: false, at: at(30))
+        m.failed("The request timed out")
+        XCTAssertEqual(m.op, .failure(CommandDeadline.sentNoReplyMessage))
+        XCTAssertFalse(m.isLate)
+        XCTAssertEqual(m.tap(at: at(45)), .send(unlocking: true), "the retry repeats the unlock")
+    }
+
+    func testATimeoutBeforeTheCloudCancelsAsBefore() {
+        var m = CommandMachine()
+        _ = m.open(at: at(0))
+        XCTAssertEqual(m.deadlineFired(away: false, at: at(30)), .cancel)
+        XCTAssertEqual(m.op, .failure(CommandDeadline.timedOutMessage))
+        XCTAssertNil(m.warning(at: at(31)))
+    }
+
+    func testDroppingACloudCommandWarnsForAMinute() {
+        var m = CommandMachine()
+        _ = m.open(at: at(0))
+        m.reachedCloud()
+        XCTAssertEqual(m.tap(at: at(5)), .send(unlocking: false))
+        XCTAssertEqual(m.warning(at: at(6)), CommandMachine.mayStillMoveWarning)
+        XCTAssertNil(m.warning(at: at(65)))
+    }
+
+    func testChangeLockLeavesTheOldLocksWarningBehindButExpiryWarns() {
+        var m = CommandMachine()
+        _ = m.open(at: at(0))
+        m.reachedCloud()
+        _ = m.cancelForChange(at: at(3))
+        XCTAssertNil(m.warning(at: at(4)), "the warning was about the old lock; the picker says it may complete")
+        var n = CommandMachine()
+        _ = n.open(at: at(0))
+        n.reachedCloud()
+        n.keepAliveExpired(at: at(3))
+        XCTAssertNotNil(n.warning(at: at(4)))
+    }
+
+    func testChangeLockCancelsALateRequestAndClearsItsLines() {
+        var m = CommandMachine()
+        _ = m.open(at: at(0))
+        m.reachedCloud()
+        _ = m.deadlineFired(away: false, at: at(30))
+        XCTAssertEqual(m.cancelForChange(at: at(31)), .cancel)
+        XCTAssertFalse(m.isLate)
+        XCTAssertNil(m.warning(at: at(32)))
+        m.replied(.locked, after: 40)
+        XCTAssertNotEqual(m.op, .success, "a reply after the drop writes nothing")
+        XCTAssertEqual(m.door, .unknown)
+    }
+
+    func testAReplyWithNoCommandWritesNothing() {
+        var m = CommandMachine()
+        m.replied(.unlocked, after: 1)
+        XCTAssertEqual(m.op, .idle)
+        XCTAssertEqual(m.door, .unknown)
+    }
+
+    func testTheLateRunEndsAtItsCap() {
+        var m = CommandMachine()
+        _ = m.open(at: at(0))
+        m.reachedCloud()
+        _ = m.deadlineFired(away: false, at: at(30))
+        XCTAssertTrue(m.isLate)
+        m.lateGaveUp()
+        XCTAssertFalse(m.isLate)
+        XCTAssertEqual(m.op, .failure(CommandDeadline.sentNoReplyMessage))
     }
 
     // MARK: - Stress: the model's random walk, with simulated transports
@@ -100,6 +221,8 @@ final class CommandMachineTests: XCTestCase {
                     "run \(run) step \(step): unlocked by itself after a timeout while away (\(world.log.suffix(8)))")
                 XCTAssertEqual(
                     world.changeLockRefused, 0, "run \(run) step \(step): Change Lock refused")
+                XCTAssertEqual(
+                    world.lateShownAsSuccess, 0, "run \(run) step \(step): a late reply shown as a success (\(world.log.suffix(8)))")
             }
         }
     }
@@ -114,6 +237,7 @@ final class CommandMachineTests: XCTestCase {
         var replyOk = true
         var autoUnlockAfterAway = 0
         var changeLockRefused = 0
+        var lateShownAsSuccess = 0
         var log: [String] = []
 
         mutating func step(_ rng: inout SplitMix) {
@@ -125,7 +249,8 @@ final class CommandMachineTests: XCTestCase {
             case 4:
                 if !asleep && m.isOperating, secondsToReply == nil {
                     // Bluetooth failed: the cloud takes longer.
-                    secondsToReply = 5 + Int(rng.next(upperBound: 25))
+                    secondsToReply = 5 + Int(rng.next(upperBound: 60))
+                    m.reachedCloud()
                     log.append("cloud")
                 }
             case 5:
@@ -135,7 +260,7 @@ final class CommandMachineTests: XCTestCase {
                     asleep = false
                     log.append("wake")
                     // A2: a deadline that passed during the nap fires on wake.
-                    if m.isExpired(at: now) { apply(m.deadlineFired(away: !foreground), "deadline") }
+                    if m.isExpired(at: now) { apply(m.deadlineFired(away: !foreground, at: now), "deadline") }
                 }
             case 7:
                 if foreground && !asleep { foreground = false; log.append("background") }
@@ -149,7 +274,7 @@ final class CommandMachineTests: XCTestCase {
                 }
             default:
                 if foreground && !asleep {
-                    let effect = m.cancelForChange()
+                    let effect = m.cancelForChange(at: now)
                     apply(effect, "changeLock")
                     apply(m.open(at: now), "open")
                 }
@@ -162,13 +287,21 @@ final class CommandMachineTests: XCTestCase {
             log.append("tick")
             guard !asleep else { return }
             if m.isOperating, m.isExpired(at: now) {
-                apply(m.deadlineFired(away: !foreground), "deadline")
+                apply(m.deadlineFired(away: !foreground, at: now), "deadline")
                 return
             }
-            if let left = secondsToReply, m.isOperating {
+            if m.isLate, let startedAt = m.startedAt, now >= startedAt.addingTimeInterval(CommandDeadline.lateLimit) {
+                m.lateGaveUp()
+                secondsToReply = nil
+                log.append("lateCap")
+                return
+            }
+            if let left = secondsToReply, m.isOperating || m.isLate {
                 if left <= 1 {
                     secondsToReply = nil
-                    if replyOk { m.replied(.unlocked) } else { m.failed("no reply") }
+                    let wasLate = m.isLate
+                    if replyOk { m.replied(.unlocked, after: 1) } else { m.failed("no reply") }
+                    if wasLate, m.op == .success { lateShownAsSuccess += 1 }
                     log.append(replyOk ? "ok" : "fail")
                 } else {
                     secondsToReply = left - 1
@@ -185,7 +318,7 @@ final class CommandMachineTests: XCTestCase {
                 replyOk = Int(now.timeIntervalSinceReferenceDate) % 7 != 0
             case .cancel:
                 secondsToReply = nil
-            case .none:
+            case .letRun, .none:
                 break
             }
         }

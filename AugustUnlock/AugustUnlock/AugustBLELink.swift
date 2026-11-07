@@ -46,6 +46,10 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
             queue.async { continuation.resume(returning: self.link(for: credentials)) }
         }
         let token = link.nextToken()
+        // A cancel can be queued before the command is (the task was
+        // cancelled before this point); the command's block then applies it
+        // in order, so it is never lost (TRIAL 2026-11-07).
+        let cancelled = OSAllocatedUnfairLock(initialState: false)
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 queue.async {
@@ -53,9 +57,11 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
                     link.apply(link.engine.handle(
                         .command(token, opcode: opcode, keepLink: keepLink, setupBudget: setupBudget, operationBudget: operationBudget),
                         at: link.now))
+                    if cancelled.withLock({ $0 }) { link.apply(link.engine.handle(.cancel(token), at: link.now)) }
                 }
             }
         } onCancel: {
+            cancelled.withLock { $0 = true }
             queue.async { link.apply(link.engine.handle(.cancel(token), at: link.now)) }
         }
     }

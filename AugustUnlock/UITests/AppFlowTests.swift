@@ -51,6 +51,19 @@ final class AppFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '2 sent'")).firstMatch.exists)
     }
 
+    /// A request already with August (the fake's cloud path) outlives the
+    /// 30 s deadline: the screen says it was sent and warns, the request
+    /// runs on, and its reply comes in as a line, never as a success.
+    func testACloudRequestPastTheDeadlineShowsItsLateReply() {
+        launch(reply: 38, extra: ["AUGUST_FAKE_PATH": "cloud"])
+        XCTAssertTrue(status("Over the cloud").waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(status("Sent to August, no reply yet \u{2014} tap to retry").waitForExistence(timeout: 35), app.debugDescription)
+        XCTAssertTrue(status("An earlier request may still move the door").waitForExistence(timeout: 6), app.debugDescription)
+        let late = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Late reply: Unlocked after'")).firstMatch
+        XCTAssertTrue(late.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertFalse(status("An earlier request may still move the door").exists, "the late request is done")
+    }
+
     func testNoStuckCommand_deadlineEndsASilentCommand() {
         launch(reply: 90)
         XCTAssertTrue(status("Unlocking\u{2026} tap to lock").waitForExistence(timeout: 3))

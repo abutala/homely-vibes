@@ -162,6 +162,9 @@ struct ContentView: View {
             operationTask = nil
             deadlineTask?.cancel()
             if case .failure = machine.op { UINotificationFeedbackGenerator().notificationOccurred(.error) }
+        case .letRun:
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            capLateRequest()
         case .none:
             break
         }
@@ -175,7 +178,7 @@ struct ContentView: View {
     /// exit waits for either (a tap killed by the exit would leave its door
     /// marked running with no result). After a tap defers it, the next
     /// return to the foreground exits.
-    private var commandInFlight: Bool { isOperating || AppDoorAction.inFlight > 0 }
+    private var commandInFlight: Bool { isOperating || machine.isLate || AppDoorAction.inFlight > 0 }
 
     /// Opening the app — cold launch, finishing setup, or returning from the
     /// background — unlocks at once; opening the app is the confirmation
@@ -386,7 +389,7 @@ struct ContentView: View {
                     Task { await presentLockPicker() }
                 }
                 Button("Sign Out") {
-                    perform(machine.cancelForChange())
+                    perform(machine.cancelForChange(at: Date()))
                     August.shared.signOut()
                     email = ""
                     password = ""
@@ -410,7 +413,7 @@ struct ContentView: View {
         errorMessage = nil
         lastTiming = nil
         changeLockNote = isOperating ? "The previous command may still complete." : nil
-        perform(machine.cancelForChange())
+        perform(machine.cancelForChange(at: Date()))
         do {
             availableLocks = try await August.shared.fetchLocks()
             phase = availableLocks.isEmpty ? .ready : .pickLock
@@ -438,19 +441,28 @@ struct ContentView: View {
         }
     }
 
-    private var stateLabel: String {
-        switch lockState {
-        case .locked: return "Locked"
-        case .unlocked: return "Unlocked"
-        case .unknown: return "State unknown"
+    private var stateLabel: String { lockState.label }
+
+    /// The status, then what a dropped or late cloud request may still do.
+    private var statusText: some View {
+        VStack(spacing: 4) {
+            statusLine
+            TimelineView(.periodic(from: .now, by: 5)) { context in
+                if let warning = machine.warning(at: context.date) {
+                    Text(warning).font(.footnote).foregroundStyle(.orange)
+                }
+            }
+            if let note = machine.lateNote {
+                Text(note).font(.footnote).foregroundStyle(.secondary)
+            }
         }
     }
 
     @ViewBuilder
-    private var statusText: some View {
+    private var statusLine: some View {
         switch operationResult {
         case .idle:
-            Text("\(stateLabel) \u{2014} tap to \(lockState == .unlocked ? "lock" : "unlock")")
+            Text("\(stateLabel) \u{2014} tap to \(machine.nextTapUnlocks ? "unlock" : "lock")")
                 .foregroundStyle(.secondary)
         case .inProgress(let unlocking):
             VStack(spacing: 4) {
@@ -481,7 +493,10 @@ struct ContentView: View {
         seenStages = []
         let (stages, report) = AsyncStream.makeStream(of: DoorStage.self)
         let watcher = Task {
-            for await stage in stages where stagesCommand == command { seenStages.append(stage) }
+            for await stage in stages where stagesCommand == command {
+                seenStages.append(stage)
+                if stage == .cloud { machine.reachedCloud() }
+            }
         }
         defer { report.finish() }
         let onStage: @Sendable (DoorStage) -> Void = { report.yield($0) }
@@ -489,13 +504,15 @@ struct ContentView: View {
         report.finish()
         await watcher.value
         try Task.checkCancellation()
+        let late = machine.isLate
         let elapsed = ContinuousClock.now - start
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
         let sent = (August.shared as? FakeAugust).map { ", \($0.commandsSent) sent" } ?? ""
         lastTiming = LastTiming(
             summary: "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s\(sent)", path: reply.path)
-        machine.replied(reply.state)
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        machine.replied(reply.state, after: seconds)
+        AppLog.note("screen \(unlocking ? "unlock" : "lock") \(late ? "late reply" : "reply") \(reply.state.label) via \(reply.path.rawValue) in \(String(format: "%.1f", seconds)) s")
+        if !late { UINotificationFeedbackGenerator().notificationOccurred(.success) }
     }
 
     /// Runs one operation at a time, cancelling any still in flight. Every
@@ -511,7 +528,7 @@ struct ContentView: View {
         let keepAlive = BackgroundTask(name: "AugustOperation") {
             Task { @MainActor in
                 task?.cancel()
-                if task == operationTask { machine.keepAliveExpired() }
+                if task == operationTask { machine.keepAliveExpired(at: Date()) }
             }
         }
         task = Task {
@@ -519,8 +536,13 @@ struct ContentView: View {
                 try await operation()
             } catch {
                 if !Task.isCancelled {
+                    let late = machine.isLate
                     machine.failed(error.localizedDescription)
-                    UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    if late {
+                        AppLog.note("screen late request failed: \(error.localizedDescription)")
+                    } else {
+                        UINotificationFeedbackGenerator().notificationOccurred(.error)
+                    }
                 }
             }
             keepAlive.end()
@@ -538,7 +560,23 @@ struct ContentView: View {
         deadlineTask = Task {
             try? await Task.sleep(for: .seconds(CommandDeadline.limit))
             guard !Task.isCancelled, task == operationTask else { return }
-            perform(machine.deadlineFired(away: wasBackgrounded))
+            let effect = machine.deadlineFired(away: wasBackgrounded, at: Date())
+            AppLog.note("screen deadline: \(effect == .letRun ? "sent to August, running on" : "nothing sent, cancelled")")
+            perform(effect)
+        }
+    }
+
+    /// A request already with August runs to `lateLimit` from its start,
+    /// then is dropped, whichever path (the deadline or a resume) let it run.
+    private func capLateRequest() {
+        guard let task = operationTask, let startedAt = machine.startedAt else { return }
+        let left = max(0, CommandDeadline.lateLimit - Date().timeIntervalSince(startedAt))
+        Task {
+            try? await Task.sleep(for: .seconds(left))
+            guard task == operationTask, machine.isLate else { return }
+            task.cancel()
+            machine.lateGaveUp()
+            AppLog.note("screen late request dropped at \(Int(CommandDeadline.lateLimit)) s")
         }
     }
 }
