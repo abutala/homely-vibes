@@ -167,6 +167,8 @@ launch (2026-11-06): a connect slower than that gets the fallback. What the mode
   the fallback and leaves the window and the tunnel (the model has no unknown window).
 - The tunnel script's time counts against the 30 s: replacing a stale tunnel takes about
   12 s, which leaves about 18 s for the connect.
+- The 90 s prompt timer starts when the prompt shows, not when the wait starts: a prompt
+  that came up late in a wait was otherwise cut short (found in review).
 - A password prompt keeps the "Connecting window gone" timer fresh: after the password, the
   prompt goes before the session shows, and that gap is not a Cancel.
 - Each window is read on its own `try`, and a partial read is read again: a window that

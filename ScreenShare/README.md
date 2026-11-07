@@ -74,7 +74,8 @@ background, then checks that VNC answers. The tunnel closes when the session end
 after its link dies, or after 5 minutes unused.
 
 A connect that fails (SSH error, VNC does not answer, "Connection failed") is cleaned up and
-tried again, up to 3 times while at least 10 s of the launch's 30 s is left. A connect that hangs on "Connecting…" is cancelled when the
+tried again, up to 3 times. A retry waits 5 s and starts only if 10 s of the launch's 30 s
+are then left. A connect that hangs on "Connecting…" is cancelled when the
 launch reaches 30 s. Then the app says why and offers `fallback_app`, so a dead link reaches
 the fallback in about 30 s. A password prompt stops the clock: the app waits up to 90 s
 for it. If you click Cancel, the app stops and does not retry.

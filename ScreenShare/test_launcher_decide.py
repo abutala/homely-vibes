@@ -59,15 +59,17 @@ def _call(launcher: Path, expression: str) -> str:
     return result.stdout.strip()
 
 
-def _decide(launcher: Path, launch: float, waited: float, gone: float, **snap: bool) -> str:
-    return _call(launcher, f"decide({_record({**NOTHING, **snap})}, {launch}, {waited}, {gone})")
+def _decide(launcher: Path, launch: float, prompt_for: float, gone: float, **snap: bool) -> str:
+    return _call(
+        launcher, f"decide({_record({**NOTHING, **snap})}, {launch}, {prompt_for}, {gone})"
+    )
 
 
 LATE = DEADLINE_SECONDS + 1
 
 
 @pytest.mark.parametrize(
-    ("snap", "launch", "waited", "gone", "expected"),
+    ("snap", "launch", "prompt_for", "gone", "expected"),
     [
         ({"hasSession": True}, LATE, LATE, 0, "session"),
         ({"hasPrompt": True}, LATE, WAIT_SECONDS - 1, 0, "wait"),  # the clock stops on a prompt
@@ -88,11 +90,11 @@ def test_decide(
     launcher: Path,
     snap: dict[str, bool],
     launch: float,
-    waited: float,
+    prompt_for: float,
     gone: float,
     expected: str,
 ) -> None:
-    assert _decide(launcher, launch, waited, gone, **snap) == expected
+    assert _decide(launcher, launch, prompt_for, gone, **snap) == expected
 
 
 @pytest.mark.parametrize(

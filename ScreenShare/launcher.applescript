@@ -75,14 +75,24 @@ end attemptOnce
 
 -- Polls Screen Sharing until the connect ends; cleans up a failed or hung one.
 on waitForOutcome(clock)
-	set waitStart to my now()
-	set lastPoll to waitStart
+	set lastPoll to my now()
+	set promptSince to missing value
 	set lastBusy to missing value
 	repeat
 		set snap to my snapshot()
 		set t to my now()
 		if hasPrompt of snap then set promptTime of clock to (promptTime of clock) + (t - lastPoll)
 		set lastPoll to t
+		if not (hasPrompt of snap) then
+			set promptSince to missing value
+		else if promptSince is missing value then
+			set promptSince to t
+		end if
+		if promptSince is missing value then
+			set promptFor to 0
+		else
+			set promptFor to t - promptSince
+		end if
 		-- A prompt counts too: after the password, the prompt goes before the session shows.
 		if hasBusy of snap or hasPrompt of snap then set lastBusy to t
 		if lastBusy is missing value then
@@ -90,7 +100,7 @@ on waitForOutcome(clock)
 		else
 			set goneFor to t - lastBusy
 		end if
-		set nextStep to my decide(snap, my elapsed(clock), t - waitStart, goneFor)
+		set nextStep to my decide(snap, my elapsed(clock), promptFor, goneFor)
 		if nextStep is "session" then return {"session", ""}
 		if nextStep is "cancelled" then return {"cancelled", ""}
 		if nextStep is "promptTimeout" then return {"promptTimeout", "The password prompt is still open after " & waitSeconds & " seconds."}
@@ -108,12 +118,13 @@ on waitForOutcome(clock)
 end waitForOutcome
 
 -- What the wait does next. Pure, so tests run it with made-up snapshots.
--- launchSeconds: launch time outside password prompts. waited: this wait. goneFor: seconds since
+-- launchSeconds: launch time outside password prompts. promptFor: how long the prompt has been
+-- open. goneFor: seconds since
 -- this connect's Connecting window was last seen (0: never seen).
-on decide(snap, launchSeconds, waited, goneFor)
+on decide(snap, launchSeconds, promptFor, goneFor)
 	if hasSession of snap then return "session"
 	if hasPrompt of snap then
-		if waited ≥ waitSeconds then return "promptTimeout"
+		if promptFor ≥ waitSeconds then return "promptTimeout"
 		return "wait"
 	end if
 	if hasFailed of snap then return "failed"
