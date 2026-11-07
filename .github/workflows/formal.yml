@@ -4,7 +4,8 @@ name: Formal
 # (make formal-verify), on demand only (Amit, 2026-11-07: a proof run took
 # over 45 minutes and blocked a merge). Start it from the Actions tab or with
 # `gh workflow run formal.yml --repo abutala/homely-vibes --ref <branch>`.
-# Not a required check.
+# Proofs run first: they download the Apalache jar, whose TLC the
+# `// backend: tlc` models need in both steps. Not a required check.
 
 on:
   workflow_dispatch:
@@ -44,8 +45,8 @@ jobs:
       - name: Install Quint
         run: make formal-deps
 
-      - name: Check models
-        run: make formal
-
       - name: Prove models
         run: make formal-verify
+
+      - name: Check models
+        run: make formal

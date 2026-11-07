@@ -15,35 +15,20 @@ cd "$(dirname "$0")"
 
 MAX_STEPS="${QUINT_MAX_STEPS:-20}"
 
-jdk_major() {
-    m=$("$1/bin/java" -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -1)
-    echo "${m:-0}"
-}
-
-found=""
-for candidate in "${JAVA_HOME:-}" \
-    "$(/usr/libexec/java_home -v 21 2>/dev/null || true)" \
-    /opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home; do
-    if [ -n "$candidate" ] && [ -x "$candidate/bin/java" ] \
-        && [ "$(jdk_major "$candidate")" -ge 21 ]; then
-        found="$candidate"
-        break
-    fi
-done
-if [ -z "$found" ]; then
-    echo "verify.sh needs JDK 21 or newer (macOS: brew install openjdk@21), or JAVA_HOME pointing at one." >&2
-    exit 1
-fi
-JAVA_HOME="$found"
-export JAVA_HOME
+. ./jdk21.sh
+use_jdk21 || exit 1
 
 failed=0
 
 # Same rule as check.sh: read the verdict from the output, never the exit code.
 verify() { # instance invariant expected(holds|violated)
     model=$(model_of "$1"); steps=$(steps_of "$model")
-    out=$(npx quint verify "$model" --main="$1" --invariant="$2" \
-        --max-steps="${steps:-$MAX_STEPS}" 2>&1) || true
+    if [ "$(backend_of "$model")" = tlc ]; then
+        out=$(npx quint verify "$model" --main="$1" --invariant="$2" --backend=tlc 2>&1) || true
+    else
+        out=$(npx quint verify "$model" --main="$1" --invariant="$2" \
+            --max-steps="${steps:-$MAX_STEPS}" 2>&1) || true
+    fi
     case "$out" in
         *"No violation found"*) got=holds ;;
         *"reached a deadlock"*) got=deadlock ;;
@@ -60,9 +45,12 @@ verify() { # instance invariant expected(holds|violated)
 }
 
 # A row's model is the file whose module declares its instance; its step bound
-# is that file's `// max-steps: N` line (default 20).
+# is that file's `// max-steps: N` line (default 20). A `// backend: tlc` line
+# runs TLC instead: it walks the whole finite state graph, so it needs no step
+# bound, and it finishes models whose step bound Apalache cannot.
 model_of() { grep -l "^module $1 " ./*.qnt | head -1; }
 steps_of() { sed -n 's#^// max-steps: *\([0-9]*\).*#\1#p' "$1" | head -1; }
+backend_of() { sed -n 's#^// backend: *\([a-z]*\).*#\1#p' "$1" | head -1; }
 # A model with a `// verify: search-only` line is checked by check.sh only: its
 # state space has not been shown to fit a CI run under Apalache.
 search_only() { grep -q '^// verify: search-only' "$1"; }

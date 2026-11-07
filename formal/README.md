@@ -12,6 +12,7 @@ the implementation is in. Gotchas and findings: [Logbook.md](Logbook.md).
 | [august_unlock_command.qnt](august_unlock_command.qnt) | Can an AugustUnlock command hold the screen after the phone naps, can a return to the app unlock by itself after a timeout, is Change Lock ever refused, and what does a cloud command the phone gave up on do? Does a tap after a failed lock unlock? Instances: `beforeDeadline` (before #57), `deadlineOnly` (#57's first push), `withDeadline` (#57, before the retry rule), `withRetry` (the app now), `resumeOnly` (the app if a passed deadline does not fire on wake). |
 | [ghost_order.qnt](ghost_order.qnt) | Can the AugustUnlock screen show a door state the lock is not in, when August still holds a command the phone dropped? Instances: `ghostBefore` (before #77: yes, unwarned), `ghostWarned` (now: only with the "may still move the door" line), each also with August running commands out of order. |
 | [gate.qnt](gate.qnt) | Is AugustUnlock's per-lock command gate ever held without a holder, or left with a cancelled waiter? Instances: `gateShipped`, `gateNoPostCheck` (the post-queue cancel check removed). |
+| [screenshare_connect.qnt](screenshare_connect.qnt) | Does a ScreenShare tunnel app's launch leave a hung window or a dead tunnel behind, fail on a healthy link, end a working session or a password prompt, take a frozen session for a live one, or reopen what the user cancelled? Instances: `shareMain` (before 2026-11-06), `shareProposed` (first retry design), `shareFinal` (the launcher now). Proved with TLC (`// backend: tlc`). |
 
 ## Setup and run
 
@@ -22,7 +23,9 @@ make formal-verify 2>&1 | tee /tmp/formal_verify.log  # exhaustive proof of the 
 ```
 
 `formal-verify` needs JDK 21 (macOS: `brew install openjdk@21`, which is keg-only and
-leaves your default `java` alone; the script finds it, or honours `JAVA_HOME`).
+leaves your default `java` alone; the scripts find it, or honour `JAVA_HOME`). So does
+`formal` for a model marked `// backend: tlc`: both scripts check it with TLC, which runs
+from the Apalache jar that `formal-verify` downloads, so run `formal-verify` once first.
 
 None of these is part of `make setup`, `make lint` or `make test`, so the prod host never
 installs Quint. CI runs both ([formal.yml](../.github/workflows/formal.yml)) only on demand,
@@ -43,8 +46,8 @@ so both a regression and a model that stops reproducing its bug fail.
 
 | Check | Engine | "violated" means | "holds" means |
 |---|---|---|---|
-| `make formal` ([check.sh](check.sh)) | `quint run`, randomized | a real counterexample | only "not found": never a proof |
-| `make formal-verify` ([verify.sh](verify.sh)) | `quint verify`, Apalache | a counterexample the solver built | a proof over every execution of the model |
+| `make formal` ([check.sh](check.sh)) | `quint run`, randomized (TLC for a `// backend: tlc` model) | a real counterexample | only "not found": never a proof (TLC: a proof) |
+| `make formal-verify` ([verify.sh](verify.sh)) | `quint verify`, Apalache (TLC for a model with `// backend: tlc`) | a counterexample the checker built | a proof over every execution of the model |
 
 A model with a `// verify: search-only` line (today `ghost_order.qnt` and `gate.qnt`) is
 skipped by `verify.sh`: only the randomized search covers it until its state space is
@@ -66,6 +69,7 @@ a test per modelled hazard, named for the model property it mirrors:
 | `noStuckCommand`, `noAutoUnlockAfterAwayTimeout`, `changeLockAlwaysPossible`, `noUnlockAfterFailedLock` | `AugustUnlock/Tests/AugustBLEProtocolTests/CommandMachineTests.swift` (the pure `CommandMachine` the app's view drives; a stress run with simulated Bluetooth and cloud, late replies included) |
 | `honestOrWarned` (ghost_order) | `CommandMachineTests`: `testDroppingACloudCommandWarnsForAMinute`, `testChangeLockLeavesTheOldLocksWarningBehindButExpiryWarns`, `testATimeoutAfterTheCloudLetsTheRequestRunAndShowsItsLateReply` |
 | `cancelledWaiterDrops` (gate) | `AugustUnlock/Tests/AugustBLEProtocolTests/CommandGateTests.swift` |
+| `cleanFailure`, `noLiveSessionKilled`, `promptNeverKilled` and the rest of `screenshare_connect` | `ScreenShare/test_build_app.py` (the probe and stop shell against real local sockets) and `ScreenShare/test_launcher_decide.py` (the launcher's pure `decide` and `classify` handlers under `osascript`) |
 
 The glue in `ContentView` (the deadline task, the background keep-alive, the stage stream) is
 covered only by the Simulator UI tests, not by a model.

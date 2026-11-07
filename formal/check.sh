@@ -3,11 +3,13 @@
 # row by row from outcomes.txt. A flipped result in either direction fails: a
 # "holds" row that now violates is a regression; a "violated" row that now holds
 # means the model stopped reproducing the bug it documents. This is search, not
-# proof: verify.sh is the exhaustive counterpart.
+# proof: verify.sh is the exhaustive counterpart. A model with `// backend: tlc`
+# is checked by TLC here too (exhaustive; needs JDK 21).
 set -eu
 cd "$(dirname "$0")"
 
 SAMPLES="${QUINT_SAMPLES:-200000}"
+. ./jdk21.sh
 failed=0
 
 # Quint exits 1 for a counterexample and for a broken model alike, so the
@@ -15,13 +17,24 @@ failed=0
 # no expectation: a model that fails to load must not satisfy a "violated" row.
 check() { # instance invariant expected(holds|violated)
     model=$(model_of "$1"); steps=$(steps_of "$model")
-    out=$(npx quint run "$model" --main="$1" --invariant="$2" \
-        --max-steps="${steps:-20}" --max-samples="$SAMPLES" 2>&1) || true
-    case "$out" in
-        *"Invariant violated"*) got=violated ;;
-        *"No violation found"*) got=holds ;;
-        *) got=error ;;
-    esac
+    if [ "$(backend_of "$model")" = tlc ]; then
+        # Random search missed real counterexamples here; TLC walks the whole
+        # finite graph in about a second.
+        out=$(use_jdk21 2>&1 && npx quint verify "$model" --main="$1" --invariant="$2" --backend=tlc 2>&1) || true
+        case "$out" in
+            *"found a counterexample"*) got=violated ;;
+            *"No violation found"*) got=holds ;;
+            *) got=error ;;
+        esac
+    else
+        out=$(npx quint run "$model" --main="$1" --invariant="$2" \
+            --max-steps="${steps:-20}" --max-samples="$SAMPLES" 2>&1) || true
+        case "$out" in
+            *"Invariant violated"*) got=violated ;;
+            *"No violation found"*) got=holds ;;
+            *) got=error ;;
+        esac
+    fi
     if [ "$got" = "$3" ]; then
         printf 'ok    %-12s %-24s %s\n' "$1" "$2" "$got"
     else
@@ -35,6 +48,7 @@ check() { # instance invariant expected(holds|violated)
 # is that file's `// max-steps: N` line (default 20).
 model_of() { grep -l "^module $1 " ./*.qnt | head -1; }
 steps_of() { sed -n 's#^// max-steps: *\([0-9]*\).*#\1#p' "$1" | head -1; }
+backend_of() { sed -n 's#^// backend: *\([a-z]*\).*#\1#p' "$1" | head -1; }
 
 rows=$(mktemp)
 trap 'rm -f "$rows"' EXIT

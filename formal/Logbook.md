@@ -6,6 +6,32 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ## Incidents
 
+### 2026-11-06 — The ScreenShare launch model, proved with TLC
+
+[screenshare_connect.qnt](screenshare_connect.qnt) models one launch of a tunnel app against a
+link that drops, an ssh that goes stale, a remote VNC that stalls or is off, a password prompt
+and a user's Cancel. What it taught:
+
+- **Apalache could not finish it; TLC proves it in about a second.** One Apalache row at 40
+  steps ran 15 minutes with no result. The model is finite (enums, small counters), so
+  `quint verify --backend=tlc` walks the whole state graph: `shareFinal` has 64,063 distinct
+  states, depth 39, queue empty. A model opts in with a `// backend: tlc` line; `verify.sh`
+  reads it.
+- **Random search missed real counterexamples.** At 20,000 samples one row came back
+  `violated` in one run and `holds` in the next, and `make formal` at 200,000 samples missed
+  `shareProposed noFailedHealthyLaunch` (the first design, `shareProposed`, then needed a slow connect on all three attempts). TLC
+  settled both, so [check.sh](check.sh) uses TLC for a `// backend: tlc` model as well.
+- **A model that is too kind proves the wrong design.** The first version made cleanup one
+  atomic step and let an old session's window turn into its dialog at once; both hid real
+  races (a session that comes up during cleanup; a dead window with the live session's
+  title). The TRIAL's refutation split the steps and the model then found them, plus one
+  more: a stalled connect that turns into a password prompt during cleanup.
+- **Instance names are global across `formal/`.** `model_of` takes the first file that
+  declares the module, and `ring_token_lock.qnt` already has `current`; the instances here are
+  `shareMain`, `shareProposed`, `shareFinal`.
+- **Removing one fix at a time shows each is needed.** Each `shareFinal` switch was turned off
+  alone and TLC re-run; the verdict lists which property each one keeps.
+
 ### 2026-11-01 — The AugustUnlock command model reproduces the stuck screen
 
 [august_unlock_command.qnt](august_unlock_command.qnt) models one lock command with a
@@ -87,6 +113,20 @@ Java 21 (class file version 65), so 17 fails at class loading. On macOS use
 [verify.sh](verify.sh) find it. The first `verify` downloads Apalache into `~/.quint`
 before failing, so the failure is not a network problem.
 
+### Quint's TLC backend never checks deadlocks
+
+`quint verify --backend=tlc` starts TLC with `-deadlock`, which turns the deadlock check off,
+and `--tlc-config` cannot turn it back on. To check one, compile and run TLC yourself:
+
+```bash
+npx quint compile --target=tlaplus --main=shareFinal screenshare_connect.qnt > /tmp/m.tla
+sed -i '' '/^# /d' /tmp/m.tla; printf 'INIT q_init\nNEXT q_step\n' > /tmp/m.cfg
+java -cp ~/.quint/apalache-dist-*/apalache/lib/apalache.jar tlc2.TLC -workers auto /tmp/m.tla 2>&1 | tee /tmp/tlc_deadlock.log
+```
+
+`shareFinal` passes; the same run with `idle` removed reports `Deadlock reached`, so the check
+works. `quint compile` needs JDK 21 on `PATH`, not only in `JAVA_HOME`.
+
 ### `quint verify` calls a finished model a deadlock
 
 A model whose actors all terminate has no enabled action at the end, and Apalache reports
@@ -103,7 +143,8 @@ prints and treats anything unrecognized as `error`, which matches no expectation
 
 ### "No violation found" from `quint run` is not "verified"
 
-`quint run` samples. It is the quick check because it needs no JDK, and
+`quint run` samples. It is the quick check because it needs no JDK (except for a
+`// backend: tlc` model, which both scripts check with TLC), and
 [check.sh](check.sh) pins both polarities to keep it honest. Say "not found in random
 traces", never "proved", of a `check.sh` result. Only [verify.sh](verify.sh) proves.
 

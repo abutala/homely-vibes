@@ -28,8 +28,10 @@ NAME_PATTERN = re.compile(r"^[\w][\w .-]*$")
 IP_PATTERN = re.compile(r"^[0-9.]+$|:")
 HOST_SUFFIXES = ("._rfb._tcp.local.", "._rfb._tcp.local", ".local.", ".local")
 LOOPBACK = ("localhost", "127.0.0.1")
-PLACEHOLDER = re.compile(r"__(URL|TITLE|TUNNEL|FALLBACK|WAIT)__")
-WAIT_SECONDS = 90  # the launcher waits this long for the session window
+PLACEHOLDER = re.compile(r"__(URL|TITLE|TUNNEL|STOP|FALLBACK|WAIT|DEADLINE)__")
+WAIT_SECONDS = 90  # a password prompt may stay open this long
+DEADLINE_SECONDS = 30  # the whole launch, prompts excluded; then the fallback app
+PROBE_SECONDS = 5  # the VNC banner arrives in 0.2 s through a live tunnel
 TUNNEL_HOLD_SECONDS = 300  # an unused tunnel lasts this long; a first launch asks for a password
 
 
@@ -108,14 +110,18 @@ def applescript_string(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def render(template: str, conn: Connection, tunnel: str = "", fallback: str = "") -> str:
+def render(
+    template: str, conn: Connection, tunnel: str = "", fallback: str = "", stop: str = ""
+) -> str:
     """One pass, so a value that holds a placeholder is not replaced again."""
     values = {
         "URL": applescript_string(conn.url),
         "TITLE": applescript_string(conn.name),
         "TUNNEL": applescript_string(tunnel),
+        "STOP": applescript_string(stop),
         "FALLBACK": applescript_string(fallback),
         "WAIT": str(WAIT_SECONDS),
+        "DEADLINE": str(DEADLINE_SECONDS),
     }
     return PLACEHOLDER.sub(lambda match: values[match.group(1)], template)
 
@@ -136,8 +142,53 @@ def through_tunnel(conn: Connection, local_port: int) -> Connection:
     )
 
 
-def tunnel_command(tunnel: SshTunnelConfig, local_port: int) -> str:
-    """Shell that starts `ssh -L` unless the local port already listens (a live tunnel).
+def _bash(script: str) -> str:
+    """`do shell script` runs /bin/sh; the probe needs bash's /dev/tcp."""
+    return "/bin/bash -c " + shlex.quote(script)
+
+
+def _shell_functions(local_port: int, probe_seconds: int) -> str:
+    """`probe`: the tunnel's far end answers with a VNC banner. `stop`: end our ssh on the port.
+
+    The probe reads `127.0.0.1`: bash's `/dev/tcp/localhost` tries only `::1`, where ssh may not
+    listen. It sends nothing, so a VNC server sees a client that left. `stop` takes only a
+    process named `ssh` that listens on the port and whose arguments forward it; TERM, then KILL
+    after 2 s. The braces keep `2>/dev/null` off the rest of the script: on a bare `exec` it stays.
+    """
+    return f"""
+probe() {{
+  {{ exec 3<>/dev/tcp/127.0.0.1/{local_port}; }} 2>/dev/null || return 1
+  b=; read -t {probe_seconds} -n 3 b <&3; exec 3<&-
+  [ "$b" = RFB ]
+}}
+stop() {{
+  mine=
+  for pid in $(/usr/sbin/lsof -nP -a -c '/^ssh$/' -iTCP:{local_port} -sTCP:LISTEN -t 2>/dev/null); do
+    case " $(/bin/ps -o args= -p "$pid") " in *" -L {local_port}:"*) mine="$mine $pid" ;; esac
+  done
+  [ -n "$mine" ] || return 0
+  kill $mine 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    alive=
+    for pid in $mine; do kill -0 "$pid" 2>/dev/null && alive="$alive $pid"; done
+    [ -n "$alive" ] || return 0
+    mine=$alive
+    sleep 0.1
+  done
+  kill -9 $mine 2>/dev/null
+  return 0
+}}
+"""
+
+
+def tunnel_command(
+    tunnel: SshTunnelConfig, local_port: int, probe_seconds: int = PROBE_SECONDS
+) -> str:
+    """Shell that makes sure a tunnel whose far end answers holds the local port.
+
+    It prints `reused` when the tunnel already answers, `started` when it ran ssh. A port that
+    listens but does not answer, twice (a stale ssh whose link died, or a slow host), is stopped
+    first. After ssh starts, the far end must answer, or the tunnel goes and the script fails.
 
     `ssh -f` goes to the background once the forward is up. It exits when its `sleep` ends and
     the last forwarded connection closes, so the tunnel lasts as long as the session. Keepalives
@@ -161,11 +212,26 @@ def tunnel_command(tunnel: SshTunnelConfig, local_port: int) -> str:
             f"sleep {TUNNEL_HOLD_SECONDS}",
         ]
     )  # fmt: skip
-    return (
-        f"/usr/bin/nc -z localhost {local_port} 2>/dev/null && exit 0; "
-        f'err=$(/usr/bin/mktemp); {ssh} >/dev/null 2>"$err"; rc=$?; '
-        '/bin/cat "$err" >&2; /bin/rm -f "$err"; exit $rc'
+    no_answer = f"SSH connected, but VNC on the server did not answer on port {tunnel.remote_port}."
+    return _bash(
+        _shell_functions(local_port, probe_seconds)
+        + f"""
+if probe || probe; then echo reused; exit 0; fi
+stop
+err=$(/usr/bin/mktemp); {ssh} >/dev/null 2>"$err"; rc=$?
+/bin/cat "$err" >&2; /bin/rm -f "$err"
+[ "$rc" -eq 0 ] || exit "$rc"
+if probe || probe; then echo started; exit 0; fi
+stop
+echo {shlex.quote(no_answer)} >&2
+exit 1
+"""
     )
+
+
+def stop_command(local_port: int) -> str:
+    """Shell that ends our ssh on the local port; the launcher runs it after a failed connect."""
+    return _bash(_shell_functions(local_port, PROBE_SECONDS) + "stop\n")
 
 
 def host_label(address: str) -> str:
@@ -272,9 +338,10 @@ def install(spec: ScreenShareAppConfig, conn: Connection, dest: Path, dock: bool
     tunnel = spec.ssh_tunnel
     target = through_tunnel(conn, tunnel.local_port) if tunnel else conn
     shell = tunnel_command(tunnel, tunnel.local_port) if tunnel else ""
+    stop = stop_command(tunnel.local_port) if tunnel else ""
     app = dest / f"{name}.app"
     dest.mkdir(parents=True, exist_ok=True)
-    source = render(TEMPLATE.read_text(), target, shell, spec.fallback_app or "")
+    source = render(TEMPLATE.read_text(), target, shell, spec.fallback_app or "", stop)
     compile_app(source, app, connection_label(conn))
     via = f" through {tunnel.host}:{tunnel.port}" if tunnel else ""
     print(f'Built {app} for "{conn.name}" ({target.url}){via}.')
