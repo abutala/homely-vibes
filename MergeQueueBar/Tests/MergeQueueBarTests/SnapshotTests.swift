@@ -28,29 +28,38 @@ final class SnapshotTests: XCTestCase {
         """.data(using: .utf8)!
     }
 
-    func testTotalsCountTaggedLandedAndFailed() throws {
+    func testTotalsLeaveBouncesOutAndTheFailMarkSitsWithMQ() throws {
         let data = response(queued: [node(1, labels: ["ready to review"])], landed: 5,
                             failed: [node(2, labels: ["automerge failed"])],
                             mine: [node(3)], mineMerged: 4)
         let s = try SnapshotDecoder.decode(data, fetchedAt: now)
-        XCTAssertEqual(s.queueTotalToday, 7)
+        XCTAssertEqual(s.queueTotalToday, 6)
         XCTAssertEqual(s.mineTotalToday, 5)
-        XCTAssertEqual(SummaryText.title(s), "MQ 1/7 \u{00B7} Me 1/5 \u{2717}1")
+        XCTAssertEqual(SummaryText.title(s), "MQ 1/6 (\u{26A0}\u{FE0E}1) Me 1/5")
+        XCTAssertEqual(SummaryText.queueLine(s), "Merge queue: 1 tagged \u{00B7} 5 landed today \u{00B7} 1 failed")
     }
 
     func testTitleHasNoFailMarkWhenNothingBounced() throws {
         let s = try SnapshotDecoder.decode(response(landed: 28, mineMerged: 24), fetchedAt: now)
-        XCTAssertEqual(SummaryText.title(s), "MQ 0/28 \u{00B7} Me 0/24")
+        XCTAssertEqual(SummaryText.title(s), "MQ 0/28 Me 0/24")
     }
 
-    func testMyOpenPRsLeaveOutOnlyTheOnesWithTheLander() throws {
+    func testMyCountHasEveryOpenPRButTheListLeavesTheQueuedOnesToMQ() throws {
         let mine = [node(1), node(2, labels: ["ready to review"]),
                     node(3, labels: ["ready to review", "autolanding"]), node(4, draft: true),
                     node(5, labels: ["ready to review", "automerge failed"]),
                     node(6, labels: ["ready to review", "nomerge"])]
-        let s = try SnapshotDecoder.decode(response(mine: mine), fetchedAt: now)
+        let s = try SnapshotDecoder.decode(response(mine: mine, mineMerged: 18), fetchedAt: now)
+        XCTAssertEqual(s.mineOpenCount, 6)
+        XCTAssertEqual(s.mineTotalToday, 24)
         XCTAssertEqual(s.mineOpen.map(\.number), [1, 4, 5, 6])
-        XCTAssertEqual(s.mineOpenCount, 4)
+        XCTAssertEqual(s.mineInQueueCount, 2)
+        XCTAssertEqual(SummaryText.mineLine(s), "My PRs: 6 open, 2 in MQ \u{00B7} 18 merged today")
+    }
+
+    func testMineLineSkipsInMQWhenNoneQueued() throws {
+        let s = try SnapshotDecoder.decode(response(mine: [node(1)], mineMerged: 3), fetchedAt: now)
+        XCTAssertEqual(SummaryText.mineLine(s), "My PRs: 1 open \u{00B7} 3 merged today")
     }
 
     func testWeekLineShowsTotalsAndDailyAverage() throws {

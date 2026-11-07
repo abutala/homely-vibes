@@ -19,11 +19,10 @@ struct SearchSpec: Equatable {
     let listSize: Int
 }
 
-/// The GitHub searches for one snapshot. MQ searches are scoped to the org.
-/// My searches cover every repo and leave out what the lander handles: the
-/// app drops queued PRs from my open list, and `-label:autolanded` drops the
-/// PRs it merged. Day bounds are local midnights sent
-/// with their UTC offset, so "today" is local, not left to GitHub.
+/// The GitHub searches for one snapshot. MQ searches are scoped to the org;
+/// my searches cover every repo and count every PR I authored, the lander's
+/// included. Day bounds are local midnights sent with their UTC offset, so
+/// "today" is local, not left to GitHub.
 struct QueueQueries: Equatable {
     static let historyDays = 7
 
@@ -35,13 +34,13 @@ struct QueueQueries: Equatable {
         let base = "org:\(org) is:pr"
         let landed = "\(base) is:merged label:\(LanderLabel.landed)"
         let mine = "is:pr author:@me"
-        let mineMerged = "\(mine) is:merged -label:\(LanderLabel.landed)"
+        let mineMerged = "\(mine) is:merged"
         let today = dayStarts.last ?? ""
         let weekStart = dayStarts.first ?? ""
         searches = [
             SearchSpec(alias: "queued", query: "\(base) is:open label:\"\(LanderLabel.queued)\" -label:\"\(LanderLabel.failed)\" -label:\(LanderLabel.noMerge)", listSize: 50),
             SearchSpec(alias: "landed", query: "\(landed) merged:>=\(today)", listSize: 0),
-            SearchSpec(alias: "failed", query: "\(base) is:open label:\"\(LanderLabel.failed)\" updated:>=\(today)", listSize: 50),
+            SearchSpec(alias: "failed", query: "\(base) is:open label:\"\(LanderLabel.failed)\"", listSize: 50),
             SearchSpec(alias: "mineOpen", query: "\(mine) is:open", listSize: 100),
             SearchSpec(alias: "mineMerged", query: "\(mineMerged) merged:>=\(today)", listSize: 0),
             SearchSpec(alias: "landedWeek", query: "\(landed) merged:>=\(weekStart)", listSize: 0),

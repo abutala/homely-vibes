@@ -22,7 +22,7 @@ struct MergeQueueBarApp {
             print(SummaryText.title(s))
             print(SummaryText.queueLine(s))
             s.queued.forEach { print("  queued: \(SummaryText.row($0))") }
-            s.failedToday.forEach { print("  failed: \(SummaryText.row($0))") }
+            s.failed.forEach { print("  failed: \(SummaryText.row($0))") }
             print(SummaryText.mineLine(s))
             s.mineOpen.forEach { print("  mine: \(SummaryText.row($0))") }
             print(SummaryText.weekLine(s))

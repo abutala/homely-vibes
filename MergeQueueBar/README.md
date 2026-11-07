@@ -3,28 +3,27 @@
 Gotchas and learnings: [Logbook.md](Logbook.md).
 
 A macOS menu bar app that shows today's pr-lander merge queue (MQ) and
-your own PRs that the lander does not handle:
+your own PRs:
 
 ```
-MQ 1/29 · Me 1/12 ✗1
+MQ 1/29 (⚠︎1) Me 3/21
 ```
 
 - **`MQ tagged/total`**: PRs in the queue now (label `ready to review`, not
-  bounced, not `nomerge`) / every PR the queue held today (still tagged +
-  landed today + failed today). Scoped to one org.
-- **`Me open/total`**: your open PRs in every repo, without the ones in the
-  queue / those + yours merged today without `autolanded`. A bounced or
-  `nomerge` PR counts as yours: the lander is not handling it.
-- **`✗N`**: shown only when N PRs bounced today (label `automerge failed`).
+  bounced, not `nomerge`) / those + landed today. Scoped to one org.
+- **`(⚠︎N)`**: the open bounced PRs (label `automerge failed`), whatever day
+  they bounced. Shown only when N > 0. Not in the MQ total.
+- **`Me open/total`**: your open PRs in every repo / those + yours merged
+  today. Both include the PRs the lander handles or merged.
 
 The dropdown:
 
 ```
-Merge queue: 1 tagged · 28 landed · 0 failed today
+Merge queue: 1 tagged · 28 landed today · 1 failed
   ▶ repo#50 Title…                        ← ▶: the lander is on it now
-Failed today (N)                          ← only when N > 0
-My PRs, not with MQ: 1 open · 11 merged today
-  repo#69 Title… (draft)
+Failed (N)                                ← only when N > 0
+My PRs: 3 open, 1 in MQ · 20 merged today
+  repo#69 Title… (draft)                  ← not the ones in MQ: they show once, above
 Last 7d: MQ 92 landed (13/day) · Me 44 merged (6/day)
 Open PRs on GitHub · My PRs on GitHub · Updated · Refresh · Refresh Every · Quit
 ```
@@ -45,15 +44,14 @@ local midnight, sent with their UTC offset. MQ searches add `org:<org>`.
 |---|---|
 | Tagged | `is:pr is:open label:"ready to review" -label:"automerge failed" -label:nomerge` |
 | Landed today | `is:pr is:merged label:autolanded merged:>=<midnight>` |
-| Failed today | `is:pr is:open label:"automerge failed" updated:>=<midnight>` |
-| My open | `is:pr author:@me is:open`, then the app drops the PRs in the queue |
-| My merged today | `is:pr author:@me is:merged -label:autolanded merged:>=<midnight>` |
+| Failed | `is:pr is:open label:"automerge failed"` |
+| My open | `is:pr author:@me is:open`; the dropdown list drops the PRs in the queue |
+| My merged today | `is:pr author:@me is:merged merged:>=<midnight>` |
 | Last 7d | the landed and my-merged searches with `merged:>=<midnight 6 days ago>` |
 
-GitHub search cannot filter on the time a label was added, so "failed today"
-means an open, bounced PR that changed today. Counts come from GitHub's
-`issueCount`. The queue and failed lists show at most 50 PRs and then
-`… and N more`; my open list holds 100, so its count is exact up to 100.
+Counts come from GitHub's `issueCount`. The queue and failed lists show at
+most 50 PRs and then `… and N more`. My open list holds 100, so `N in MQ` is
+exact up to 100 open PRs.
 
 **API cost**: the whole query costs 2 GraphQL points (`rateLimit{cost}`, 2026-11-05),
 from the 5,000 points an hour your account gets. A 2-minute refresh uses 60

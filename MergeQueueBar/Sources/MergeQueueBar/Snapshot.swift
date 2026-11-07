@@ -22,20 +22,25 @@ struct QueueSnapshot: Equatable {
     let queued: [PullRequest]
     let queuedCount: Int
     let landedToday: Int
-    let failedToday: [PullRequest]
-    let failedTodayCount: Int
-    /// My open PRs in every repo, without the ones the lander handles.
+    /// Every open bounced PR, whatever day it bounced.
+    let failed: [PullRequest]
+    let failedCount: Int
+    /// My open PRs in every repo, without the ones the lander handles: the
+    /// queue list shows those, so no PR shows twice.
     let mineOpen: [PullRequest]
+    /// Every open PR of mine, the lander's included.
     let mineOpenCount: Int
-    /// My PRs merged today in every repo, without the ones the lander merged.
+    /// My open PRs the lander handles. Exact while all my open PRs fit in the list.
+    let mineInQueueCount: Int
+    /// Every PR of mine merged today, the lander's included.
     let mineMergedToday: Int
     /// The last 7 days, today included.
     let landedWeek: Int
     let mineMergedWeek: Int
     let fetchedAt: Date
 
-    /// Every PR the queue held today: still tagged, landed, or bounced.
-    var queueTotalToday: Int { queuedCount + landedToday + failedTodayCount }
+    /// The queue's work today: still tagged, or landed. Bounces stand apart.
+    var queueTotalToday: Int { queuedCount + landedToday }
     /// Every PR of mine alive today: still open, or merged today.
     var mineTotalToday: Int { mineOpenCount + mineMergedToday }
 }
@@ -70,11 +75,11 @@ enum SnapshotDecoder {
             queued: queued.pullRequests,
             queuedCount: queued.issueCount,
             landedToday: landedToday,
-            failedToday: failed.pullRequests,
-            failedTodayCount: failed.issueCount,
+            failed: failed.pullRequests,
+            failedCount: failed.issueCount,
             mineOpen: mineOpen.pullRequests.filter { !$0.isWithLander },
-            // Exact while all my open PRs fit in the list (100).
-            mineOpenCount: mineOpen.issueCount - mineOpen.pullRequests.filter(\.isWithLander).count,
+            mineOpenCount: mineOpen.issueCount,
+            mineInQueueCount: mineOpen.pullRequests.filter(\.isWithLander).count,
             mineMergedToday: mineMergedToday,
             landedWeek: try search("landedWeek").issueCount,
             mineMergedWeek: try search("mineMergedWeek").issueCount,
