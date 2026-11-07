@@ -71,6 +71,18 @@ process kill before any fix. Fix and details: [RingBeams/Logbook.md](../RingBeam
 
 ---
 
+### 2026-11-07: the AugustUnlock screen could show a door state the lock was not in
+
+A TRIAL modelled what the shipped model leaves out: the real door, each held
+command's direction and August's order (`ghost_order.qnt`). Quint found, in 6
+steps, a cloud unlock replaced by a tap to lock that succeeds over Bluetooth,
+then August running the held unlock: the lock is open, the screen says
+"Locked". The shipped model could not see it: its `door` is the shown one and
+`heldAtAugust` is a bare count. Fixed by a warning, not by ordering (see the
+AugustUnlock Logbook, 2026-11-07). The same TRIAL added `noUnlockAfterFailedLock`
+to `august_unlock_command.qnt` after the phone showed a tap after a failed lock
+unlocking.
+
 ## Landmines
 
 ### Open: `ring_manager.py auth` runs without the lock

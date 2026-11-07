@@ -1,10 +1,11 @@
 name: Formal
 
-# Runs the exhaustive proofs (make formal-verify) and the model checks (make
-# formal), on demand only: Actions > Formal > Run workflow, or
-# `gh workflow run formal.yml --ref <branch>`. Proofs first: they download the
-# Apalache jar, whose TLC the `// backend: tlc` models need in both steps. Not a
-# required check.
+# Runs the Quint model checks (make formal) and the exhaustive proofs
+# (make formal-verify), on demand only (Amit, 2026-11-07: a proof run took
+# over 45 minutes and blocked a merge). Start it from the Actions tab or with
+# `gh workflow run formal.yml --repo abutala/homely-vibes --ref <branch>`.
+# Proofs run first: they download the Apalache jar, whose TLC the
+# `// backend: tlc` models need in both steps. Not a required check.
 
 on:
   workflow_dispatch:
@@ -15,6 +16,7 @@ permissions:
 jobs:
   formal:
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v5

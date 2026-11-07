@@ -47,6 +47,32 @@ beforeDeadline  noSurpriseMoves               violated
 deadlineOnly    noSurpriseMoves               violated
 withDeadline    noSurpriseMoves               violated
 resumeOnly      noSurpriseMoves               violated
+withRetry       noStuckCommand                holds
+withRetry       noAutoUnlockAfterAwayTimeout  holds
+withRetry       changeLockAlwaysPossible      holds
+withRetry       noSurpriseMoves               violated
+
+# The retry rule (TRIAL 2026-11-07): a tap after a failed lock unlocked.
+withDeadline    noUnlockAfterFailedLock       violated
+withRetry       noUnlockAfterFailedLock       holds
+resumeOnly      noUnlockAfterFailedLock       holds
+
+# ghost_order.qnt: the screen against the real door with August holding
+# commands. Before #77 the screen could lie unwarned; now it warns.
+ghostBefore          screenHonest             violated
+ghostBefore          honestOrWarned           violated
+ghostBeforeAnyOrder  honestOrWarned           violated
+ghostKeepAliveOnly   honestOrWarned           violated
+ghostWarned          screenHonest             violated
+ghostWarned          honestOrWarned           holds
+ghostWarnedAnyOrder  honestOrWarned           holds
+
+# gate.qnt: the per-lock command gate.
+gateShipped      busyHasHolder            holds
+gateShipped      freeMeansNoWaiters       holds
+gateShipped      queueConsistent          holds
+gateShipped      cancelledWaiterDrops     holds
+gateNoPostCheck  cancelledWaiterDrops     violated
 
 # screenshare_connect.qnt — one launch of a ScreenShare tunnel app. shareMain is
 # main before 2026-11-06 (it reuses a stale tunnel and leaves a hung window);

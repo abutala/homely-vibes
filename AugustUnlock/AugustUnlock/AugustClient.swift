@@ -90,7 +90,6 @@ final class AugustClient {
         for key in [
             "august_email", "august_password", "august_access_token",
             "august_lock_id", "august_lock_name", Self.bluetoothKeysKey,
-            "august_ble_key", "august_ble_slot", "august_ble_serial",
         ] {
             KeychainStore.remove(key)
         }
@@ -251,21 +250,8 @@ final class AugustClient {
     private static func bluetoothKeys() -> [String: StoredKey] {
         guard let data = KeychainStore.get(bluetoothKeysKey)?.data(using: .utf8),
             let keys = try? JSONDecoder().decode([String: StoredKey].self, from: data)
-        else { return legacyBluetoothKeys() }
-        return keys
-    }
-
-    /// Before 2026-11-02 the one key lived in three items, for the picked
-    /// lock only. Read them as the map once, so an update does not send the
-    /// next open to the cloud; the refresh rewrites the map and the three
-    /// items are then unused.
-    private static func legacyBluetoothKeys() -> [String: StoredKey] {
-        guard let lockID = KeychainStore.get("august_lock_id"),
-            let key = KeychainStore.get("august_ble_key"),
-            let slot = KeychainStore.get("august_ble_slot").flatMap(Int.init),
-            let serial = KeychainStore.get("august_ble_serial")
         else { return [:] }
-        return [lockID: StoredKey(key: key, slot: slot, serial: serial)]
+        return keys
     }
 
     private static func updateBluetoothKeys(_ change: (inout [String: StoredKey]) -> Void) {
@@ -301,8 +287,10 @@ final class AugustClient {
             KeychainStore.get("august_access_token") != nil
         else { return }
         guard let credentials = AugustBLECredentials(lockDetail: json) else {
-            Self.updateBluetoothKeys { $0[lockID] = nil }
-            Self.log.notice("No loaded offline key for lock \(lockID.suffix(4), privacy: .public); its opens use the cloud")
+            // Kept: a reply without the key is not proof the lock lost it,
+            // and a wrong key only costs one rejected Bluetooth try.
+            let kept = Self.bluetoothKeysLock.withLock { Self.bluetoothKeys()[lockID] != nil }
+            Self.note("No loaded offline key in August's reply for lock \(lockID.suffix(4)); \(kept ? "kept the stored one" : "its opens use the cloud")")
             return
         }
         Self.updateBluetoothKeys { $0[lockID] = StoredKey(key: credentials.hexKey, slot: Int(credentials.slot), serial: credentials.serial) }
@@ -317,15 +305,20 @@ final class AugustClient {
     /// `LockDetail`.
     func fetchLockState() async throws -> LockState {
         guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
+        return try await lockState(lockID: lockID)
+    }
+
+    /// Any lock's state as August's cloud last heard it.
+    private func lockState(lockID: String) async throws -> LockState {
         let data = try await sendLockRequest(method: "GET", path: "/locks/\(lockID)")
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         let lockStatus = json?["LockStatus"] as? [String: Any]
         return LockState(augustStatus: lockStatus?["status"] as? String)
     }
 
-    func unlock() async throws -> OperationReply {
+    func unlock(onStage: @escaping @Sendable (DoorStage) -> Void) async throws -> OperationReply {
         guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
-        return try await unlock(lockID: lockID)
+        return try await unlock(lockID: lockID, onStage: onStage)
     }
 
     /// Any lock on the account, Bluetooth first when it has a loaded key.
@@ -339,25 +332,36 @@ final class AugustClient {
     func unlock(
         lockID: String, bluetoothSetupBudget: TimeInterval = CommandDeadline.screenBluetoothSetup,
         bluetoothOperationBudget: TimeInterval = CommandDeadline.screenBluetoothOperation,
-        deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true
+        deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true, onStage: @escaping @Sendable (DoorStage) -> Void = { _ in }
     ) async throws -> OperationReply {
         // The widget passes an empty ID until it has a lock list.
         guard !lockID.isEmpty else { throw AugustError.noLocks }
         return try await operate(
             lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked,
-            setupBudget: bluetoothSetupBudget, operationBudget: bluetoothOperationBudget, deadline: deadline, keepLink: keepLink)
+            setupBudget: bluetoothSetupBudget, operationBudget: bluetoothOperationBudget, deadline: deadline, keepLink: keepLink,
+            onStage: onStage)
     }
 
-    func lock() async throws -> OperationReply {
+    func lock(onStage: @escaping @Sendable (DoorStage) -> Void) async throws -> OperationReply {
         guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
-        return try await operate(lockID: lockID, action: "lock", opcode: AugustBLE.lockOpcode, success: .locked)
+        return try await operate(lockID: lockID, action: "lock", opcode: AugustBLE.lockOpcode, success: .locked, onStage: onStage)
     }
 
-    /// One command at a time, Bluetooth or cloud, whoever asks: the screen
-    /// and a widget tap in the same process must not open two Bluetooth
-    /// links to one lock (the second fails and goes to the cloud: a double
-    /// command the screen never sees).
-    private let gate = CommandGate()
+    /// One command at a time per lock, Bluetooth or cloud, whoever asks: the
+    /// screen and a widget tap in the same process must not open two
+    /// Bluetooth links to one lock (the second fails and goes to the cloud: a
+    /// double command the screen never sees). Two locks run side by side
+    /// (Amit, 2026-11-07).
+    private let gates = OSAllocatedUnfairLock(initialState: [String: CommandGate]())
+
+    private func gate(for lockID: String) -> CommandGate {
+        gates.withLock { gates in
+            if let gate = gates[lockID] { return gate }
+            let gate = CommandGate()
+            gates[lockID] = gate
+            return gate
+        }
+    }
 
     /// Bluetooth first when this lock has a loaded offline key, the cloud
     /// otherwise or if Bluetooth fails — unlock and lock are idempotent, so a
@@ -367,34 +371,57 @@ final class AugustClient {
         lockID: String, action: String, opcode: UInt8, success: LockState,
         setupBudget: TimeInterval = CommandDeadline.screenBluetoothSetup,
         operationBudget: TimeInterval = CommandDeadline.screenBluetoothOperation,
-        deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true
+        deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true, onStage: @escaping @Sendable (DoorStage) -> Void = { _ in }
     ) async throws -> OperationReply {
         // The gate is taken and released inside the one task the deadline
         // cancels: a deadline that fires as the gate is handed over would
         // otherwise discard the hand-over and leave the gate held for good
         // (38 of 300 in a stress run, pre-flight 2026-11-05).
         let sent = OSAllocatedUnfairLock(initialState: false)
+        let gate = gate(for: lockID)
         do {
             return try await bounded(by: deadline) {
-                try await self.gate.enter()
-                defer { self.gate.leave() }
+                try await gate.enter()
+                defer { gate.leave() }
                 return try await self.operateHoldingGate(
                     lockID: lockID, action: action, opcode: opcode, success: success,
-                    setupBudget: setupBudget, operationBudget: operationBudget, deadline: deadline, keepLink: keepLink, sent: sent)
+                    setupBudget: setupBudget, operationBudget: operationBudget, deadline: deadline, keepLink: keepLink, sent: sent,
+                    onStage: onStage)
             }
         } catch is DoorTimeout where sent.withLock({ $0 }) {
+            readDoorLater(lockID: lockID, after: "\(action) sent, no reply in time")
             throw AugustError.cloudNoReply
+        } catch is CancellationError where sent.withLock({ $0 }) {
+            readDoorLater(lockID: lockID, after: "\(action) sent, then dropped by the phone")
+            throw CancellationError()
+        }
+    }
+
+    /// What the door did after a request the phone gave up on, or a jam:
+    /// August's state 10 s and 30 s later, in `app.log`. Nothing acts on it.
+    private func readDoorLater(lockID: String, after what: String) {
+        Self.note("lock \(lockID.suffix(4)): \(what); reading its state at +10 s and +30 s")
+        Task {
+            for wait in [10, 20] {
+                try? await Task.sleep(for: .seconds(wait))
+                guard KeychainStore.get("august_access_token") != nil else { return }
+                let state = (try? await self.lockState(lockID: lockID))?.label ?? "read failed"
+                Self.note("lock \(lockID.suffix(4)) after \(what): \(state)")
+            }
         }
     }
 
     /// `sent` turns true the moment the cloud request goes out: a deadline
-    /// after that is `cloudNoReply`, before it a plain timeout.
+    /// after that is `cloudNoReply`, before it a plain timeout. `onStage`
+    /// hears the path as it is taken, after the gate and the key check (a
+    /// widget tap's Live Activity).
     private func operateHoldingGate(
         lockID: String, action: String, opcode: UInt8, success: LockState,
         setupBudget: TimeInterval, operationBudget: TimeInterval, deadline: ContinuousClock.Instant?, keepLink: Bool,
-        sent: OSAllocatedUnfairLock<Bool>
+        sent: OSAllocatedUnfairLock<Bool>, onStage: @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply {
         if let credentials = bluetoothCredentials(for: lockID) {
+            onStage(.bluetooth)
             let start = ContinuousClock.now
             do {
                 let timing = try await AugustBLELink.run(
@@ -402,10 +429,11 @@ final class AugustClient {
                 Self.note("BLE \(action) -> ok in \(Self.ms(since: start)) ms (\(timing.description))")
                 return OperationReply(state: success, path: .bluetooth)
             } catch is CancellationError {
-                Self.note("BLE \(action) cancelled at \(Self.ms(since: start)) ms")
+                Self.note("BLE \(action) lock \(lockID.suffix(4)) cancelled at \(Self.ms(since: start)) ms")
                 throw CancellationError()
             } catch let error as AugustBLEProtocolError where error.isMechanical {
-                Self.note("BLE \(action) jammed in \(Self.ms(since: start)) ms: \(error.localizedDescription)")
+                Self.note("BLE \(action) lock \(lockID.suffix(4)) jammed in \(Self.ms(since: start)) ms: \(error.localizedDescription)")
+                readDoorLater(lockID: lockID, after: "a jam on \(action)")
                 throw error
             } catch {
                 Self.note("BLE \(action) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription); using the cloud")
@@ -413,8 +441,10 @@ final class AugustClient {
         }
         // Under a second left: nothing is sent, so the failure says so.
         if let deadline, secondsLeft(until: deadline) < 1 { throw DoorTimeout() }
+        onStage(.cloud)
+        Self.note("cloud \(action) lock \(lockID.suffix(4)) sent")
         sent.withLock { $0 = true }
-        let state = try await cloudOperate(lockID: lockID, action: action)
+        let state = try await cloudOperate(lockID: lockID, action: action, expected: success)
         refreshBluetoothKeyOnce(lockID: lockID)
         return OperationReply(state: state, path: .cloud)
     }
@@ -426,7 +456,7 @@ final class AugustClient {
     }
 
     /// Returns the state the lock reported back, not the state requested.
-    private func cloudOperate(lockID: String, action: String) async throws -> LockState {
+    private func cloudOperate(lockID: String, action: String, expected: LockState) async throws -> LockState {
         let data = try await sendLockRequest(method: "PUT", path: "/remoteoperate/\(lockID)/\(action)")
         // The synchronous remoteoperate reply carries the lock's resulting
         // state in `status` — yalexs' async_lock/async_unlock read it the
@@ -436,7 +466,10 @@ final class AugustClient {
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         let reported = LockState(augustStatus: json?["status"] as? String)
         guard reported == .unknown else { return reported }
-        return (try? await fetchLockState()) ?? .unknown
+        // A read that disagrees with the command may be the state from
+        // before it: unknown, not a false "Locked".
+        let read = (try? await lockState(lockID: lockID)) ?? .unknown
+        return read == expected ? read : .unknown
     }
 
     // MARK: - HTTP plumbing
@@ -503,7 +536,6 @@ final class AugustClient {
     /// A timing line goes to the system log and to the app's own file
     /// (`AppLog`), which the phone keeps and `devicectl` can copy.
     private static func note(_ line: String) {
-        log.notice("\(line, privacy: .public)")
         AppLog.note(line)
     }
 

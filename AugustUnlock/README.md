@@ -105,6 +105,17 @@ before Face ID) does nothing at all, by iOS's rule for widget buttons.
 "Open the app to sign in" under the buttons means August rejected the
 sign-in; opening the app renews it.
 
+A tap also shows a **Live Activity** on the Dynamic Island and the Lock
+Screen, because the widget cannot redraw while a tap runs: the door's name, a
+lock icon and a timer from the tap ("Unlocking…"), then a radio icon over
+Bluetooth or a cloud over the cloud, then the result ("Unlocked 2.1 s",
+"Failed", "No reply"). The Island drops it at the end; the Lock Screen keeps
+the result for about twelve seconds, as the widget does. With both doors
+tapped, a tap that starts while the other runs gets none (two at once
+empty the Island early).
+A tap whose process died reads "Check the door" after 35 s. Live Activities
+turned off for the app in Settings change nothing else.
+
 ## How it works
 
 - `AugustClient.swift` — the whole August cloud client: login, email 2FA,
@@ -143,6 +154,13 @@ sign-in; opening the app renews it.
   (unlock and lock are idempotent, so a double send is harmless). A
   reported jam is shown, not retried. Later opens connect straight to the
   peripheral remembered from the last connection, while the scan runs.
+- `DoorLiveActivity.swift` (app) and `AugustUnlockWidget/DoorActivityView.swift`
+  — a widget tap's Live Activity. `OpenDoorIntent` is a `LiveActivityIntent`,
+  so its tap may start one in the background; `AppDoorAction` starts it after
+  the repeat-tap check, ends any older one first, and ends it with the result.
+  The client reports its path (`DoorStage`) from `operateHoldingGate`, after
+  the command gate and the key check; the stages go through one stream to
+  one task, so updates land in order and none lands after the end.
 - `KeychainStore.swift` — thin wrapper over `SecItem*` for on-device storage
   of the August email/password, install ID, access token, selected lock ID
   and name, the offline key, slot and serial of every lock on the account
@@ -163,7 +181,9 @@ sign-in; opening the app renews it.
   code entry → the unlock screen. It feeds `CommandMachine` the events and
   runs the effects it returns (start a command, cancel one). A single-lock account skips straight to the
   button; a multi-lock account gets a one-time picker on first sign-in (and a
-  "Change Lock" link on the main screen to redo it later). Every open — cold
+  "Change Lock" link on the main screen to redo it later). While a command
+  runs, a line under "Unlocking…" names the path: "Over Bluetooth", "Over
+  the cloud", or "Bluetooth failed, trying the cloud". Every open — cold
   launch or back from the background — sends the unlock at once, with no
   status check first (an already-unlocked door just stays unlocked). A
   lock/unlock still running when the app is backgrounded keeps running and
@@ -176,18 +196,32 @@ sign-in; opening the app renews it.
 ## Deadline and recovery
 
 Every lock/unlock has 30 s to answer. Past that the circle goes gray with
-"Timed out — tap to retry"; the command's late reply is discarded, though a
-cloud request August already holds may still move the door (a WiFi-bridge
-lock can take ~60 s — that reply is lost). A command that stalled while the
-phone slept is caught the same way when the app returns to the foreground,
-and the app does not unlock again by itself after a timeout. "Change Lock"
-and "Sign Out" stay live during a command: both cancel it, and the picker
-says the previous command may still complete.
+"Timed out — tap to retry" when nothing reached August. When the request is
+already with August, the screen says "Sent to August, no reply yet — tap to
+retry" and the request keeps running quietly to 60 s from its start (the
+garage sits behind a Wi-Fi bridge, which can take ~60 s); if it answers, a
+line says so ("Late reply: Locked after 41 s"), and the failure is never
+turned into a success. A command that stalled while the phone slept is
+caught the same way when the app returns to the foreground, and the app
+does not unlock again by itself after a timeout. "Change Lock" and "Sign
+Out" stay live during a command: both cancel it, and the picker says the
+previous command may still complete.
+
+After a failure or a timeout, a tap repeats the failed command: the door is
+unknown then, and a tap after a failed lock used to unlock. A reported jam
+works the same way: tap to retry.
 
 A tap while a command runs sends the opposite. While the command is still
 on Bluetooth, a cancel before the write drops it; once it has gone to the
 cloud, August runs the request it already holds, so the lock does both in
-turn. A second tap within 0.75 s is the same tap and sends nothing.
+turn. When the phone drops a request that reached August (a tap, or the
+background time running out), an orange line says "An earlier request may
+still move the door" for a minute; Change Lock and Sign Out drop a late
+request too, and the picker says it may still complete. A second tap within 0.75 s
+is the same tap and sends nothing.
+
+Each lock has its own command gate, so a tap on one door never waits for
+the other door's command.
 
 ## Measuring lag
 
@@ -229,7 +263,7 @@ the remembered peripheral connected without a scan):
 
 The app quits itself after 5 minutes in the background (`BackgroundExitPolicy.swift`).
 
-The Bluetooth protocol and engine, the exit policy, the command machine, the command gate, the widget's door names and door state have unit
+The Bluetooth protocol and engine, the exit policy, the command machine, the command gate, the widget's door names, door state and Live Activity stages have unit
 tests; the protocol's run against bytes produced by yalexs-ble's own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
 AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 
@@ -268,7 +302,7 @@ xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnloc
 `Package.swift` exists only for these tests: it builds the pure files alone
 (`AugustBLEProtocol.swift`, `AugustBLEEngine.swift`, `BackgroundExitPolicy.swift`,
 `CommandDeadline.swift`, `CommandMachine.swift`, `CommandGate.swift`, `AugustBLETiming.swift`,
-`AugustUnlockWidget/DoorNames.swift`, `Shared/DoorState.swift`, `Shared/Deadline.swift`). The command machine's properties are also pinned by
+`AugustUnlockWidget/DoorNames.swift`, `Shared/DoorState.swift`, `Shared/DoorStage.swift`, `Shared/Deadline.swift`). The command machine's properties are also pinned by
 `make formal` (see [formal/README.md](../formal/README.md)). The app builds from `AugustUnlock.xcodeproj`.
 
 The same properties run through the real screens on the Simulator against

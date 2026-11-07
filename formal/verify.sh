@@ -51,11 +51,18 @@ verify() { # instance invariant expected(holds|violated)
 model_of() { grep -l "^module $1 " ./*.qnt | head -1; }
 steps_of() { sed -n 's#^// max-steps: *\([0-9]*\).*#\1#p' "$1" | head -1; }
 backend_of() { sed -n 's#^// backend: *\([a-z]*\).*#\1#p' "$1" | head -1; }
+# A model with a `// verify: search-only` line is checked by check.sh only: its
+# state space has not been shown to fit a CI run under Apalache.
+search_only() { grep -q '^// verify: search-only' "$1"; }
 
 rows=$(mktemp)
 trap 'rm -f "$rows"' EXIT
 grep -v '^#' outcomes.txt | grep -v '^$' > "$rows"
 while read -r instance invariant expected; do
+    if search_only "$(model_of "$instance")"; then
+        printf 'skip  %-12s %-24s search-only model\n' "$instance" "$invariant"
+        continue
+    fi
     verify "$instance" "$invariant" "$expected"
 done < "$rows"
 
