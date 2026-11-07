@@ -5,6 +5,35 @@ import os
 
 /// One command at a time, and a waiter that is cancelled lets go.
 final class CommandGateTests: XCTestCase {
+    /// A deadline that fires as the gate is handed to its waiter: the
+    /// hand-over is discarded with the task's result, so the gate stays held
+    /// unless the same task also leaves it. `AugustClient.operate` takes
+    /// and leaves the gate inside the one task its deadline cancels; this
+    /// pins that shape (38 of 300 gates stuck with the enter alone under the
+    /// deadline, pre-flight 2026-11-05).
+    func testADeadlineAtTheHandOverLeavesTheGateFree() async throws {
+        var stuck = 0
+        for _ in 0..<100 {
+            let gate = CommandGate()
+            try await gate.enter()
+            let waiter = Task {
+                try? await withDeadline(seconds: 0.005) {
+                    try await gate.enter()
+                    defer { gate.leave() }
+                    try await Task.sleep(for: .milliseconds(1))
+                }
+            }
+            try await Task.sleep(for: .milliseconds(5))
+            gate.leave()
+            await waiter.value
+            do {
+                try await withDeadline(seconds: 0.2) { try await gate.enter() }
+                gate.leave()
+            } catch { stuck += 1 }
+        }
+        XCTAssertEqual(stuck, 0)
+    }
+
     func testTheSecondCommandWaitsForTheFirst() async throws {
         let gate = CommandGate()
         try await gate.enter()

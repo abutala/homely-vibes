@@ -711,7 +711,8 @@ Three causes, none visible on the Simulator (no Bluetooth, no August cloud):
 3. The garage's cloud unlock took 21.1 s (200) against the tap's 20 s
    deadline, so the widget said "Failed" for an unlock that happened; a
    second tap on the same door waited at the gate and timed out too. The
-   deadline is 25 s, and a tap on a door still running is ignored.
+   deadline became 25 s (one 28 s limit for the whole tap since
+   2026-11-05), and a tap on a door still running is ignored.
 
 Nothing above is in the 2026-11-02 learnings' Simulator-first rule's
 favour or against it: the Simulator proved the mechanism and the phone
@@ -724,10 +725,11 @@ setup timed out while exchanging keys; using the cloud`, then the cloud in
 did not finish within the 3 s setup budget, which was measured in the
 foreground app (session at 1.3–1.7 s). A background process gets slower
 Bluetooth from iOS (longer connection intervals), and the fallback costs
-~20 s, so a widget tap now gives Bluetooth setup 6 s; the screen keeps
-3 s. The cloud leg has its own 25 s deadline from the moment it starts,
-so the Bluetooth attempt never eats the cloud's time (a reviewer's catch:
-8 + 20 did not fit one 25 s deadline). One sample; the next taps' stage
+~20 s, so a widget tap now gives Bluetooth setup 6 s; the screen kept
+3 s (12 s since 2026-11-03). The cloud leg got its own 25 s deadline from
+the moment it started, so the Bluetooth attempt never ate the cloud's time
+(a reviewer's catch: 8 + 20 did not fit one 25 s deadline; one 28 s limit
+for the whole tap replaced it on 2026-11-05). One sample; the next taps' stage
 timings in `app.log` say whether 6 s is enough or the stall is the lock's. Measured on the
 Simulator: the tapped door shows "Failed" (no sign-in there) and clears;
 the other door does not move; the seven app flows still pass.
@@ -759,8 +761,9 @@ outcome was seen on the widget, and both names blinked. Three answers:
    some seconds after it is asked for; a 4 s hold measured from the write
    was over before the draw. The hold is 12 s.
 3. **Both names blinked** because I put `.invalidatableContent()` back
-   after the per-door redraw proved impossible mid-tap. Amit: no. There is
-   no cue during a tap now; the outcome after it is the feedback.
+   after the per-door redraw proved impossible mid-tap. Amit: no. There was
+   no cue during a tap after that (the toggle brought one back on
+   2026-11-03); the outcome after it was the feedback.
 
 ## 2026-11-03 — PR B: the tapped door blinks by itself, and the Bluetooth link outlives a command
 
@@ -874,3 +877,65 @@ criterion: the widget stays in the loop (a 6 s miss sends a cloud PUT,
 the bridge holds the lock for the next tap); if three of ten door visits
 show a widget tap falling back after a cloud use within ten minutes, the
 widget gets ~10 s of Bluetooth and a cloud leg near 15 s.
+
+## 2026-11-05 — "Sometimes it does nothing": the tap never reached the toggle
+
+Amit: the widget is still flaky, the state machine "bombs", sometimes it
+unlocks in seconds and sometimes nothing happens; the app works fine. A
+TRIAL before any code (memory,
+`deviation_labs/homely_vibes_widget_reliability_trial_2026-11-05.md`), on
+the phone's two logs and four Simulator
+measurements, found that the state machine never ran for the failures:
+
+1. **No tap reached the widget for a day.** `widget.log` stops at 11-04
+   21:54 UTC while `app.log` has six app opens up to 11-05 22:09 and no
+   widget tap. Apple: a toggle interaction always reloads the timeline. So
+   the failing taps never dispatched an intent.
+2. **Every tap that reached the app unlocked**: 14 of 14 over three days,
+   10 of 12 over Bluetooth in 2.0–7.8 s since the `bluetooth-central` fix,
+   the rest over the cloud in 5.9–23.1 s.
+3. **The toggle's hit area was the icon and the caption only.** On the iOS
+   27.0 Simulator (the phone's runtime; iOS 26.5 was installed and is not a
+   proof), a tap on the caption ran the intent and a tap on the empty corner
+   of the same half opened the app. Three quarters of each half opened the
+   app, whose open-unlock then ran: "the widget did nothing, the app
+   works". Fix: the toggle's body fills its half with `contentShape`; the
+   UI test taps near the corner. One rung more was needed: with the halves
+   filled, a tap on the sign-in line under the doors ran door 1 instead of
+   opening the app (a toggle's hit area reaches past its frame), so that
+   line is a `Link` to the body URL, which wins the tap and opens the app
+   (measured, same Simulator).
+4. **A locked phone makes the toggle inactive** with no reload and no log
+   (Apple). This fits Amit's words as well; the logs cannot tell the two
+   apart after the fact. From now on the app logs `widget intent` as the
+   first line of a tap and `opened by the widget body` (a `widgetURL` on
+   the body) when a tap missed, so the next "nothing" is attributable.
+
+Also fixed on the way, from the TRIAL's findings: a tap could run 6 + 12 +
+25 = 43 s, past the ~30 s iOS gives a background intent (Apple,
+`LongRunningIntent`), and a tap ended that way wrote no result, so its door
+stayed "running" for 90 s and every tap on it was ignored. Now a tap has
+28 s in all, gate wait included; a cloud request cut off after its send
+shows "No reply" (August may still run it), and the running mark expires
+at 35 s. The screen's 5-minute exit waits for a widget tap in its process.
+Keychain writes update in place instead of delete-then-add, so the widget
+never reads an empty state mid-write. The widget's tap goes through a
+`DoorUnlocking` parameter, so the Simulator test runs it against
+`FakeAugust` end to end. The pre-push code reviewer then caught a leak the
+first draft of the tap bound had: with the gate's `enter` alone under the
+deadline, a deadline that fires as the gate is handed over discards the
+hand-over and leaves the gate held for good, so every later command in that
+process waits forever (38 of 300 in its stress run). The gate is taken and
+left inside the one task the deadline cancels; `CommandGateTests` pins it.
+
+**Progress on the widget while a tap runs** (Amit's second ask) is not in
+this change. WidgetKit defers every reload until the tap's intent returns,
+so the only way is to return at once and run the unlock detached; the
+TRIAL's blocker is that reloads asked outside an intent lose their budget
+exemption and may draw late, and the Simulator cannot measure that. The
+measurement is one `BLEWidgetRig` build with a button whose intent returns
+at once and a detached task that logs `backgroundTimeRemaining` each second
+and asks reloads at 2, 6 and 12 s; three taps on the phone answer it. Rig
+data first, then the feature. `LongRunningIntent` (iOS 27) lifts the 30 s
+cap but Apple's page says nothing about widgets or where its progress
+shows, so it waits too.

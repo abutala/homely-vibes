@@ -8,6 +8,9 @@ enum AugustError: LocalizedError {
     case noLocks
     case notAuthenticated
     case server(Int, String)
+    /// The cloud request was sent and the deadline passed before the reply.
+    /// August may still run it (Logbook 2026-10-23).
+    case cloudNoReply
 
     var errorDescription: String? {
         switch self {
@@ -17,6 +20,7 @@ enum AugustError: LocalizedError {
         case .noLocks: return "No locks found on this August account."
         case .notAuthenticated: return "Not signed in to August."
         case .server(let code, let body): return "August server error \(code): \(body)"
+        case .cloudNoReply: return "Sent to August; no reply in time"
         }
     }
 }
@@ -327,18 +331,21 @@ final class AugustClient {
     /// Any lock on the account, Bluetooth first when it has a loaded key.
     /// The widget's taps come here too, in the app's process, with their
     /// own budgets (`AppDoorAction`); the screen's are `CommandDeadline`'s.
-    /// `cloudDeadline` bounds the cloud leg alone, from the moment it
-    /// starts, so a Bluetooth attempt never eats the cloud's time.
+    /// `deadline` bounds the whole command, the wait at the gate included:
+    /// past it a Bluetooth attempt is given up and the cloud leg gets what is
+    /// left; a cloud request cut off after its send fails as `cloudNoReply`.
     /// `keepLink` false (the widget's taps) ends the Bluetooth link after the
     /// command; the app's own taps keep it a few seconds for the next one.
     func unlock(
         lockID: String, bluetoothSetupBudget: TimeInterval = CommandDeadline.screenBluetoothSetup,
         bluetoothOperationBudget: TimeInterval = CommandDeadline.screenBluetoothOperation,
-        cloudDeadline: TimeInterval? = nil, keepLink: Bool = true
+        deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true
     ) async throws -> OperationReply {
-        try await operate(
+        // The widget passes an empty ID until it has a lock list.
+        guard !lockID.isEmpty else { throw AugustError.noLocks }
+        return try await operate(
             lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked,
-            setupBudget: bluetoothSetupBudget, operationBudget: bluetoothOperationBudget, cloudDeadline: cloudDeadline, keepLink: keepLink)
+            setupBudget: bluetoothSetupBudget, operationBudget: bluetoothOperationBudget, deadline: deadline, keepLink: keepLink)
     }
 
     func lock() async throws -> OperationReply {
@@ -360,10 +367,33 @@ final class AugustClient {
         lockID: String, action: String, opcode: UInt8, success: LockState,
         setupBudget: TimeInterval = CommandDeadline.screenBluetoothSetup,
         operationBudget: TimeInterval = CommandDeadline.screenBluetoothOperation,
-        cloudDeadline: TimeInterval? = nil, keepLink: Bool = true
+        deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true
     ) async throws -> OperationReply {
-        try await gate.enter()
-        defer { gate.leave() }
+        // The gate is taken and released inside the one task the deadline
+        // cancels: a deadline that fires as the gate is handed over would
+        // otherwise discard the hand-over and leave the gate held for good
+        // (38 of 300 in a stress run, pre-flight 2026-11-05).
+        let sent = OSAllocatedUnfairLock(initialState: false)
+        do {
+            return try await bounded(by: deadline) {
+                try await self.gate.enter()
+                defer { self.gate.leave() }
+                return try await self.operateHoldingGate(
+                    lockID: lockID, action: action, opcode: opcode, success: success,
+                    setupBudget: setupBudget, operationBudget: operationBudget, deadline: deadline, keepLink: keepLink, sent: sent)
+            }
+        } catch is DoorTimeout where sent.withLock({ $0 }) {
+            throw AugustError.cloudNoReply
+        }
+    }
+
+    /// `sent` turns true the moment the cloud request goes out: a deadline
+    /// after that is `cloudNoReply`, before it a plain timeout.
+    private func operateHoldingGate(
+        lockID: String, action: String, opcode: UInt8, success: LockState,
+        setupBudget: TimeInterval, operationBudget: TimeInterval, deadline: ContinuousClock.Instant?, keepLink: Bool,
+        sent: OSAllocatedUnfairLock<Bool>
+    ) async throws -> OperationReply {
         if let credentials = bluetoothCredentials(for: lockID) {
             let start = ContinuousClock.now
             do {
@@ -381,14 +411,18 @@ final class AugustClient {
                 Self.note("BLE \(action) failed in \(Self.ms(since: start)) ms: \(error.localizedDescription); using the cloud")
             }
         }
-        let state: LockState
-        if let cloudDeadline {
-            state = try await withDeadline(seconds: cloudDeadline) { try await self.cloudOperate(lockID: lockID, action: action) }
-        } else {
-            state = try await cloudOperate(lockID: lockID, action: action)
-        }
+        // Under a second left: nothing is sent, so the failure says so.
+        if let deadline, secondsLeft(until: deadline) < 1 { throw DoorTimeout() }
+        sent.withLock { $0 = true }
+        let state = try await cloudOperate(lockID: lockID, action: action)
         refreshBluetoothKeyOnce(lockID: lockID)
         return OperationReply(state: state, path: .cloud)
+    }
+
+    /// `operation` under the command's deadline, or as it is when there is none.
+    private func bounded<T: Sendable>(by deadline: ContinuousClock.Instant?, _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+        guard let deadline else { return try await operation() }
+        return try await withDeadline(seconds: secondsLeft(until: deadline), operation)
     }
 
     /// Returns the state the lock reported back, not the state requested.

@@ -81,10 +81,21 @@ struct ContentView: View {
             }
         }
         .padding()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The build's date, time and commit, set by `scripts/build_ipa.sh`
+        // (`BUILD_STAMP` into Info.plist); an Xcode build has none.
+        .overlay(alignment: .bottom) {
+            if let stamp = Bundle.main.object(forInfoDictionaryKey: "BuildStamp") as? String, !stamp.isEmpty {
+                Text("Build \(stamp)").font(.caption2).foregroundStyle(.quaternary)
+            }
+        }
         .onAppear {
             phase = August.shared.isReady ? .ready : .needsLogin
             openUnlock()
         }
+        // A tap on the widget outside its toggles opens the app with this
+        // URL: the line tells a missed tap from an open by hand.
+        .onOpenURL { url in AppLog.note("opened by the widget body: \(url.host ?? url.absoluteString)") }
         .onChange(of: scenePhase) { _, newPhase in
             // Covers reopening from the background, not just cold launch —
             // onAppear alone only fires once per view lifetime. A real
@@ -108,7 +119,7 @@ struct ContentView: View {
                 guard wasBackgrounded else { break }
                 wasBackgrounded = false
                 exitTimer?.cancel()
-                let expired = exitPolicy.shouldExit(at: Date(), operationInFlight: isOperating)
+                let expired = exitPolicy.shouldExit(at: Date(), operationInFlight: commandInFlight)
                 exitPolicy.didForeground()
                 if expired { exit(0) }
                 // An operation still in flight kept running in the
@@ -153,8 +164,14 @@ struct ContentView: View {
     }
 
     private func exitIfExpired() {
-        if exitPolicy.shouldExit(at: Date(), operationInFlight: isOperating) { exit(0) }
+        if exitPolicy.shouldExit(at: Date(), operationInFlight: commandInFlight) { exit(0) }
     }
+
+    /// The screen's command, or a widget tap running in this process: the
+    /// exit waits for either (a tap killed by the exit would leave its door
+    /// marked running with no result). After a tap defers it, the next
+    /// return to the foreground exits.
+    private var commandInFlight: Bool { isOperating || AppDoorAction.inFlight > 0 }
 
     /// Opening the app — cold launch, finishing setup, or returning from the
     /// background — unlocks at once; opening the app is the confirmation

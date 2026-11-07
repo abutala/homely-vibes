@@ -28,6 +28,7 @@ xcodebuild \
   CODE_SIGNING_REQUIRED=NO \
   DEVELOPMENT_TEAM="" \
   PROVISIONING_PROFILE_SPECIFIER="" \
+  BUILD_STAMP="$(date '+%Y-%m-%d %H:%M') $(git -C "$REPO_ROOT" rev-parse --short HEAD)" \
   build 2>&1 | tee /tmp/augustunlock_build.log | tail -5
 
 APP="$DERIVED/Build/Products/Release-iphoneos/AugustUnlock.app"
