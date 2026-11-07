@@ -130,8 +130,9 @@ stale tunnel costs about 12 s, then a new one starts.
 - `exec 3<>/dev/tcp/… 2>/dev/null` makes the `2>/dev/null` permanent, so ssh's error never
   reached the dialog. The probe wraps the `exec` in braces. A test caught it.
 - `stop` kills only a process named exactly `ssh` (`lsof -c '/^ssh$/'`; a bare `-c ssh` is a
-  prefix match) that listens on the port and has `-L <port>:` in its arguments. A frozen ssh
-  ignores TERM until KILL, 2 s later.
+  prefix match) that listens on the port and has `-L <port>:` in its arguments. TERM first, and
+  KILL for any still alive 2 s later, checked per pid (on macOS TERM ends even a stopped
+  process; a TERM-ignoring stand-in tests the KILL).
 
 ### Hung and failed connects, by shape
 
@@ -161,7 +162,7 @@ launch (2026-11-06): a connect slower than that gets the fallback. What the mode
 - After a stop under a session window, wait for that window to turn into its alert, then
   clear: it keeps the session's title for a moment and was taken for success.
 - Clear leftovers before `open location` too: an old session's alert can show after cleanup.
-- A Connecting window that goes with nothing in its place (or Screen Sharing quits) for 2 s
+- A Connecting window that goes with nothing in its place (or Screen Sharing quits) for 4 s
   is the user's Cancel: leave, do not reopen.
 - Retry only after a known failure. A launch that reaches 30 s with no known window offers
   the fallback and leaves the window and the tunnel (the model has no unknown window).

@@ -1,5 +1,6 @@
 import plistlib
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -298,9 +299,12 @@ def test_tunnel_command_fails_with_ssh_error_on_stderr() -> None:
 
 LISTENER_C = r"""
 #include <arpa/inet.h>
+#include <signal.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 int main(int argc, char **argv) {
+    if (argc > 4 && strcmp(argv[4], "--ignore-term") == 0) signal(SIGTERM, SIG_IGN);
     int s = socket(AF_INET, SOCK_STREAM, 0), one = 1;
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
     struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons(atoi(argv[1])),
@@ -326,14 +330,14 @@ def listener_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @contextmanager
 def _listening(
-    binary: Path, name: str, forward_port_offset: int
+    binary: Path, name: str, forward_port_offset: int, *extra: str
 ) -> Iterator[subprocess.Popen[bytes]]:
     """Run the listener as `name` on a free port, with `-L <port + offset>:localhost:5900`."""
     named = binary.with_name(name)
     shutil.copy(binary, named)
     port = _free_port()
     proc = subprocess.Popen(
-        [str(named), str(port), "-L", f"{port + forward_port_offset}:localhost:5900"]
+        [str(named), str(port), "-L", f"{port + forward_port_offset}:localhost:5900", *extra]
     )
     proc.port = port  # type: ignore[attr-defined]
     try:
@@ -353,6 +357,13 @@ def test_stop_ends_the_ssh_that_forwards_the_port(listener_binary: Path) -> None
     with _listening(listener_binary, "ssh", 0) as proc:
         assert _run(stop_command(proc.port)).returncode == 0  # type: ignore[attr-defined]
         assert proc.wait(timeout=3) is not None
+
+
+@needs_mac_cc
+def test_stop_kills_an_ssh_that_ignores_term(listener_binary: Path) -> None:
+    with _listening(listener_binary, "ssh", 0, "--ignore-term") as proc:
+        assert _run(stop_command(proc.port)).returncode == 0  # type: ignore[attr-defined]
+        assert proc.wait(timeout=1) == -signal.SIGKILL
 
 
 @needs_mac_cc

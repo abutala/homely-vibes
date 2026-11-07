@@ -14,7 +14,7 @@ property maxAttempts : 3
 property retryDelay : 5
 property minAttemptSeconds : 10 -- a cold Screen Sharing takes seconds to show anything
 property waitPoll : 0.5
-property goneSeconds : 2 -- a Connecting window gone this long, with nothing in its place: the user cancelled
+property goneSeconds : 4 -- twice the 2 s a failure alert took to show; a Connecting window gone this long, with nothing in its place: the user cancelled
 property settleSeconds : 3 -- an old session window turns into its alert after its tunnel stops
 property screenSharingID : "com.apple.ScreenSharing"
 property maxZoomSteps : 8 -- stop even if the picture never overflows
@@ -108,6 +108,8 @@ on waitForOutcome(clock)
 		if nextStep is in {"failed", "hung"} then
 			set cleanup to my giveUp()
 			if cleanup is "session" then return {"session", ""}
+			-- A prompt first seen during cleanup counts from the poll before it.
+			if cleanup is "prompt" and promptSince is missing value then set promptSince to t
 			if cleanup is not "prompt" then
 				if nextStep is "failed" then return {"failed", "Screen Sharing could not connect."}
 				return {"failed", "Screen Sharing hung on Connecting for " & deadlineSeconds & " seconds."}

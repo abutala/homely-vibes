@@ -78,8 +78,8 @@ LATE = DEADLINE_SECONDS + 1
         ({"hasFailed": True}, 3, 3, 0, "failed"),
         ({"hasBusy": True}, DEADLINE_SECONDS - 1, 10, 0, "wait"),
         ({"hasBusy": True}, DEADLINE_SECONDS, 10, 0, "hung"),
-        ({}, 10, 10, 2, "cancelled"),  # the Connecting window went and nothing came
-        ({}, 10, 10, 1, "wait"),  # a moment between the Connecting window and its alert
+        ({}, 10, 10, 4, "cancelled"),  # the Connecting window went and nothing came
+        ({}, 10, 10, 3, "wait"),  # a slow alert after the Connecting window goes
         ({"offSpace": True}, 10, 10, 5, "wait"),  # its windows are on another Space
         ({"offSpace": True}, LATE, LATE, 5, "timeout"),
         ({}, 10, 10, 0, "wait"),
