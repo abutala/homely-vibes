@@ -11,7 +11,7 @@ import pytest
 
 from RachioFlume.data_storage import WaterTrackingDB
 from RachioFlume.rachio_client import WateringEvent, Zone, schedule_zones_from_device
-from RachioFlume.reporter import WeeklyReporter, WaterUsageReport, skip_reason
+from RachioFlume.reporter import WeeklyReporter, WaterUsageReport, _skipped_run, skip_reason
 
 START = datetime(2026, 10, 18)
 END = START + timedelta(days=7)
@@ -116,24 +116,19 @@ def test_every_enabled_zone_and_valve_gets_a_row_with_a_reason(db: WaterTracking
         "Z3 FB": "skipped: climate 10/23",
         "Z6 BB": "skipped: weather 10/21",
         "Z9 FD": "in no active schedule",
-        "Z14 FB": "",  # disabled now, but it ran: a data row, not a "Disabled:" entry
+        "Z14 FB": "",  # disabled now, but it ran: a data row
         "Pots": "",  # ran, so no idle row beside its data row
-        "Z13 BUD": "no run recorded, offline",
+        "Z13 BUD": "offline, no run recorded",
     }
-    assert report.disabled_zones == ["Zone 13"]
+    assert [z.zone_name for z in report.zones if z.problem] == ["Z13 BUD"]
+    assert "Zone 13" not in _notes(report)  # disabled and idle: no row
     assert report.summary.zones_watered == 3
 
 
-def test_skipped_runs_name_the_schedule_and_its_zones(db: WaterTrackingDB) -> None:
-    report = _report(db, SCHEDULES)
-    assert [(s.schedule, s.reason, s.zone_numbers) for s in report.skipped_runs] == [
-        ("Back Trees", "weather", [6, 10, 11]),
-        ("Front Beds Summer", "climate", [3, 4, 7, 12, 15]),
-    ]
-    text = WeeklyReporter(str(db.db_path)).format_report_text(report)
-    assert "  10/21 weather Back Trees\n  10/23 climate Front Beds Summer\n" in text
-    assert "Z6 BB    skipped: weather 10/21" in text
-    assert "Disabled: Zone 13" in text
+def test_a_scheduled_zone_with_no_run_or_skip_is_a_problem(db: WaterTrackingDB) -> None:
+    report = _report(db, {**SCHEDULES, "Side": [9]})
+    (z9,) = [z for z in report.zones if z.zone_name == "Z9 FD"]
+    assert (z9.note, z9.problem) == ("scheduled, but no run or skip recorded", True)
 
 
 def test_without_schedules_the_reason_falls_back_but_skips_still_show(
@@ -143,10 +138,8 @@ def test_without_schedules_the_reason_falls_back_but_skips_still_show(
     notes = _notes(report)
     assert notes["Z6 BB"] == "no run recorded"
     assert notes["Z9 FD"] == "no run recorded"
-    assert [(s.schedule, s.zone_numbers) for s in report.skipped_runs] == [
-        ("Back Trees", []),
-        ("Front Beds Sum", []),
-    ]
+    # Rachio unreachable must not turn the whole roster into problems.
+    assert [z.zone_name for z in report.zones if z.problem] == ["Z13 BUD"]
 
 
 @pytest.mark.parametrize(
@@ -189,39 +182,13 @@ def test_schedule_zones_from_device_keeps_enabled_rules_only() -> None:
     ],
 )
 def test_skip_with_no_unique_schedule_names_no_zones(
-    tmp_path: Path, summary: str, schedules: dict[str, list[int]]
+    summary: str, schedules: dict[str, list[int]]
 ) -> None:
-    db = WaterTrackingDB(str(tmp_path / "water.db"))
-    db.save_watering_events(
-        [
-            WateringEvent(
-                event_date=START + timedelta(days=3),
-                zone_name=summary,
-                zone_number=-1,
-                event_type="WEATHER_INTELLIGENCE_SKIP",
-            )
-        ]
-    )
-    (run,) = _report(db, schedules).skipped_runs
+    row = {
+        "event_type": "WEATHER_INTELLIGENCE_SKIP",
+        "summary": summary,
+        "event_date": START + timedelta(days=3),
+    }
+    run = _skipped_run(row, schedules)
+    assert run is not None
     assert run.zone_numbers == []
-
-
-def test_long_lines_wrap_inside_the_report_width(db: WaterTrackingDB) -> None:
-    db.save_zones(
-        [Zone(id=f"z{n}", zone_number=n, name=f"Zone {n}", enabled=False) for n in (15, 16, 17)]
-    )
-    db.save_watering_events(
-        [
-            WateringEvent(
-                event_date=START + timedelta(days=d, hours=6),
-                zone_name="Back Trees was scheduled for 10/2x at 06:05 AM",
-                zone_number=-1,
-                event_type="WEATHER_INTELLIGENCE_SKIP",
-            )
-            for d in (4, 5, 6)
-        ]
-    )
-    text = WeeklyReporter(str(db.db_path)).format_report_text(_report(db, SCHEDULES))
-    assert max(len(line) for line in text.splitlines()) <= 40
-    assert "Z6 BB    skipped: weather 10/21, weather" in text
-    assert "Disabled: Zone 13, Zone 15, Zone 16,\n          Zone 17" in text

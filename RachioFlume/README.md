@@ -21,7 +21,7 @@ A Python integration that connects Rachio irrigation controllers with Flume wate
   - **Hose-valve battery health check**: P1 when a valve reports `batteryStatus` `LOW` or `REPLACE`. Rachio exposes a four-value enum — `GOOD` / `LOW` / `REPLACE` / `UNKNOWN` — and **no percentage anywhere in the API** ([getValve schema](https://rachio.readme.io/reference/valveservice_getvalve)), so there is no level to threshold and nothing to tune but the repeat cadence (`valve_battery.retrigger_minutes`, default 1440). `UNKNOWN` never fires: that is the valve saying it hasn't reported in, which is the offline check's job, and paging on it would fire on every BLE dropout. An unrecognized value logs a warning rather than paging, so a firmware that adds an enum member can't spontaneously start waking you up. No debounce (unlike `connected`, the status doesn't flap with range); stale roster rows are skipped, same as the offline check. P0 once on recovery.
   - Mute support; P0 "all clear" for sustained-flow rules after `clear_after_minutes` of failing.
 - **Synthetic Simulator** (`simulate_alerts.py`): Replay scenarios through the alert engine without hitting real APIs or Pushover; wired into `test_alert_simulation.py`. See [TESTABILITY.md](TESTABILITY.md).
-- **HTML Email Report**: Period fixed-width table (via `<pre>` monospace; prod cron sends it weekly) covering every zone — controllers and hose valves in one unified table. Per-zone anomaly threshold + alert-session count are surfaced alongside runtime / gallons / GPM. A zone or valve with no run in the period still gets a row, with its reason in place of the numbers: `skipped: weather 10/21` (a Rachio `*_SKIP` event on a schedule that holds the zone), `in no active schedule`, or `no run recorded` (plus `offline` for a disconnected hose valve). Notes wrap under the name column so the body stays 40 characters wide. A `SKIPPED RUNS` list gives one row per skipped run: date, reason, schedule (cut at 40 characters; the zone rows already name each skipped zone); disabled controller zones go on one `Disabled:` line.
+- **HTML Email Report** (`report_format.py`; prod cron sends it weekly): problems first, then the numbers. A red `Needs attention` box lists each zone with a run above its flow limit (`1/4 runs above 0.8 GPM`), a run with no water measured, a zone in an active schedule with no run or skip recorded, or an offline hose valve; a quiet week shows one green `No problems` line. The subject carries the count (`Oct 31 – Nov 7: 3 problems` or `: OK`). Below it, one table of the zones and valves that ran (Min, Gal, GPM; problem rows in red), then grey `Not run:` lines, one per reason — `skipped: weather 11/03` (a Rachio `*_SKIP` event on a schedule that holds the zone), `in no active schedule`, or `no run recorded` (a connected hose valve, or any zone when Rachio is unreachable and its schedules are unknown). Disabled zones are not shown. Inline styles only, so Gmail and iOS Mail render it the same; it fits a 375 px phone.
 - **Continuous Monitoring**: Automated data collection service
 - **SQLite Storage**: Persistent data storage with session tracking
 
@@ -291,7 +291,7 @@ kill <process_id>
    - Unified `ZoneStats` table covers controller zones and hose valves; hose entries sort after controllers via `HOSE_ZONE_SENTINEL=999`
    - Per-zone anomaly `threshold_gpm` and `alert_sessions` count surfaced alongside the aggregate stats
    - Every enabled zone and known valve gets a row; idle ones carry a `note`. `rfmanager.py report` fetches the live schedule-to-zones map (`scheduleRules` + `flexScheduleRules` on the device payload) to tie a skip event to its zones; when Rachio is unreachable the report still sends and idle zones read `no run recorded`
-   - Supports HTML email delivery (via `<html><body><pre>` — auto-detected by `lib.Mailer`) and console output
+   - Rendering lives in `report_format.py`: `problems()`, `format_html()` for email (auto-detected by `lib.Mailer`), `format_text()` for the log
 
 6. **AlertEngine** (`alert_engine.py`) + **AlertRule** (`alert_rules.py`)
    - Runs at the end of each collector cycle
@@ -326,40 +326,24 @@ The collector is designed to respect these limits with configurable polling inte
 
 ### Period Report
 
-Controllers and hose valves land in the same fixed-width table. `Thr` is the
-per-zone anomaly threshold (blank when unconfigured); `Alrt` is the count of
-sessions in the period whose per-session avg flow exceeded that threshold.
-Emailed variant wraps this body in `<html><body><pre>` so iOS Mail / Gmail
-render the whole table in monospace with no viewport wrap.
+The email is HTML (see the feature list above). The log gets the same content as text:
 
 ```
-WATER USAGE REPORT
-Period: 2026-10-18 to 2026-10-25
-========================================
+WATER Oct 31 – Nov 7 · 458 gal · 132 min
 
-SUMMARY:
-  Total duration: 169.6 min
-  Total water used: 488 gallons
-  Zones watered: 10
+PROBLEMS:
+  Z2 FS: ran 6 min, no water measured
+  Z8 BD: 1/1 runs above 1.8 GPM (avg 4.2)
+  Z13 BUD: 1/4 runs above 0.8 GPM (avg 0.4)
 
-ZONE DETAILS:
-Name        Min  Gals   GPM   Thr Alrt
---------------------------------------
-Z1 FS      10.0    75   7.5   8.8    -
-Z2 FS       9.9    66   6.7   8.0    -
+Zone       Min   Gal   GPM
+Z1 FS        6    41   6.7
+Z2 FS        6     0   0.0
 ...
-Z6 BB    skipped: weather 10/21
-Z8 BD      14.9    56   3.7   1.8    1
-...
-Z13 BUD    20.0     5   0.3   0.8    -
+Z13 BUD     40    18   0.4
 
-SKIPPED RUNS:
-  10/21 weather Back Trees
-  10/24 climate Back Beds
-
-Disabled: Zone 14, Zone 15, Zone 16
-
-========================================
+Not run:
+  Z3 FB, Z4 FB, Z7 FDB, Z9 FD, Z12 FDB — skipped: weather 11/03, climate 11/06
 ```
 
 ### Status Check
