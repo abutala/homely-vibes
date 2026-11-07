@@ -48,7 +48,6 @@ AUTH_PAUSE_S = 3600
 # each read already retries three times. Three failed ticks is a real fault.
 READ_FAILURES_BEFORE_ALERT = 3
 MAX_NAME_CHARS = 40
-MAX_NAMED_IN_PUSH = 5
 
 
 class GateControl(Protocol):
@@ -110,24 +109,18 @@ def decode_name(raw: object) -> str:
 
 
 def push_label(client: dict[str, Any]) -> str:
-    """The device's self-reported name, then MAC and type, for a push only.
+    """The device's self-reported name on one line, MAC and type on the next.
+    For a push only.
 
     The device picks its own name, so it can claim anything; the MAC stays the
-    identity. Control characters are dropped and the name is cut short.
+    identity. Quotes and control characters are dropped and the name is cut.
     """
     raw = decode_name(client.get("name", "")).replace('"', "'")
     name = "".join(ch for ch in raw if ch.isprintable()).strip()
     if len(name) > MAX_NAME_CHARS:
         name = name[:MAX_NAME_CHARS] + "…"
-    return f'"{name}" {describe(client)}' if name else describe(client)
-
-
-def push_labels(clients: list[dict[str, Any]]) -> str:
-    """The first few `push_label`s and a count of the rest. A refusal can list
-    the whole IoT network, and Pushover rejects a body over 1024 characters."""
-    shown = ", ".join(push_label(c) for c in clients[:MAX_NAMED_IN_PUSH]) or "none"
-    rest = len(clients) - MAX_NAMED_IN_PUSH
-    return f"{shown}, +{rest} more" if rest > 0 else shown
+    ident = f"{canonical_mac(client['mac'])} · {client.get('client_type', '?')}"
+    return f'"{name}"\n{ident}' if name else ident
 
 
 class IotGatekeeper:
@@ -201,26 +194,29 @@ class IotGatekeeper:
         return plan
 
     def _apply(self, plan: Plan, now: float, dry_run: bool) -> list[str]:
-        if plan.shared_macs:
-            macs = ", ".join(plan.shared_macs)
+        """One push per device: a short message each, never a list to scan."""
+        for mac in plan.shared_macs:
             self._notice(
-                f"shared:{macs}",
-                f"Not blocked, also on another network (the block is mesh-wide): {macs}",
+                f"shared:{mac}",
+                f"Not blocked, also on another network: {mac}",
                 0,
                 now,
                 dry_run,
+                push=f"{mac}\n\nNot blocked: also on another network,\n"
+                "and the Deco block is mesh-wide.",
             )
         if plan.refusal:
-            who = ", ".join(describe(c) for c in plan.strangers) or "none"
-            named = push_labels(plan.strangers)
-            self._notice(
-                "refusal",
-                f"Blocked nothing: {plan.refusal}. Unknown: {who}",
-                1,
-                now,
-                dry_run,
-                push=f"Blocked nothing: {plan.refusal}. Unknown: {named}",
-            )
+            for client in plan.strangers:
+                self._notice(
+                    f"refusal:{canonical_mac(client['mac'])}",
+                    f"Not blocked: {plan.refusal}: {describe(client)}",
+                    1,
+                    now,
+                    dry_run,
+                    push=f"{push_label(client)}\n\nNot blocked: {plan.refusal}.",
+                )
+            if not plan.strangers:
+                self._notice("refusal", f"Blocked nothing: {plan.refusal}", 1, now, dry_run)
             return []
 
         done: list[str] = []
@@ -236,24 +232,22 @@ class IotGatekeeper:
                 )
             except DecoAPIError as err:
                 self._notice(
-                    "block",
+                    f"block:{mac}",
                     f"Block of {describe(client)} failed: {err}",
                     1,
                     now,
                     dry_run,
-                    push=f"Block of {push_label(client)} failed: {err}",
+                    push=f"{push_label(client)}\n\nBlock failed: {err}",
                 )
                 break
             self.logger.info("Blocked %s", describe(client))
-            done.append(mac)
-
-        if done and not dry_run:
             self._send(
-                f"Blocked {len(done)} new device(s) on the IoT Wi-Fi: "
-                + push_labels([c for c in plan.to_block if canonical_mac(c["mac"]) in done])
-                + ". Undo: iot_gatekeeper unblock <MAC>, and add it to allowed_macs.",
+                f"{push_label(client)}\n\nBlocked on the IoT Wi-Fi.\n"
+                f"Undo: iot_gatekeeper unblock {mac}\n"
+                "then add it to allowed_macs.",
                 0,
             )
+            done.append(mac)
         return done
 
     def _notice(

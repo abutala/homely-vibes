@@ -14,13 +14,11 @@ from NetworkCheck.deco_client import DecoAPIError, DecoAuthError
 from NetworkCheck.iot_gatekeeper import (
     AUTH_PAUSE_S,
     MAX_NAME_CHARS,
-    MAX_NAMED_IN_PUSH,
     NOTICE_INTERVAL_S,
     READ_FAILURES_BEFORE_ALERT,
     IotGatekeeper,
     decode_name,
     push_label,
-    push_labels,
 )
 
 KNOWN = "AA-AA-AA-AA-AA-01"
@@ -91,11 +89,20 @@ def test_blocks_a_stranger_and_pushes_its_name_but_never_logs_it(
     assert deco.block_calls == [(STRANGER, "U2VjcmV0IFBob25l", "phone")]
     assert len(notifier.sent) == 1
     message = notifier.sent[0][0]
-    assert STRANGER in message and '"Secret Phone"' in message
+    assert message.startswith(f'"Secret Phone"\n{STRANGER} · phone\n')
     assert "Secret Phone" not in caplog.text
 
 
-def test_a_refusal_pushes_names_but_never_logs_them(
+def test_each_blocked_device_gets_its_own_push(tmp_path: Path) -> None:
+    other = "BB-BB-BB-BB-BB-03"
+    deco = FakeDeco([iot(KNOWN), iot(STRANGER), iot(other)])
+    gk, notifier = make(tmp_path, deco)
+    assert gk.check_once(NOW) == [STRANGER, other]
+    assert [m for m, _, _ in notifier.sent if STRANGER in m] == [notifier.sent[0][0]]
+    assert [m for m, _, _ in notifier.sent if other in m] == [notifier.sent[1][0]]
+
+
+def test_a_refusal_pushes_once_per_device_with_its_name_but_never_logs_it(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     strangers = [iot(f"BB-BB-BB-BB-BB-{i:02X}") for i in range(4)]
@@ -103,27 +110,39 @@ def test_a_refusal_pushes_names_but_never_logs_them(
     gk, notifier = make(tmp_path, deco)
     with caplog.at_level(logging.DEBUG):
         gk.check_once(NOW)
-    assert '"Secret Phone"' in notifier.sent[0][0]
+    assert len(notifier.sent) == 4
+    for (message, _, priority), client in zip(notifier.sent, strangers):
+        assert client["mac"] in message and '"Secret Phone"' in message and priority == 1
     assert "Secret Phone" not in caplog.text
+
+
+def test_a_refusal_with_no_strangers_pushes_once(tmp_path: Path) -> None:
+    deco = FakeDeco([iot(STRANGER)])
+    gk, notifier = make(tmp_path, deco, allowed=[])
+    gk.check_once(NOW)
+    assert len(notifier.sent) == 1 and "allowlist is empty" in notifier.sent[0][0]
+
+
+def test_each_shared_mac_gets_its_own_push(tmp_path: Path) -> None:
+    other = "BB-BB-BB-BB-BB-03"
+    rows = [iot(KNOWN), iot(STRANGER), iot(other)]
+    deco = FakeDeco(rows + [{**r, "interface": "main"} for r in rows[1:]])
+    gk, notifier = make(tmp_path, deco)
+    gk.check_once(NOW)
+    assert [m.splitlines()[0] for m, _, _ in notifier.sent] == [STRANGER, other]
 
 
 class TestPushLabel:
     def test_a_device_without_a_name_shows_mac_and_type(self) -> None:
-        assert push_label(iot(STRANGER, name="")) == f"{STRANGER} (phone)"
+        assert push_label(iot(STRANGER, name="")) == f"{STRANGER} · phone"
 
     def test_control_characters_are_dropped(self) -> None:
         raw = base64.b64encode(b"Evil\nPhone\x1b[0m").decode()
-        assert push_label(iot(STRANGER, name=raw)) == f'"EvilPhone[0m" {STRANGER} (phone)'
+        assert push_label(iot(STRANGER, name=raw)) == f'"EvilPhone[0m"\n{STRANGER} · phone'
 
     def test_a_quote_in_the_name_cannot_fake_label_text(self) -> None:
         raw = base64.b64encode(b'x" AA-AA-AA-AA-AA-01 (phone) "').decode()
         assert push_label(iot(STRANGER, name=raw)).count('"') == 2
-
-    def test_a_long_list_names_a_few_and_counts_the_rest(self) -> None:
-        many = [iot(f"BB-BB-BB-BB-BB-{i:02X}", name="") for i in range(40)]
-        text = push_labels(many)
-        assert text.endswith(f", +{40 - MAX_NAMED_IN_PUSH} more")
-        assert len(text) < 1024
 
     def test_a_long_name_is_cut(self) -> None:
         raw = base64.b64encode(b"x" * 100).decode()
@@ -185,16 +204,16 @@ def test_old_notices_are_pruned(tmp_path: Path) -> None:
     assert "auth" not in gk.state.notices
 
 
-def test_a_refusal_alerts_once_a_day(tmp_path: Path) -> None:
+def test_a_refusal_alerts_once_a_day_per_device(tmp_path: Path) -> None:
     strangers = [iot(f"BB-BB-BB-BB-BB-{i:02X}") for i in range(4)]
     deco = FakeDeco([iot(KNOWN), *strangers])
     gk, notifier = make(tmp_path, deco)
     gk.check_once(NOW)
     gk.check_once(NOW + 300)
     assert deco.block_calls == []
-    assert len(notifier.sent) == 1 and notifier.sent[0][2] == 1
+    assert len(notifier.sent) == 4
     gk.check_once(NOW + NOTICE_INTERVAL_S)
-    assert len(notifier.sent) == 2
+    assert len(notifier.sent) == 8
 
 
 def test_read_failures_block_nothing_and_alert_only_after_several(tmp_path: Path) -> None:
