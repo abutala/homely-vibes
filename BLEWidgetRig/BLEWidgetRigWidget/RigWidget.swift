@@ -2,9 +2,11 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// Two buttons, the shape of AugustUnlock's widget: the left one probes
-/// from the app's process in the background, the right one opens the app
-/// and probes in the foreground. The outcome is in the app's `rig.log`.
+/// Three buttons, the shape of AugustUnlock's widget: the first probes
+/// from the app's process in the background, the second opens the app and
+/// probes in the foreground, the third returns at once and probes detached
+/// (the "progress on the widget" measurement). The outcome is in the app's
+/// `rig.log`; the provider's runs in the widget's `rig-widget.log`.
 @main
 struct RigWidget: Widget {
     var body: some WidgetConfiguration {
@@ -19,13 +21,32 @@ struct RigWidget: Widget {
 
 struct RigEntry: TimelineEntry {
     let date: Date
+    /// When the last Detached tap started (`RigMark`), if any.
+    let tapStarted: Date?
+
+    /// "run 15:23:41.2 · tap +3.1 s": the provider's run time and its lag
+    /// after the tap, drawn on the widget so a screenshot shows the lag too.
+    var caption: String {
+        let run = ISO8601DateFormatter.withFractionalSeconds.string(from: date).dropFirst(11).prefix(10)
+        guard let tapStarted else { return "run \(run)" }
+        return "run \(run) · tap +\(String(format: "%.1f", date.timeIntervalSince(tapStarted))) s"
+    }
 }
 
+/// Every run is logged to the widget's own `rig-widget.log` with its lag
+/// after the last Detached tap: the measurement of when a reload asked
+/// after `perform()` returned is actually run.
 struct RigProvider: TimelineProvider {
-    func placeholder(in context: Context) -> RigEntry { RigEntry(date: .now) }
-    func getSnapshot(in context: Context, completion: @escaping (RigEntry) -> Void) { completion(RigEntry(date: .now)) }
+    func placeholder(in context: Context) -> RigEntry { RigEntry(date: .now, tapStarted: nil) }
+    func getSnapshot(in context: Context, completion: @escaping (RigEntry) -> Void) { completion(entry("snapshot")) }
     func getTimeline(in context: Context, completion: @escaping (Timeline<RigEntry>) -> Void) {
-        completion(Timeline(entries: [RigEntry(date: .now)], policy: .never))
+        completion(Timeline(entries: [entry("timeline")], policy: .never))
+    }
+
+    private func entry(_ reason: String) -> RigEntry {
+        let entry = RigEntry(date: .now, tapStarted: RigMark.get())
+        RigNote.write("rig-widget.log", "\(reason): \(entry.caption)")
+        return entry
     }
 }
 
@@ -33,6 +54,14 @@ struct RigView: View {
     let entry: RigEntry
 
     var body: some View {
+        VStack(spacing: 4) {
+            buttons
+            Text(entry.caption).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+        }
+        .containerBackground(.fill.tertiary, for: .widget)
+    }
+
+    private var buttons: some View {
         HStack(spacing: 0) {
             VStack(spacing: 6) {
                 Button(intent: RigBackgroundProbeIntent()) { icon("moon.fill") }.accessibilityLabel("Background")
@@ -44,9 +73,13 @@ struct RigView: View {
                 Text("Foreground").font(.caption).bold()
             }
             .frame(maxWidth: .infinity)
+            VStack(spacing: 6) {
+                Button(intent: RigDetachedProbeIntent()) { icon("bolt.horizontal.fill") }.accessibilityLabel("Detached")
+                Text("Detached").font(.caption).bold()
+            }
+            .frame(maxWidth: .infinity)
         }
         .tint(.primary)
-        .containerBackground(.fill.tertiary, for: .widget)
     }
 
     private func icon(_ name: String) -> some View {
