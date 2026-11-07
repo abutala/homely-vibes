@@ -181,7 +181,9 @@ turned off for the app in Settings change nothing else.
   code entry → the unlock screen. It feeds `CommandMachine` the events and
   runs the effects it returns (start a command, cancel one). A single-lock account skips straight to the
   button; a multi-lock account gets a one-time picker on first sign-in (and a
-  "Change Lock" link on the main screen to redo it later). Every open — cold
+  "Change Lock" link on the main screen to redo it later). While a command
+  runs, a line under "Unlocking…" names the path: "Over Bluetooth", "Over
+  the cloud", or "Bluetooth failed, trying the cloud". Every open — cold
   launch or back from the background — sends the unlock at once, with no
   status check first (an already-unlocked door just stays unlocked). A
   lock/unlock still running when the app is backgrounded keeps running and

@@ -32,6 +32,8 @@ final class AppFlowTests: XCTestCase {
     func testTapWhilePendingSendsTheOpposite() {
         launch(reply: 4)
         XCTAssertTrue(status("Unlocking\u{2026} tap to lock").waitForExistence(timeout: 3))
+        // The line under it names the path the client took (the fake's: Bluetooth).
+        XCTAssertTrue(status("Over Bluetooth").waitForExistence(timeout: 2), app.debugDescription)
         circle.tap()
         XCTAssertTrue(status("Locking\u{2026} tap to unlock").waitForExistence(timeout: 2), app.debugDescription)
         XCTAssertTrue(status("Locked").waitForExistence(timeout: 8), app.debugDescription)

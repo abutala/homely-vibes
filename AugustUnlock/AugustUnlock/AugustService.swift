@@ -14,8 +14,10 @@ protocol AugustService: AnyObject {
     func fetchLocks() async throws -> [AugustLock]
     func selectLock(_ lock: AugustLock)
     func signOut()
-    func unlock() async throws -> OperationReply
-    func lock() async throws -> OperationReply
+    /// `onStage` hears the path as it is taken (the screen's line under
+    /// "Unlocking…").
+    func unlock(onStage: @escaping @Sendable (DoorStage) -> Void) async throws -> OperationReply
+    func lock(onStage: @escaping @Sendable (DoorStage) -> Void) async throws -> OperationReply
 }
 
 /// What a widget tap needs: one door by lock ID, under the tap's budgets
@@ -84,15 +86,24 @@ final class FakeAugust: AugustService, DoorUnlocking {
         selected = nil
     }
 
-    func unlock() async throws -> OperationReply { try await operate(success: .unlocked) }
-    func lock() async throws -> OperationReply { try await operate(success: .locked) }
+    func unlock(onStage: @escaping @Sendable (DoorStage) -> Void) async throws -> OperationReply {
+        onStage(scriptedPath)
+        return try await operate(success: .unlocked)
+    }
+
+    func lock(onStage: @escaping @Sendable (DoorStage) -> Void) async throws -> OperationReply {
+        onStage(scriptedPath)
+        return try await operate(success: .locked)
+    }
+
+    private var scriptedPath: DoorStage { env["AUGUST_FAKE_PATH"] == "cloud" ? .cloud : .bluetooth }
 
     /// A widget tap: the same scripted reply, whatever the door.
     func unlock(
         lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
         deadline: ContinuousClock.Instant?, keepLink: Bool, onStage: @escaping @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply {
-        onStage(env["AUGUST_FAKE_PATH"] == "cloud" ? .cloud : .bluetooth)
+        onStage(scriptedPath)
         return try await operate(success: .unlocked)
     }
 

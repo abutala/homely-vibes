@@ -45,6 +45,10 @@ struct ContentView: View {
     /// phone without Console. One value, so the caption and its icon can't
     /// disagree.
     @State private var lastTiming: LastTiming?
+    /// The running command's path so far, and which command it belongs to:
+    /// a stage from a cancelled command is dropped.
+    @State private var seenStages: [DoorStage] = []
+    @State private var stagesCommand = UUID()
     /// The path icon's side, so it scales with Dynamic Type like the caption.
     @ScaledMetric(relativeTo: .caption) private var captionIconSize: CGFloat = 12
 
@@ -449,8 +453,13 @@ struct ContentView: View {
             Text("\(stateLabel) \u{2014} tap to \(lockState == .unlocked ? "lock" : "unlock")")
                 .foregroundStyle(.secondary)
         case .inProgress(let unlocking):
-            Text(unlocking ? "Unlocking\u{2026} tap to lock" : "Locking\u{2026} tap to unlock")
-                .foregroundStyle(.secondary)
+            VStack(spacing: 4) {
+                Text(unlocking ? "Unlocking\u{2026} tap to lock" : "Locking\u{2026} tap to unlock")
+                    .foregroundStyle(.secondary)
+                if let note = DoorStage.pathNote(seenStages) {
+                    Text(note).font(.footnote).foregroundStyle(.secondary)
+                }
+            }
         case .success: Text(stateLabel).foregroundStyle(lockState == .unlocked ? .green : .secondary)
         case .failure(let message): Text(message).foregroundStyle(.red).font(.footnote)
         }
@@ -467,7 +476,18 @@ struct ContentView: View {
 
     private func performOperation(unlocking: Bool) async throws {
         let start = ContinuousClock.now
-        let reply = try await (unlocking ? August.shared.unlock() : August.shared.lock())
+        let command = UUID()
+        stagesCommand = command
+        seenStages = []
+        let (stages, report) = AsyncStream.makeStream(of: DoorStage.self)
+        let watcher = Task {
+            for await stage in stages where stagesCommand == command { seenStages.append(stage) }
+        }
+        defer { report.finish() }
+        let onStage: @Sendable (DoorStage) -> Void = { report.yield($0) }
+        let reply = try await (unlocking ? August.shared.unlock(onStage: onStage) : August.shared.lock(onStage: onStage))
+        report.finish()
+        await watcher.value
         try Task.checkCancellation()
         let elapsed = ContinuousClock.now - start
         let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18

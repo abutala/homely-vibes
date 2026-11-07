@@ -25,6 +25,13 @@ final class DoorStageTests: XCTestCase {
         XCTAssertEqual(DoorStage.noReply.caption(seconds: 28), "No reply")
     }
 
+    func testTheScreensPathNote() {
+        XCTAssertNil(DoorStage.pathNote([]))
+        XCTAssertEqual(DoorStage.pathNote([.bluetooth]), "Over Bluetooth")
+        XCTAssertEqual(DoorStage.pathNote([.cloud]), "Over the cloud")
+        XCTAssertEqual(DoorStage.pathNote([.bluetooth, .cloud]), "Bluetooth failed, trying the cloud")
+    }
+
     func testAStageSurvivesTheActivityPayload() throws {
         for stage in DoorStage.allCases {
             let data = try JSONEncoder().encode(stage)

@@ -323,9 +323,9 @@ final class AugustClient {
         return LockState(augustStatus: lockStatus?["status"] as? String)
     }
 
-    func unlock() async throws -> OperationReply {
+    func unlock(onStage: @escaping @Sendable (DoorStage) -> Void) async throws -> OperationReply {
         guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
-        return try await unlock(lockID: lockID)
+        return try await unlock(lockID: lockID, onStage: onStage)
     }
 
     /// Any lock on the account, Bluetooth first when it has a loaded key.
@@ -349,9 +349,9 @@ final class AugustClient {
             onStage: onStage)
     }
 
-    func lock() async throws -> OperationReply {
+    func lock(onStage: @escaping @Sendable (DoorStage) -> Void) async throws -> OperationReply {
         guard let lockID = KeychainStore.get("august_lock_id") else { throw AugustError.noLocks }
-        return try await operate(lockID: lockID, action: "lock", opcode: AugustBLE.lockOpcode, success: .locked)
+        return try await operate(lockID: lockID, action: "lock", opcode: AugustBLE.lockOpcode, success: .locked, onStage: onStage)
     }
 
     /// One command at a time, Bluetooth or cloud, whoever asks: the screen

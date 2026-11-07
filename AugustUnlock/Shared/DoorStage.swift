@@ -18,6 +18,16 @@ nonisolated enum DoorStage: String, Codable, Hashable, Sendable, CaseIterable {
         }
     }
 
+    /// The app screen's line under "Unlocking…": the path so far, from the
+    /// stages the command reported, oldest first.
+    static func pathNote(_ seen: [DoorStage]) -> String? {
+        switch seen.last {
+        case .bluetooth: "Over Bluetooth"
+        case .cloud: seen.contains(.bluetooth) ? "Bluetooth failed, trying the cloud" : "Over the cloud"
+        default: nil
+        }
+    }
+
     /// `seconds`: the tap's time, shown after "Unlocked" only.
     func caption(seconds: Double?) -> String {
         switch self {
