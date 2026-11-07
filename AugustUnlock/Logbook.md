@@ -1037,3 +1037,42 @@ Not measured: whether the Lock Screen keeps an ended activity for the
 Today view (expected to do nothing, as for every widget button). Found on
 the Simulator: a UI test that calls `launch()` or `activate()` on the app
 while the intent runs starts a new process and kills the intent's.
+
+## 2026-11-07 — The widget tap's Live Activity, built from the rig
+
+Built on the Live measurement above, after a scoped TRIAL (memory,
+`deviation_labs/homely_vibes_live_activity_trial_2026-11-07.md`). What the
+TRIAL changed from the first sketch:
+
+- **The stages come from two lines, not from the Bluetooth link.** The
+  link's timing line has no hook, and needs none: the owner's stages are
+  only the path. `operateHoldingGate` reports `bluetooth` before
+  `AugustBLELink.run` and `cloud` before the request goes out, both after
+  the command gate and the key check, so a door waiting for the other
+  door's command, or a lock with no key, never claims Bluetooth.
+- **One stream, one task.** The client reports from inside the deadline's
+  task, off the main actor. A task per update could land out of order; the
+  stages go through an `AsyncStream` to one task, and the end waits for it,
+  so no update lands after the end.
+- **Start after the repeat-tap check.** A repeat tap on a running door
+  returns early; an activity started before that check would never end.
+- **One activity at a time.** Overlap empties the Island early (the rig), so
+  a tap that starts while another runs in the process gets none. Each start
+  first ends any older activity (one in its Lock Screen hold, or one a dead
+  process left), and a stale one reads "Check the door".
+- **No hold on the Island.** It drops an ended activity; the Lock Screen and
+  the widget keep the result (Amit's call).
+- **Nothing waits before the unlock, and the widget's result comes first.**
+  The pre-push review found that ending old activities was awaited before
+  the unlock, and the activity's end before the widget's result write, so a
+  slow ActivityKit call could cost the unlock time or, at the ~30 s limit,
+  the widget's result. Old activities now end on their own tasks, the
+  request is synchronous, and the result is written before the end.
+
+On the Simulator (iOS 27.2) the compact Island showed the lock icon and the
+timer from the tap about 3 s after it, and left at the end; the system log
+had the activity dismissed 12 s after its end. `XCUIScreen` screenshots taken
+inside the UI test never showed the Island, while `xcrun simctl io
+screenshot` frames taken at the same time did, so the UI test checks the
+tap, not the Island. Not yet seen on the phone: the real stages and the
+`OpenDoorIntent` parameters under `LiveActivityIntent`.

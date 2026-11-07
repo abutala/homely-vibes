@@ -339,13 +339,14 @@ final class AugustClient {
     func unlock(
         lockID: String, bluetoothSetupBudget: TimeInterval = CommandDeadline.screenBluetoothSetup,
         bluetoothOperationBudget: TimeInterval = CommandDeadline.screenBluetoothOperation,
-        deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true
+        deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true, onStage: @escaping @Sendable (DoorStage) -> Void = { _ in }
     ) async throws -> OperationReply {
         // The widget passes an empty ID until it has a lock list.
         guard !lockID.isEmpty else { throw AugustError.noLocks }
         return try await operate(
             lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked,
-            setupBudget: bluetoothSetupBudget, operationBudget: bluetoothOperationBudget, deadline: deadline, keepLink: keepLink)
+            setupBudget: bluetoothSetupBudget, operationBudget: bluetoothOperationBudget, deadline: deadline, keepLink: keepLink,
+            onStage: onStage)
     }
 
     func lock() async throws -> OperationReply {
@@ -367,7 +368,7 @@ final class AugustClient {
         lockID: String, action: String, opcode: UInt8, success: LockState,
         setupBudget: TimeInterval = CommandDeadline.screenBluetoothSetup,
         operationBudget: TimeInterval = CommandDeadline.screenBluetoothOperation,
-        deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true
+        deadline: ContinuousClock.Instant? = nil, keepLink: Bool = true, onStage: @escaping @Sendable (DoorStage) -> Void = { _ in }
     ) async throws -> OperationReply {
         // The gate is taken and released inside the one task the deadline
         // cancels: a deadline that fires as the gate is handed over would
@@ -380,7 +381,8 @@ final class AugustClient {
                 defer { self.gate.leave() }
                 return try await self.operateHoldingGate(
                     lockID: lockID, action: action, opcode: opcode, success: success,
-                    setupBudget: setupBudget, operationBudget: operationBudget, deadline: deadline, keepLink: keepLink, sent: sent)
+                    setupBudget: setupBudget, operationBudget: operationBudget, deadline: deadline, keepLink: keepLink, sent: sent,
+                    onStage: onStage)
             }
         } catch is DoorTimeout where sent.withLock({ $0 }) {
             throw AugustError.cloudNoReply
@@ -388,13 +390,16 @@ final class AugustClient {
     }
 
     /// `sent` turns true the moment the cloud request goes out: a deadline
-    /// after that is `cloudNoReply`, before it a plain timeout.
+    /// after that is `cloudNoReply`, before it a plain timeout. `onStage`
+    /// hears the path as it is taken, after the gate and the key check (a
+    /// widget tap's Live Activity).
     private func operateHoldingGate(
         lockID: String, action: String, opcode: UInt8, success: LockState,
         setupBudget: TimeInterval, operationBudget: TimeInterval, deadline: ContinuousClock.Instant?, keepLink: Bool,
-        sent: OSAllocatedUnfairLock<Bool>
+        sent: OSAllocatedUnfairLock<Bool>, onStage: @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply {
         if let credentials = bluetoothCredentials(for: lockID) {
+            onStage(.bluetooth)
             let start = ContinuousClock.now
             do {
                 let timing = try await AugustBLELink.run(
@@ -413,6 +418,7 @@ final class AugustClient {
         }
         // Under a second left: nothing is sent, so the failure says so.
         if let deadline, secondsLeft(until: deadline) < 1 { throw DoorTimeout() }
+        onStage(.cloud)
         sent.withLock { $0 = true }
         let state = try await cloudOperate(lockID: lockID, action: action)
         refreshBluetoothKeyOnce(lockID: lockID)

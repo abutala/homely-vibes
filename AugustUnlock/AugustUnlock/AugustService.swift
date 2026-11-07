@@ -21,10 +21,11 @@ protocol AugustService: AnyObject {
 /// What a widget tap needs: one door by lock ID, under the tap's budgets
 /// (`AppDoorAction`). The real client or `FakeAugust`, passed in as a
 /// parameter so the Simulator's widget test can run the tap end to end.
+/// `onStage` hears `.bluetooth` or `.cloud` as the path is taken.
 protocol DoorUnlocking: AnyObject {
     func unlock(
         lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
-        deadline: ContinuousClock.Instant?, keepLink: Bool
+        deadline: ContinuousClock.Instant?, keepLink: Bool, onStage: @escaping @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply
 }
 
@@ -89,9 +90,10 @@ final class FakeAugust: AugustService, DoorUnlocking {
     /// A widget tap: the same scripted reply, whatever the door.
     func unlock(
         lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
-        deadline: ContinuousClock.Instant?, keepLink: Bool
+        deadline: ContinuousClock.Instant?, keepLink: Bool, onStage: @escaping @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply {
-        try await operate(success: .unlocked)
+        onStage(env["AUGUST_FAKE_PATH"] == "cloud" ? .cloud : .bluetooth)
+        return try await operate(success: .unlocked)
     }
 
     private func operate(success: LockState) async throws -> OperationReply {
