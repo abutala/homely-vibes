@@ -297,6 +297,10 @@ as they talk to the Deco: the admin account is single-session.
 - **P1** — blocked nothing because of a refusal (cap, empty IoT network, a
   malformed `allowed_macs`); the Deco unreadable for 3 ticks; a block the router
   refused. At most once a day each.
-- **P0** — devices blocked: one push per tick that blocks, naming each MAC and
-  device type, never names. Also, at most once a day each: a MAC skipped
-  because it is also on another network; a failed login.
+- **P0** — devices blocked: one push per tick that blocks, giving each device's
+  self-reported name, MAC and device type. Also, at most once a day each: a MAC
+  skipped because it is also on another network; a failed login.
+
+Pushes for a block, a refused block and a refusal show each device's
+self-reported name; the cron log shows only MAC and type. A device picks its
+own name, so trust the MAC, not the name.

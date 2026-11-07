@@ -47,6 +47,8 @@ AUTH_PAUSE_S = 3600
 # The Deco times out on ~2% of reads and never twice in a row (Logbook), and
 # each read already retries three times. Three failed ticks is a real fault.
 READ_FAILURES_BEFORE_ALERT = 3
+MAX_NAME_CHARS = 40
+MAX_NAMED_IN_PUSH = 5
 
 
 class GateControl(Protocol):
@@ -94,8 +96,8 @@ def save_state(path: str, state: GatekeeperState) -> None:
 
 
 def describe(client: dict[str, Any]) -> str:
-    """MAC and device type only. Client names are household data and stay out
-    of logs and pushes, as in the watchdog's census."""
+    """MAC and device type only, for logs. Client names are household data and
+    stay out of the cron log, as in the watchdog's census."""
     return f"{canonical_mac(client['mac'])} ({client.get('client_type', '?')})"
 
 
@@ -105,6 +107,27 @@ def decode_name(raw: object) -> str:
         return base64.b64decode(str(raw), validate=True).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError):
         return str(raw)
+
+
+def push_label(client: dict[str, Any]) -> str:
+    """The device's self-reported name, then MAC and type, for a push only.
+
+    The device picks its own name, so it can claim anything; the MAC stays the
+    identity. Control characters are dropped and the name is cut short.
+    """
+    raw = decode_name(client.get("name", "")).replace('"', "'")
+    name = "".join(ch for ch in raw if ch.isprintable()).strip()
+    if len(name) > MAX_NAME_CHARS:
+        name = name[:MAX_NAME_CHARS] + "…"
+    return f'"{name}" {describe(client)}' if name else describe(client)
+
+
+def push_labels(clients: list[dict[str, Any]]) -> str:
+    """The first few `push_label`s and a count of the rest. A refusal can list
+    the whole IoT network, and Pushover rejects a body over 1024 characters."""
+    shown = ", ".join(push_label(c) for c in clients[:MAX_NAMED_IN_PUSH]) or "none"
+    rest = len(clients) - MAX_NAMED_IN_PUSH
+    return f"{shown}, +{rest} more" if rest > 0 else shown
 
 
 class IotGatekeeper:
@@ -189,8 +212,14 @@ class IotGatekeeper:
             )
         if plan.refusal:
             who = ", ".join(describe(c) for c in plan.strangers) or "none"
+            named = push_labels(plan.strangers)
             self._notice(
-                "refusal", f"Blocked nothing: {plan.refusal}. Unknown: {who}", 1, now, dry_run
+                "refusal",
+                f"Blocked nothing: {plan.refusal}. Unknown: {who}",
+                1,
+                now,
+                dry_run,
+                push=f"Blocked nothing: {plan.refusal}. Unknown: {named}",
             )
             return []
 
@@ -206,7 +235,14 @@ class IotGatekeeper:
                     mac, str(client.get("name", "")), str(client.get("client_type", ""))
                 )
             except DecoAPIError as err:
-                self._notice("block", f"Block of {describe(client)} failed: {err}", 1, now, dry_run)
+                self._notice(
+                    "block",
+                    f"Block of {describe(client)} failed: {err}",
+                    1,
+                    now,
+                    dry_run,
+                    push=f"Block of {push_label(client)} failed: {err}",
+                )
                 break
             self.logger.info("Blocked %s", describe(client))
             done.append(mac)
@@ -214,18 +250,27 @@ class IotGatekeeper:
         if done and not dry_run:
             self._send(
                 f"Blocked {len(done)} new device(s) on the IoT Wi-Fi: "
-                + ", ".join(describe(c) for c in plan.to_block if canonical_mac(c["mac"]) in done)
+                + push_labels([c for c in plan.to_block if canonical_mac(c["mac"]) in done])
                 + ". Undo: iot_gatekeeper unblock <MAC>, and add it to allowed_macs.",
                 0,
             )
         return done
 
-    def _notice(self, key: str, message: str, priority: int, now: float, dry_run: bool) -> None:
-        """Log every time; push at most once a day per key, never in a dry run."""
+    def _notice(
+        self,
+        key: str,
+        message: str,
+        priority: int,
+        now: float,
+        dry_run: bool,
+        push: Optional[str] = None,
+    ) -> None:
+        """Log `message` every time; push `push` (default `message`) at most once
+        a day per key, never in a dry run. `push` may carry device names."""
         self.logger.warning(message)
         if dry_run or now - self.state.notices.get(key, 0) < NOTICE_INTERVAL_S:
             return
-        if self._send(message, priority):
+        if self._send(message if push is None else push, priority):
             self.state.notices[key] = now
 
     def _prune_notices(self, now: float) -> None:

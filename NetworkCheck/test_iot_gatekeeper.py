@@ -1,19 +1,26 @@
 """Tests for the IoT gatekeeper tick. A fake Deco behind the GateControl
 Protocol stands in for the router; no patching."""
 
+import base64
 import logging
 from pathlib import Path
 from typing import Any, Optional
+
+import pytest
 
 from lib.config import IotGatekeeperConfig
 from NetworkCheck.conftest import NOW, FakeNotifier
 from NetworkCheck.deco_client import DecoAPIError, DecoAuthError
 from NetworkCheck.iot_gatekeeper import (
     AUTH_PAUSE_S,
+    MAX_NAME_CHARS,
+    MAX_NAMED_IN_PUSH,
     NOTICE_INTERVAL_S,
     READ_FAILURES_BEFORE_ALERT,
     IotGatekeeper,
     decode_name,
+    push_label,
+    push_labels,
 )
 
 KNOWN = "AA-AA-AA-AA-AA-01"
@@ -74,14 +81,54 @@ def make(
     return gk, notifier
 
 
-def test_blocks_a_stranger_and_sends_one_alert_without_its_name(tmp_path: Path) -> None:
+def test_blocks_a_stranger_and_pushes_its_name_but_never_logs_it(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     deco = FakeDeco([iot(KNOWN), iot(STRANGER)])
     gk, notifier = make(tmp_path, deco)
-    assert gk.check_once(NOW) == [STRANGER]
+    with caplog.at_level(logging.DEBUG):
+        assert gk.check_once(NOW) == [STRANGER]
     assert deco.block_calls == [(STRANGER, "U2VjcmV0IFBob25l", "phone")]
     assert len(notifier.sent) == 1
     message = notifier.sent[0][0]
-    assert STRANGER in message and "Secret Phone" not in message
+    assert STRANGER in message and '"Secret Phone"' in message
+    assert "Secret Phone" not in caplog.text
+
+
+def test_a_refusal_pushes_names_but_never_logs_them(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    strangers = [iot(f"BB-BB-BB-BB-BB-{i:02X}") for i in range(4)]
+    deco = FakeDeco([iot(KNOWN), *strangers])
+    gk, notifier = make(tmp_path, deco)
+    with caplog.at_level(logging.DEBUG):
+        gk.check_once(NOW)
+    assert '"Secret Phone"' in notifier.sent[0][0]
+    assert "Secret Phone" not in caplog.text
+
+
+class TestPushLabel:
+    def test_a_device_without_a_name_shows_mac_and_type(self) -> None:
+        assert push_label(iot(STRANGER, name="")) == f"{STRANGER} (phone)"
+
+    def test_control_characters_are_dropped(self) -> None:
+        raw = base64.b64encode(b"Evil\nPhone\x1b[0m").decode()
+        assert push_label(iot(STRANGER, name=raw)) == f'"EvilPhone[0m" {STRANGER} (phone)'
+
+    def test_a_quote_in_the_name_cannot_fake_label_text(self) -> None:
+        raw = base64.b64encode(b'x" AA-AA-AA-AA-AA-01 (phone) "').decode()
+        assert push_label(iot(STRANGER, name=raw)).count('"') == 2
+
+    def test_a_long_list_names_a_few_and_counts_the_rest(self) -> None:
+        many = [iot(f"BB-BB-BB-BB-BB-{i:02X}", name="") for i in range(40)]
+        text = push_labels(many)
+        assert text.endswith(f", +{40 - MAX_NAMED_IN_PUSH} more")
+        assert len(text) < 1024
+
+    def test_a_long_name_is_cut(self) -> None:
+        raw = base64.b64encode(b"x" * 100).decode()
+        label = push_label(iot(STRANGER, name=raw))
+        assert label.startswith('"' + "x" * MAX_NAME_CHARS + '…"')
 
 
 def test_a_blocked_stranger_is_not_blocked_or_alerted_again(tmp_path: Path) -> None:
