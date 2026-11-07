@@ -62,8 +62,8 @@ enum WidgetCloud {
         return data
     }
 
-    /// The app writes its token with delete-then-add, so a read can land in
-    /// the gap and find nothing; one retry after a moment rides it out.
+    /// A token missing at the first read may be the app's first sign-in
+    /// landing right now; one retry after a moment costs nothing.
     private static func accessToken() async -> String? {
         if let token = KeychainStore.get("august_access_token") { return token }
         try? await Task.sleep(for: .milliseconds(300))
@@ -73,8 +73,9 @@ enum WidgetCloud {
     }
 }
 
-/// `Library/Caches/widget.log` in the widget's container, last 60 lines.
-let WidgetLog = LineLog(file: "widget.log", keep: 60, category: "widget")
+/// `Library/Caches/widget.log` in the widget's container, last 300 lines
+/// (60 held two days of taps).
+let WidgetLog = LineLog(file: "widget.log", keep: 300, category: "widget")
 
 /// The widget's own memory: the lock list and the sign-in flag, in the
 /// extension's UserDefaults. The app never reads or writes it.

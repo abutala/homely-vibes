@@ -18,13 +18,25 @@ protocol AugustService: AnyObject {
     func lock() async throws -> OperationReply
 }
 
-extension AugustClient: AugustService {}
+/// What a widget tap needs: one door by lock ID, under the tap's budgets
+/// (`AppDoorAction`). The real client or `FakeAugust`, passed in as a
+/// parameter so the Simulator's widget test can run the tap end to end.
+protocol DoorUnlocking: AnyObject {
+    func unlock(
+        lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
+        deadline: ContinuousClock.Instant?, keepLink: Bool
+    ) async throws -> OperationReply
+}
+
+extension AugustClient: AugustService, DoorUnlocking {}
 
 enum August {
     /// `AUGUST_FAKE=1` in the launch environment picks the fake; the UI tests
-    /// set it, nothing else does.
-    static let shared: any AugustService =
-        ProcessInfo.processInfo.environment["AUGUST_FAKE"] == "1" ? FakeAugust() : AugustClient.shared
+    /// set it, nothing else does. A widget tap's background launch has no
+    /// environment, so the fake also follows the marker that launch left
+    /// (`TestHooks`).
+    static let shared: any AugustService & DoorUnlocking =
+        ProcessInfo.processInfo.environment["AUGUST_FAKE"] == "1" || TestHooks.fakeAugust ? FakeAugust() : AugustClient.shared
 }
 
 /// A scripted August for the Simulator. Environment:
@@ -36,7 +48,7 @@ enum August {
 /// - `AUGUST_FAKE_FAIL=1`: every command fails with "no reply".
 /// Every command is counted in `commandsSent`, so a test can read it back
 /// through the timing caption ("via …, 3 sent").
-final class FakeAugust: AugustService {
+final class FakeAugust: AugustService, DoorUnlocking {
     private let env = ProcessInfo.processInfo.environment
     private var signedIn: Bool
     private var selected: AugustLock?
@@ -73,6 +85,14 @@ final class FakeAugust: AugustService {
 
     func unlock() async throws -> OperationReply { try await operate(success: .unlocked) }
     func lock() async throws -> OperationReply { try await operate(success: .locked) }
+
+    /// A widget tap: the same scripted reply, whatever the door.
+    func unlock(
+        lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
+        deadline: ContinuousClock.Instant?, keepLink: Bool
+    ) async throws -> OperationReply {
+        try await operate(success: .unlocked)
+    }
 
     private func operate(success: LockState) async throws -> OperationReply {
         commandsSent += 1

@@ -48,7 +48,7 @@ struct DoorsProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (DoorsEntry) -> Void) {
-        Task { completion(await refresh(at: .now)) }
+        Task { completion(await refresh(at: .now, reason: "snapshot")) }
     }
 
     /// One entry now; one more at each moment a held result clears. The tap
@@ -60,7 +60,7 @@ struct DoorsProvider: TimelineProvider {
     func getTimeline(in context: Context, completion: @escaping (Timeline<DoorsEntry>) -> Void) {
         Task {
             let now = Date()
-            let entry = await refresh(at: now)
+            let entry = await refresh(at: now, reason: "timeline")
             let state = DoorStateStore.load()
             let later = state.clearDates(at: now).map { date in
                 DoorsEntry(date: date, names: entry.names, locks: entry.locks, marks: state.marks(count: DoorNames.count, at: date), message: entry.message)
@@ -69,10 +69,18 @@ struct DoorsProvider: TimelineProvider {
         }
     }
 
-    private func refresh(at now: Date) async -> DoorsEntry {
+    /// `reason` names the caller in the log: a system snapshot and a tap's
+    /// reload draw the same lines otherwise. While a tap runs the cached
+    /// lock list is used as it is, so its redraw does not wait on August.
+    private func refresh(at now: Date, reason: String) async -> DoorsEntry {
         let state = DoorStateStore.load()
         let marks = state.marks(count: DoorNames.count, at: now)
-        WidgetLog.note("door state keychain=\(KeychainStore.lastStatus) running=\(state.running.keys.sorted()) results=\(state.results.count)")
+        WidgetLog.note("\(reason) door state keychain=\(KeychainStore.lastStatus) running=\(state.running.keys.sorted()) results=\(state.results.count)")
+        if marks.contains(.running), !WidgetStore.locks.isEmpty {
+            return DoorsEntry(
+                date: now, names: DoorNames.names(cached: WidgetStore.locks.map(\.name)), locks: DoorNames.ids(cached: WidgetStore.locks.map(\.id)),
+                marks: marks, message: WidgetStore.signedOut ? WidgetCloud.Failure.signedOut.errorDescription : nil)
+        }
         do {
             let locks = try await withDeadline(seconds: Self.fetchDeadline) { try await WidgetCloud.fetchLocks() }
             WidgetStore.locks = locks
@@ -93,8 +101,11 @@ struct DoorsProvider: TimelineProvider {
 
 /// One full-width row, a door per half. Built up from Apple's sample button
 /// (default style, `.tint`), which is the shape that runs under this
-/// install; the earlier `.borderedProminent` button with a frame-filling
-/// label never ran (Logbook, 2026-11-02).
+/// install; `.invalidatableContent()` inside the button's label made it
+/// inert (Logbook, 2026-11-02). The whole half is the toggle: a tap on the
+/// empty part of a half opened the app instead (measured on the iOS 27
+/// Simulator, 2026-11-05). What is left of the body carries `widgetURL`,
+/// so an open from here is logged by the app as a missed tap.
 struct DoorsView: View {
     let entry: DoorsEntry
 
@@ -119,11 +130,18 @@ struct DoorsView: View {
             }
             .tint(.primary)
             if let message = entry.message {
-                Text(message).font(.caption2).foregroundStyle(.red)
+                // A link, not plain text: the toggles' hit areas reach past
+                // their frames (a tap on this line ran door 1, iOS 27
+                // Simulator), and this line must open the app.
+                Link(destination: Self.bodyURL) { Text(message).font(.caption2).foregroundStyle(.red) }
             }
         }
         .containerBackground(.fill.tertiary, for: .widget)
+        .widgetURL(Self.bodyURL)
     }
+
+    /// What a tap outside the toggles opens the app with; the app logs it.
+    private static let bodyURL = URL(string: "augustunlock://widget-body")!
 
     /// The door's name, or what its tap did. The "Unlocking…" during the tap
     /// is the toggle's own on-state (`DoorToggleStyle`), the result after it
@@ -134,6 +152,7 @@ struct DoorsView: View {
         case .running: ("Unlocking\u{2026}", .secondary)
         case .ok: ("Unlocked", .green)
         case .failed: ("Failed", .red)
+        case .noReply: ("No reply", .secondary)
         }
         return Text(text).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(color)
     }
@@ -141,9 +160,10 @@ struct DoorsView: View {
 }
 
 /// The door as a toggle: the lock icon, and under it the label, or
-/// "Unlocking…" while the toggle is on (the tap's optimistic state). Only
-/// the image sits where a tap lands, as with the button that worked
-/// (Logbook 2026-11-02).
+/// "Unlocking…" while the toggle is on (the tap's optimistic state). The
+/// body fills its half and takes the tap anywhere on it: with only the icon
+/// and the caption live, three quarters of a half opened the app
+/// (Logbook 2026-11-05).
 struct DoorToggleStyle: ToggleStyle {
     func makeBody(configuration: Configuration) -> some View {
         VStack(spacing: 6) {
@@ -154,5 +174,7 @@ struct DoorToggleStyle: ToggleStyle {
                 configuration.label
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
     }
 }

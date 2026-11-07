@@ -2,9 +2,10 @@ import Foundation
 import Security
 
 /// Generic-password Keychain items, by account name, in the access group
-/// both the app and the widget share. Values are strings or raw data; a
-/// write is delete-then-add, so a reader can land in the gap (the widget's
-/// token read retries once).
+/// both the app and the widget share. Values are strings or raw data. A
+/// write updates the item in place and adds it only when it is missing, so
+/// a reader never lands in a delete-then-add gap (the widget reads the door
+/// state while the app writes it).
 enum KeychainStore {
     /// The Keychain's answer to the last call, for the logs.
     nonisolated(unsafe) static var lastStatus: OSStatus = errSecSuccess
@@ -15,7 +16,8 @@ enum KeychainStore {
 
     static func setData(_ data: Data, forKey key: String) {
         let query = query(key)
-        SecItemDelete(query as CFDictionary)
+        lastStatus = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        guard lastStatus == errSecItemNotFound else { return }
         var attributes = query
         attributes[kSecValueData as String] = data
         attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
