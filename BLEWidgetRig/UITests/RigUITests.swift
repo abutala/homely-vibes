@@ -44,6 +44,48 @@ final class RigUITests: XCTestCase {
         XCTAssertFalse(app.wait(for: .runningForeground, timeout: 1), "a detached tap opened the app")
     }
 
+    /// The Live button with the app quit: the activity starts from the
+    /// background (Apple's `LiveActivityIntent` rule), the app stays closed,
+    /// and the app's log has the request, every update and the end. Whether
+    /// the updates draw live is the phone's question (README, "Live
+    /// Activity measurement"): the Simulator drew every widget reload too.
+    func testALiveTapStartsAnActivityWithTheAppClosed() throws {
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
+        XCUIDevice.shared.press(.home)
+        XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 5))
+        app.terminate()
+
+        if !springboard.buttons["Live"].waitForExistence(timeout: 2) {
+            try addWidget()
+        }
+        XCTAssertTrue(springboard.buttons["Live"].waitForExistence(timeout: 20), springboard.debugDescription)
+        springboard.buttons["Live"].tap()
+        XCTAssertFalse(app.wait(for: .runningForeground, timeout: 3), "a Live tap opened the app")
+        // `launch()`, and `activate()` on a process XCTest did not launch,
+        // start a new process and kill the one the intent runs in (it died
+        // at +19 s that way); wait out its 20 s and the end first.
+        // A screenshot mid-run, kept, to look at the Island's two clocks.
+        sleep(5)
+        let shot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        shot.name = "live-island"
+        shot.lifetime = .keepAlways
+        add(shot)
+        sleep(25)
+        app.activate()
+        let log = app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'live: ended'")).firstMatch
+        let refresh = app.buttons["Refresh"]
+        let deadline = Date().addingTimeInterval(40)
+        while !log.exists, Date() < deadline {
+            sleep(2)
+            refresh.tap()
+        }
+        XCTAssertTrue(log.exists, app.debugDescription)
+        XCTAssertTrue(log.label.contains("live: request ok"), log.label)
+        XCTAssertTrue(log.label.contains("live: +\(20) s sent"), log.label)
+        XCTAssertTrue(log.label.contains("app state background"), "the Live tap did not run in the background: \(log.label)")
+    }
+
     /// Long-press the Home Screen → Edit → Add Widget → search → add.
     private func addWidget() throws {
         springboard.activate()

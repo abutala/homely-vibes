@@ -20,17 +20,21 @@ of the lock's key exchange.
   retrieve the remembered peripheral (or scan for the service once), connect,
   discover, subscribe, write 16 random bytes, wait for the echo; every stage
   stamped in ms, the summary in `Library/Caches/rig.log`.
-- `Shared/RigIntents.swift` — the three widget buttons. **Background**: the
+- `Shared/RigIntents.swift` — three of the widget's four buttons. **Background**: the
   intent runs in the app's process in the background (`supportedModes` with
   `.foreground(.dynamic)`), which is how AugustUnlock's widget unlocks.
   **Foreground**: `openAppWhenRun`, the trade-off Tesla's widget takes; the
   app opens and the probe runs in it. **Detached**: the intent returns at
   once and the probe runs detached under a background task (the section
   "Detached tap measurement" below).
+- `Shared/RigActivity.swift` + `BLEWidgetRigWidget/RigLiveActivity.swift` —
+  the fourth button, **Live**: a `LiveActivityIntent` that starts a Live
+  Activity and updates it while it probes (the section "Live Activity
+  measurement" below).
 - `BLEWidgetRig/ContentView.swift` — pairs on first launch (a foreground
   scan), a button for a foreground probe from the app itself, and the log.
-- `BLEWidgetRig/Info.plist` — `bluetooth-central` background mode. Remove it
-  to measure the "no background mode" case.
+- `BLEWidgetRig/Info.plist` — `bluetooth-central` background mode (remove it
+  to measure the "no background mode" case) and `NSSupportsLiveActivities`.
 
 ## Run
 
@@ -98,6 +102,50 @@ the unlock fits), whether the background task expired, and whether
 `detached-echo` ended `ok`; `rig-widget.log` says when each of the three
 asked reloads ran (within about 3 s of being asked means a stage can show).
 The locked tap says whether a locked phone runs the intent at all.
+
+## Live Activity measurement
+
+The question behind a Live Activity for AugustUnlock's widget tap: a
+widget cannot draw during a tap (AugustUnlock Logbook 2026-11-06), so the
+progress would show on the Dynamic Island and the Lock Screen instead.
+Apple says a `LiveActivityIntent` may start an activity with the app in
+the background and the app may update it from the background. What only
+the phone answers: does the start work from a widget tap under
+Sideloadly, and do the background updates draw at once or get coalesced,
+as widget reloads were?
+
+The **Live** button's intent has AugustUnlock's tap modes plus
+`LiveActivityIntent`. Inside `perform()`, as the unlock would run, it
+starts the activity, runs the Bluetooth echo beside it, sends one update
+a second for 20 s, then ends the activity, which stays 12 s more. Every
+presentation draws two clocks: **sent +N**, the second the app last sent,
+and a system timer from the tap that ticks with no update. Sent keeping
+pace with the timer means the updates draw live. `rig.log` times each
+call under `live:`.
+
+Steps, with the rig installed and paired:
+
+1. Start the Mac peripheral: `BLEWidgetRig/scripts/run_peripheral.sh`.
+2. App closed, phone unlocked: start a screen recording, tap **Live**,
+   watch the Island for 35 s. Do it three times, a minute apart.
+3. Tap **Live**, then lock the phone at once: watch the Lock Screen for
+   35 s.
+4. Lock the phone, swipe to the Today view, tap **Live** once there
+   (expected: nothing, as for every widget button on a locked phone).
+5. Copy `rig.log` (the first command in "Detached tap measurement").
+
+What decides the design: in the recordings, does sent stay within a
+second of the timer, from +1 to +20; does the activity disappear about
+12 s after the end; does the app stay closed. In `rig.log`: `request ok`
+or `request FAILED` with the error, the app state at `perform start`
+(background is the shape AugustUnlock needs), and whether `live-echo`
+ended `ok` with the activity running.
+
+On the Simulator (`testALiveTapStartsAnActivityWithTheAppClosed`) the
+activity starts from the background in about 50 ms and all 20 updates
+and the end are logged. A test must not `launch()` or `activate()` the
+app while the intent runs: XCTest starts a new process and the intent's
+is killed (it died at +19 s that way).
 
 ## Findings
 

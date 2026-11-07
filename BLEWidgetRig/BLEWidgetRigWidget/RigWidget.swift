@@ -2,12 +2,21 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// Three buttons, the shape of AugustUnlock's widget: the first probes
+/// The rig's widget and the Live button's activity (`RigLiveActivity`).
+@main
+struct RigWidgets: WidgetBundle {
+    var body: some Widget {
+        RigWidget()
+        RigLiveActivity()
+    }
+}
+
+/// Four buttons, the shape of AugustUnlock's widget: the first probes
 /// from the app's process in the background, the second opens the app and
 /// probes in the foreground, the third returns at once and probes detached
-/// (the "progress on the widget" measurement). The outcome is in the app's
+/// (the "progress on the widget" measurement), the fourth starts a Live
+/// Activity and updates it while it probes. The outcome is in the app's
 /// `rig.log`; the provider's runs in the widget's `rig-widget.log`.
-@main
 struct RigWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Rig", provider: RigProvider()) { entry in
@@ -76,6 +85,11 @@ struct RigView: View {
             VStack(spacing: 6) {
                 Button(intent: RigDetachedProbeIntent()) { icon("bolt.horizontal.fill") }.accessibilityLabel("Detached")
                 Text("Detached").font(.caption).bold()
+            }
+            .frame(maxWidth: .infinity)
+            VStack(spacing: 6) {
+                Button(intent: RigLiveActivityIntent()) { icon("dot.radiowaves.left.and.right") }.accessibilityLabel("Live")
+                Text("Live").font(.caption).bold()
             }
             .frame(maxWidth: .infinity)
         }
