@@ -150,6 +150,7 @@ is killed (it died at +19 s that way).
 ## Findings
 
 See `AugustUnlock/Logbook.md`: 2026-11-03 (a widget tap over Bluetooth),
-2026-11-05 (the hit area) and 2026-11-06 (the Detached measurement: one
+2026-11-05 (the hit area), 2026-11-06 (the Detached measurement: one
 redraw after the return, the process suspended at ~30 s, a locked phone
-inert).
+inert) and 2026-11-07 (the Live measurement: an activity started from a
+widget tap, its background updates drawn live).

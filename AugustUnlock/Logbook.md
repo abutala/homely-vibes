@@ -991,3 +991,49 @@ What it decides:
    says: no intent, no reload, no log line. With PR #71's logging, a
    "nothing" with no `widget intent` line and no `opened by the widget
    body` line is this case.
+
+## 2026-11-07 — Measured on the phone: a widget tap can drive a Live Activity
+
+The open question of 2026-11-06: a Live Activity started by the widget's
+tap would show progress where the widget cannot, but nobody had seen one
+started from a widget tap under Sideloadly, or measured whether updates
+sent from a background process draw at once (widget reloads did not).
+`BLEWidgetRig`'s **Live** button (README, "Live Activity measurement")
+measured it on the phone (iPhone 14 Pro, iOS 27.0.1, Sideloadly, app
+closed). Its intent has this app's tap modes plus `LiveActivityIntent`;
+inside `perform()` it starts an activity, runs the Bluetooth echo beside
+it, updates once a second for 20 s and ends it. Each presentation draws
+the last second sent beside a system timer that ticks with no update.
+
+| Tap (UTC) | `Activity.request` | Updates | Echo beside it | End | Widget redraw |
+|---|---|---|---|---|---|
+| 01:41:44, :48, :50 (three, overlapping) | ok, 34 / 21 / 16 ms | 20 each, `update()` 1–6 ms | ok, 1.6–1.7 s | +20.1 s each | once, 0.3 s after the last ended |
+| 01:45:52 | ok, 18 ms | 20 | ok, 1.6 s | +20.1 s | 0.3 s after the end |
+| 01:55:36 | ok, 28 ms | 20 | ok, 2.7 s | +20.1 s | 0.3 s after the end |
+
+What it decides:
+
+1. **A widget tap starts an activity with the app in the background.**
+   `LiveActivityIntent` plus `NSSupportsLiveActivities` is all it takes;
+   Sideloadly's signing needs nothing more. The app never came forward.
+2. **Background updates draw live.** Amit watched the sent count keep pace
+   with the system timer to +20: the expanded Island for about 2 s at the
+   start, then the compact one for the whole run. This is the opposite of
+   widget reloads (2026-11-06), so progress during an unlock is possible.
+3. **The activity costs the unlock nothing.** The echo took the same time
+   as without it (1.6–2.1 s before), and every ActivityKit call returned
+   in under 35 ms.
+4. **Overlapping taps confuse the Island.** With three activities running,
+   all three ran to the end, but the Island showed one and emptied at
+   about 17 s on its clock, near the moment another activity ended. With
+   one tap at a time the Island ran to +20. Two doors tapped together is
+   this case, so the app needs one activity for both doors or a rule for
+   which one the Island shows.
+5. **The widget still redraws only after the last tap returns**, as on
+   2026-11-03; the activity does not change that.
+
+Not measured: whether the Lock Screen keeps an ended activity for the
+12 s asked (`dismissalPolicy: .after`), and a Live tap from the locked
+Today view (expected to do nothing, as for every widget button). Found on
+the Simulator: a UI test that calls `launch()` or `activate()` on the app
+while the intent runs starts a new process and kills the intent's.
