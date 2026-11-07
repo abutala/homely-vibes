@@ -5,19 +5,23 @@ enum SummaryText {
     static let staleMarker = "\u{21BB}"
     static let titleLimit = 60
 
-    /// `MQ 2/30 · Me 1/25`, plus `✗1` when a PR bounced today.
+    /// The warning sign in text style (U+FE0E), so it draws as a monochrome menu bar glyph.
+    static let failMark = "\u{26A0}\u{FE0E}"
+
+    /// `MQ 2/30 (⚠︎1) Me 3/25`: `(⚠︎N)` marks N open bounced PRs and shows only when N > 0.
     static func title(_ s: QueueSnapshot) -> String {
-        var title = "MQ \(s.queuedCount)/\(s.queueTotalToday) · Me \(s.mineOpenCount)/\(s.mineTotalToday)"
-        if s.failedTodayCount > 0 { title += " \u{2717}\(s.failedTodayCount)" }
-        return title
+        let failed = s.failedCount > 0 ? " (\(failMark)\(s.failedCount))" : ""
+        return "MQ \(s.queuedCount)/\(s.queueTotalToday)\(failed) Me \(s.mineOpenCount)/\(s.mineTotalToday)"
     }
 
     static func queueLine(_ s: QueueSnapshot) -> String {
-        "Merge queue: \(s.queuedCount) tagged · \(s.landedToday) landed · \(s.failedTodayCount) failed today"
+        "Merge queue: \(s.queuedCount) tagged \u{00B7} \(s.landedToday) landed today \u{00B7} \(s.failedCount) failed"
     }
 
+    /// `My PRs: 3 open, 1 in MQ · 18 merged today`: the ones in MQ show in the queue list.
     static func mineLine(_ s: QueueSnapshot) -> String {
-        "My PRs, not with MQ: \(s.mineOpenCount) open · \(s.mineMergedToday) merged today"
+        let inQueue = s.mineInQueueCount > 0 ? ", \(s.mineInQueueCount) in MQ" : ""
+        return "My PRs: \(s.mineOpenCount) open\(inQueue) \u{00B7} \(s.mineMergedToday) merged today"
     }
 
     /// `Last 7d: MQ 91 landed (13/day) · Me 44 merged (6/day)`.

@@ -102,14 +102,14 @@ final class StatusItemController {
     private func appendSnapshot(_ s: QueueSnapshot, to menu: NSMenu) {
         menu.addItem(info(SummaryText.queueLine(s)))
         appendPRs(s.queued, total: s.queuedCount, to: menu)
-        if s.failedTodayCount > 0 {
+        if s.failedCount > 0 {
             menu.addItem(.separator())
-            menu.addItem(info("Failed today (\(s.failedTodayCount))"))
-            appendPRs(s.failedToday, total: s.failedTodayCount, to: menu)
+            menu.addItem(info("Failed (\(s.failedCount))"))
+            appendPRs(s.failed, total: s.failedCount, to: menu)
         }
         menu.addItem(.separator())
         menu.addItem(info(SummaryText.mineLine(s)))
-        appendPRs(s.mineOpen, total: s.mineOpenCount, to: menu)
+        appendPRs(s.mineOpen, total: s.mineOpenCount - s.mineInQueueCount, to: menu)
         menu.addItem(.separator())
         menu.addItem(info(SummaryText.weekLine(s)))
     }

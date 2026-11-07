@@ -23,9 +23,10 @@ final class ClientTests: XCTestCase {
         XCTAssertEqual(byAlias["queued"], "org:acme is:pr is:open label:\"ready to review\" -label:\"automerge failed\" -label:nomerge")
         XCTAssertEqual(byAlias["landed"], "org:acme is:pr is:merged label:autolanded merged:>=2026-11-05T00:00:00-08:00")
         XCTAssertEqual(byAlias["mineOpen"], "is:pr author:@me is:open")
-        XCTAssertEqual(byAlias["mineMerged"], "is:pr author:@me is:merged -label:autolanded merged:>=2026-11-05T00:00:00-08:00")
+        XCTAssertEqual(byAlias["failed"], "org:acme is:pr is:open label:\"automerge failed\"")
+        XCTAssertEqual(byAlias["mineMerged"], "is:pr author:@me is:merged merged:>=2026-11-05T00:00:00-08:00")
         XCTAssertEqual(byAlias["landedWeek"], "org:acme is:pr is:merged label:autolanded merged:>=2026-11-04T00:00:00-08:00")
-        XCTAssertEqual(byAlias["mineMergedWeek"], "is:pr author:@me is:merged -label:autolanded merged:>=2026-11-04T00:00:00-08:00")
+        XCTAssertEqual(byAlias["mineMergedWeek"], "is:pr author:@me is:merged merged:>=2026-11-04T00:00:00-08:00")
     }
 
     func testFetchPassesEverySearchToGh() throws {
