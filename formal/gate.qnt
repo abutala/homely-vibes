@@ -7,6 +7,7 @@
 // found 38 of 300 before the fix).
 //
 // max-steps: 25
+// verify: search-only  (three tasks over maps at 25 steps; not yet sized for Apalache in CI)
 module gate {
   // true = the code as shipped: after queueing, a task that was already cancelled drops itself
   // (CommandGate.swift: `if Task.isCancelled { dropWaiter(id)... }`). false = that line removed.

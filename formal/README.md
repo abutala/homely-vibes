@@ -25,8 +25,9 @@ make formal-verify 2>&1 | tee /tmp/formal_verify.log  # exhaustive proof of the 
 leaves your default `java` alone; the script finds it, or honours `JAVA_HOME`).
 
 None of these is part of `make setup`, `make lint` or `make test`, so the prod host never
-installs Quint. CI runs both ([formal.yml](../.github/workflows/formal.yml)) when `formal/`,
-`lib/file_lock.py`, `RingBeams/` or the Makefile change; it is not a required check.
+installs Quint. CI runs both ([formal.yml](../.github/workflows/formal.yml)) only on demand,
+with a 60-minute limit: `gh workflow run formal.yml --repo abutala/homely-vibes --ref <branch>`.
+Run `make formal` locally before pushing a model change. It is not a required check.
 
 Explore one property by hand (add `--mbt` for the action sequence):
 
@@ -44,6 +45,10 @@ so both a regression and a model that stops reproducing its bug fail.
 |---|---|---|---|
 | `make formal` ([check.sh](check.sh)) | `quint run`, randomized | a real counterexample | only "not found": never a proof |
 | `make formal-verify` ([verify.sh](verify.sh)) | `quint verify`, Apalache | a counterexample the solver built | a proof over every execution of the model |
+
+A model with a `// verify: search-only` line (today `ghost_order.qnt` and `gate.qnt`) is
+skipped by `verify.sh`: only the randomized search covers it until its state space is
+sized for a CI run.
 
 A proof is about the **model**: it holds only under the model's assumptions (A1 in
 [ring_token_lock.qnt](ring_token_lock.qnt)) and says nothing about whether the code matches

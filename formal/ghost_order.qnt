@@ -13,6 +13,7 @@
 // worst case, so a command August holds longer than that is not covered.
 //
 // max-steps: 14
+// verify: search-only  (lists of held commands; not yet sized for Apalache in CI)
 module ghost_order {
   // A1 ordering: true = August runs held cloud commands in arrival order.
   const fifo: bool

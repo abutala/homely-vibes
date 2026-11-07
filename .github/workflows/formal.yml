@@ -1,29 +1,12 @@
 name: Formal
 
 # Runs the Quint model checks (make formal) and the exhaustive proofs
-# (make formal-verify). Path-filtered: the model describes the Ring token lock,
-# so it only needs to run when the model or the code it describes changes. Not a
-# required check; a skipped run reports nothing.
+# (make formal-verify), on demand only (Amit, 2026-11-07: a proof run took
+# over 45 minutes and blocked a merge). Start it from the Actions tab or with
+# `gh workflow run formal.yml --repo abutala/homely-vibes --ref <branch>`.
+# Not a required check.
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "formal/**"
-      - "lib/file_lock.py"
-      - "RingBeams/**"
-      - "RingSecurity/**"
-      - "Makefile"
-      - ".github/workflows/formal.yml"
-  pull_request:
-    branches: [ "main" ]
-    paths:
-      - "formal/**"
-      - "lib/file_lock.py"
-      - "RingBeams/**"
-      - "RingSecurity/**"
-      - "Makefile"
-      - ".github/workflows/formal.yml"
   workflow_dispatch:
 
 permissions:
@@ -32,6 +15,7 @@ permissions:
 jobs:
   formal:
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v5
