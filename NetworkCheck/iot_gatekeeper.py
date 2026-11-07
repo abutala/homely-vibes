@@ -195,14 +195,14 @@ class IotGatekeeper:
 
     def _apply(self, plan: Plan, now: float, dry_run: bool) -> list[str]:
         """One push per device: a short message each, never a list to scan."""
-        for mac in plan.shared_macs:
+        for client in plan.shared:
             self._notice(
-                f"shared:{mac}",
-                f"Not blocked, also on another network: {mac}",
+                f"shared:{canonical_mac(client['mac'])}",
+                f"Not blocked, also on another network: {describe(client)}",
                 0,
                 now,
                 dry_run,
-                push=f"{mac}\n\nNot blocked: also on another network,\n"
+                push=f"{push_label(client)}\n\nNot blocked: also on another network,\n"
                 "and the Deco block is mesh-wide.",
             )
         if plan.refusal:

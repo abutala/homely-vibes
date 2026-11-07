@@ -80,7 +80,7 @@ class TestPlan:
         """The blocklist is mesh-wide, so this block would also cut main."""
         result = plan([client(KNOWN), client(STRANGER), client(STRANGER, "main")])
         assert result.to_block == []
-        assert result.shared_macs == [STRANGER]
+        assert [c["mac"] for c in result.shared] == [STRANGER]
 
     def test_an_empty_allowlist_blocks_nothing(self) -> None:
         result = plan_blocks([client(STRANGER)], frozenset(), frozenset(), 3)

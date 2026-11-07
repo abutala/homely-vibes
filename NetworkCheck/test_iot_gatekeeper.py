@@ -129,7 +129,8 @@ def test_each_shared_mac_gets_its_own_push(tmp_path: Path) -> None:
     deco = FakeDeco(rows + [{**r, "interface": "main"} for r in rows[1:]])
     gk, notifier = make(tmp_path, deco)
     gk.check_once(NOW)
-    assert [m.splitlines()[0] for m, _, _ in notifier.sent] == [STRANGER, other]
+    assert [m.splitlines()[1].split(" ")[0] for m, _, _ in notifier.sent] == [STRANGER, other]
+    assert all(m.startswith('"Secret Phone"') for m, _, _ in notifier.sent)
 
 
 class TestPushLabel:
