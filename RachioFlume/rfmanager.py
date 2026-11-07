@@ -19,6 +19,7 @@ from RachioFlume.hose_timer_processor import HoseTimerProcessor
 from RachioFlume.rachio_client import RachioClient, schedule_zones_from_device
 from RachioFlume.rachio_hose_client import RachioHoseClient
 from lib.MyPushover import Pushover
+from RachioFlume import report_format
 from RachioFlume.reporter import WeeklyReporter
 from lib.logger import get_logger
 from lib.config import get_config
@@ -394,10 +395,11 @@ def generate_report(args: argparse.Namespace) -> int:
         report = reporter.generate_period_report_with_dates(
             start_date, end_date, schedule_zones=_schedule_zones(logger)
         )
-        reporter.print_report(report)
+        for line in report_format.format_text(report).splitlines():
+            logger.info(line)
 
         if args.email:
-            reporter.email_report(report, alert=False)
+            report_format.email_report(report)
             logger.info("Report emailed")
 
         return 0

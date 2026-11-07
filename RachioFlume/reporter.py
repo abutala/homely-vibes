@@ -1,8 +1,7 @@
 """Weekly reporting system for water tracking data."""
 
 import json
-import textwrap
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -16,7 +15,6 @@ from RachioFlume.alert_rules import (
 from RachioFlume.data_storage import WaterTrackingDB
 from lib.config import get_config
 from lib.logger import get_logger
-from lib import Mailer
 
 
 @dataclass
@@ -33,6 +31,7 @@ class ZoneStats:
     threshold_gpm: float
     alert_sessions: int
     note: str = ""  # why the zone did not run in the period; "" when it ran
+    problem: bool = False  # an idle zone that needs a look (missed run, valve offline)
 
 
 @dataclass
@@ -47,8 +46,6 @@ class SkippedRun:
 
 # Hose valves have no controller zone number; sort them after real zones.
 HOSE_ZONE_SENTINEL = 999
-REPORT_WIDTH = 40  # width of the "=" rule; the email body must fit a phone
-NOTE_INDENT = 9  # an idle row's note starts after the 8-char name column
 
 
 def skip_reason(event_type: str) -> Optional[str]:
@@ -93,18 +90,23 @@ def _no_run_note(
     zone_number: int,
     skipped: List[SkippedRun],
     schedule_zones: Optional[Dict[str, List[int]]],
-) -> str:
-    """Why an enabled controller zone has no run in the period."""
+) -> tuple[str, bool]:
+    """Why an enabled controller zone has no run in the period, and whether that
+    is a problem: only a zone in an active schedule with no skip recorded is.
+    With schedules unknown (Rachio unreachable) nothing is called a problem.
+    """
     skips = [s for s in skipped if zone_number in s.zone_numbers]
     if skips:
-        return "skipped: " + ", ".join(f"{s.reason} {s.date:%m/%d}" for s in skips)
-    if schedule_zones is not None and not any(zone_number in z for z in schedule_zones.values()):
-        return "in no active schedule"
-    return "no run recorded"
+        return "skipped: " + ", ".join(f"{s.reason} {s.date:%m/%d}" for s in skips), False
+    if schedule_zones is None:
+        return "no run recorded", False
+    if not any(zone_number in z for z in schedule_zones.values()):
+        return "in no active schedule", False
+    return "scheduled, but no run or skip recorded", True
 
 
-def _idle_row(zone_number: int, zone_name: str, note: str) -> ZoneStats:
-    return ZoneStats(zone_number, zone_name, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, note)
+def _idle_row(zone_number: int, zone_name: str, note: str, problem: bool) -> ZoneStats:
+    return ZoneStats(zone_number, zone_name, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, note, problem)
 
 
 @dataclass
@@ -126,8 +128,6 @@ class WaterUsageReport:
     period_end: datetime
     summary: ReportSummary
     zones: List[ZoneStats]
-    skipped_runs: List[SkippedRun] = field(default_factory=list)
-    disabled_zones: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for compatibility."""
@@ -296,7 +296,7 @@ class WeeklyReporter:
             )
             if run
         ]
-        idle_rows, disabled_zones = self._idle_zones(
+        idle_rows = self._idle_zones(
             {z.zone_number for z in formatted_zones}, ran_valve_ids, skipped, schedule_zones
         )
         formatted_zones.extend(idle_rows)
@@ -319,8 +319,6 @@ class WeeklyReporter:
             period_end=period_end,
             summary=summary,
             zones=formatted_zones,
-            skipped_runs=skipped,
-            disabled_zones=disabled_zones,
         )
 
     def _idle_zones(
@@ -329,27 +327,27 @@ class WeeklyReporter:
         ran_valve_ids: set[str],
         skipped: List[SkippedRun],
         schedule_zones: Optional[Dict[str, List[int]]],
-    ) -> tuple[List[ZoneStats], List[str]]:
+    ) -> List[ZoneStats]:
         """Rows for enabled zones and valves with no run in the period, each with
-        its reason, plus the names of disabled controller zones.
+        its reason. Disabled zones get no row.
         """
         rows: List[ZoneStats] = []
-        disabled: List[str] = []
         for z in self.db.get_controller_zones():
             if z["zone_number"] in ran_zone_numbers:
                 continue
-            name = compact_zone_label(z["name"])
             if not z["enabled"]:
-                disabled.append(name)
                 continue
-            note = _no_run_note(z["zone_number"], skipped, schedule_zones)
-            rows.append(_idle_row(z["zone_number"], name, note))
+            name = compact_zone_label(z["name"])
+            note, problem = _no_run_note(z["zone_number"], skipped, schedule_zones)
+            rows.append(_idle_row(z["zone_number"], name, note, problem))
         for v in self.db.get_hose_valves():
             if v["id"] in ran_valve_ids:
                 continue
-            note = "no run recorded" + ("" if v["connected"] else ", offline")
-            rows.append(_idle_row(HOSE_ZONE_SENTINEL, compact_zone_label(v["name"]), note))
-        return rows, disabled
+            # An idle valve is often just out of season; only an offline one needs a look.
+            note = "no run recorded" if v["connected"] else "offline, no run recorded"
+            label = compact_zone_label(v["name"])
+            rows.append(_idle_row(HOSE_ZONE_SENTINEL, label, note, not v["connected"]))
+        return rows
 
     def save_report_to_file(self, report: WaterUsageReport, filename: str) -> None:
         """Save report to JSON file.
@@ -363,101 +361,6 @@ class WeeklyReporter:
 
         with open(output_path, "w") as f:
             json.dump(report.to_dict(), f, indent=2, default=str)
-
-    def format_report_text(self, report: WaterUsageReport) -> str:
-        """Generate the fixed-width plaintext body of the report.
-
-        Wrapped in `<html><body><pre>...</pre></body></html>` by
-        `format_report_html` for email delivery — Mailer auto-detects the
-        `<html>` prefix and sends HTML. Kept as a separate step so
-        `print_report` and tests can inspect the raw text.
-        """
-        lines: List[str] = []
-
-        lines.append("WATER USAGE REPORT")
-        lines.append(f"Period: {report.period_start.date()} to {report.period_end.date()}")
-        lines.append("=" * REPORT_WIDTH)
-
-        lines.append("")
-        lines.append("SUMMARY:")
-        lines.append(f"  Total duration: {report.summary.total_duration_minutes} min")
-        lines.append(
-            f"  Total water used: {int(round(report.summary.total_water_used_gallons))} gallons"
-        )
-        lines.append(f"  Zones watered: {report.summary.zones_watered}")
-
-        if report.zones:
-            lines.append("")
-            lines.append("ZONE DETAILS:")
-            # Numeric columns are right-aligned so decimals and thousands align
-            # visually down the column. Name stays left-aligned.
-            # Thr = anomaly threshold GPM (blank if zone not configured).
-            # Alrt = # sessions in period where session avg flow > threshold.
-            header = f"{'Name':<8} {'Min':>6} {'Gals':>5} {'GPM':>5} {'Thr':>5} {'Alrt':>4}"
-            lines.append(header)
-            lines.append("-" * len(header))
-
-            for zone in report.zones:
-                if zone.note:
-                    # Wrap under the name column so a long note stays inside the
-                    # 40-char rule and the <pre> body never scrolls on a phone.
-                    note_lines = textwrap.wrap(zone.note, width=REPORT_WIDTH - NOTE_INDENT)
-                    lines.append(f"{zone.zone_name[:8]:<8} {note_lines[0]}")
-                    lines.extend(" " * NOTE_INDENT + extra for extra in note_lines[1:])
-                    continue
-                thr = f"{zone.threshold_gpm:.1f}" if zone.threshold_gpm > 0 else "-"
-                alrt = str(zone.alert_sessions) if zone.alert_sessions else "-"
-                lines.append(
-                    f"{zone.zone_name[:8]:<8} "
-                    f"{zone.total_duration_minutes:>6.1f} "
-                    f"{int(round(zone.total_water_gallons)):>5d} "
-                    f"{zone.average_flow_rate_gpm:>5.1f} "
-                    f"{thr:>5} "
-                    f"{alrt:>4}"
-                )
-
-        if report.skipped_runs:
-            lines.append("")
-            lines.append("SKIPPED RUNS:")
-            # One row per run, cut at the width: the zone rows above already
-            # name each skipped zone, so a wrapped zone list only broke the table.
-            reason_width = max(len(run.reason) for run in report.skipped_runs)
-            for run in report.skipped_runs:
-                row = f"  {run.date:%m/%d} {run.reason:<{reason_width}} {run.schedule}"
-                lines.append(row[:REPORT_WIDTH])
-
-        if report.disabled_zones:
-            lines.append("")
-            lines.extend(
-                textwrap.wrap(
-                    f"Disabled: {', '.join(report.disabled_zones)}",
-                    width=REPORT_WIDTH,
-                    subsequent_indent=" " * len("Disabled: "),
-                )
-            )
-
-        lines.append("")
-        lines.append("=" * REPORT_WIDTH)
-        return "\n".join(lines)
-
-    def format_report_html(self, report: WaterUsageReport) -> str:
-        """HTML wrapper so iOS Mail / Gmail render fixed-width without wrap."""
-        body = self.format_report_text(report)
-        return (
-            "<html><body>"
-            "<pre style=\"font-family: 'SF Mono', Menlo, Consolas, monospace; "
-            'font-size: 13px; line-height: 1.3;">'
-            f"{body}"
-            "</pre></body></html>"
-        )
-
-    def print_report(self, report: WaterUsageReport) -> None:
-        """Print report in a readable format."""
-        report_text = self.format_report_text(report)
-
-        # Log each line separately for proper logger formatting
-        for line in report_text.split("\n"):
-            self.logger.info(line)
 
     def print_raw_report(self, report: Dict[str, Any]) -> None:
         """Print raw data report in a readable format."""
@@ -491,29 +394,6 @@ class WeeklyReporter:
                 )
 
         self.logger.info("=" * 35)
-
-    def email_report(self, report: WaterUsageReport, alert: bool = False) -> None:
-        """Email report in formatted text.
-
-        Args:
-            report: Report data
-            alert: Whether to mark as alert email
-        """
-        # HTML wrapper — Mailer auto-detects the `<html>` prefix and sends
-        # multipart/HTML. Renders fixed-width in iOS Mail / Gmail without wrap.
-        report_html = self.format_report_html(report)
-
-        start_date = report.period_start.date()
-        subject_prefix = "Period"
-
-        Mailer.sendmail(
-            topic=f"[Water Report] {subject_prefix} {start_date}",
-            alert=alert,
-            message=report_html,
-            always_email=True,
-        )
-
-        self.logger.info(f"Report emailed for {subject_prefix.lower()} starting {start_date}")
 
     def generate_raw_data_report(self, hours_back: int = 24) -> Dict[str, Any]:
         """Generate raw data report with 5-minute increments.

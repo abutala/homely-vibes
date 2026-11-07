@@ -6,6 +6,16 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ## Incidents
 
+### 2026-11-07 — the weekly email hid its problems
+
+The 10/31–11/07 email was a 40-column `<pre>` table. Z8 ran at 4.2 GPM against a
+1.8 limit, Z13 crossed its limit once, and Z2 ran 6 minutes with 0 gallons measured.
+The first two were a `1` in the `Alrt` column; the third had no flag at all. Four
+lines of disabled zones and a skipped-runs list repeated what never changes. The
+email is now HTML: a `Needs attention` box first, the subject carries the problem
+count, and expected idle zones fold into grey `Not run:` lines. A zone that ran with no
+water measured is a problem: a dead valve or a Flume gap looks exactly like that.
+
 ### 2026-10-25 — Skipped zones vanished from the weekly email
 
 The 10/18–10/25 report listed 10 rows and silently left out Z6, Z10 and Z11. The

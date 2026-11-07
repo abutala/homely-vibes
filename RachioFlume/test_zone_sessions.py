@@ -238,7 +238,7 @@ class TestWeeklyReportAlerts:
 
     def test_controller_sessions_over_threshold_are_counted(self, db: WaterTrackingDB) -> None:
         # The report read "avg_flow_rate" off per-session rows, a key only the aggregate
-        # query produces, so the Alrt column was blank for every controller zone.
+        # query produces, so the alert count was blank for every controller zone.
         db.save_watering_events(
             [
                 event("06:00:00", 1, "ZONE_STARTED"),
