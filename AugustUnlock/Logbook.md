@@ -1074,5 +1074,6 @@ timer from the tap about 3 s after it, and left at the end; the system log
 had the activity dismissed 12 s after its end. `XCUIScreen` screenshots taken
 inside the UI test never showed the Island, while `xcrun simctl io
 screenshot` frames taken at the same time did, so the UI test checks the
-tap, not the Island. Not yet seen on the phone: the real stages and the
-`OpenDoorIntent` parameters under `LiveActivityIntent`.
+tap, not the Island. On the phone (02:40 UTC, both doors over Bluetooth in
+2.6 and 6.0 s from the widget, with the new `name` parameter) Amit: "island
+looks good".
