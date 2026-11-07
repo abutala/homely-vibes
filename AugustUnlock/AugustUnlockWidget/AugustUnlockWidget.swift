@@ -8,7 +8,6 @@ import WidgetKit
 /// app never comes forward. The widget shares no code with the app's
 /// screens; it reads the app's sign-in (`WidgetCloud`) and the per-door tap
 /// state (`DoorStateStore`) from the Keychain.
-@main
 struct AugustUnlockWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "Doors", provider: DoorsProvider()) { entry in
@@ -119,7 +118,7 @@ struct DoorsView: View {
                         // door alone reads "Unlocking…" during the tap. The reload
                         // after the tap draws the true mark. The intent ignores the
                         // toggle's value.
-                        Toggle(isOn: entry.marks[position] == .running, intent: OpenDoorIntent(position: position, lockID: entry.locks[position])) {
+                        Toggle(isOn: entry.marks[position] == .running, intent: OpenDoorIntent(position: position, lockID: entry.locks[position], name: name)) {
                             caption(name, entry.marks[position])
                         }
                         .toggleStyle(DoorToggleStyle())

@@ -47,7 +47,11 @@ struct DoorState: Codable, Equatable {
         return true
     }
 
-    mutating func finish(_ position: Int, outcome: Outcome, at now: Date) {
+    /// Ends the tap that started at `startedAt`. A tap that outlived
+    /// `runningLimit` (a frozen process) writes nothing over a newer tap's
+    /// mark; a door with no mark (it was never started here) takes the result.
+    mutating func finish(_ position: Int, startedAt: Date, outcome: Outcome, at now: Date) {
+        if let current = running[String(position)], current != startedAt { return }
         running[String(position)] = nil
         results[String(position)] = Result(outcome: outcome, at: now)
     }

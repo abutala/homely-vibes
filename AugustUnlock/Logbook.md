@@ -1037,3 +1037,94 @@ Not measured: whether the Lock Screen keeps an ended activity for the
 Today view (expected to do nothing, as for every widget button). Found on
 the Simulator: a UI test that calls `launch()` or `activate()` on the app
 while the intent runs starts a new process and kills the intent's.
+
+## 2026-11-07 — The widget tap's Live Activity, built from the rig
+
+Built on the Live measurement above, after a scoped TRIAL (memory,
+`deviation_labs/homely_vibes_live_activity_trial_2026-11-07.md`). What the
+TRIAL changed from the first sketch:
+
+- **The stages come from two lines, not from the Bluetooth link.** The
+  link's timing line has no hook, and needs none: the owner's stages are
+  only the path. `operateHoldingGate` reports `bluetooth` before
+  `AugustBLELink.run` and `cloud` before the request goes out, both after
+  the command gate and the key check, so a door waiting for the other
+  door's command, or a lock with no key, never claims Bluetooth.
+- **One stream, one task.** The client reports from inside the deadline's
+  task, off the main actor. A task per update could land out of order; the
+  stages go through an `AsyncStream` to one task, and the end waits for it,
+  so no update lands after the end.
+- **Start after the repeat-tap check.** A repeat tap on a running door
+  returns early; an activity started before that check would never end.
+- **One activity at a time.** Overlap empties the Island early (the rig), so
+  a tap that starts while another runs in the process gets none. Each start
+  first ends any older activity (one in its Lock Screen hold, or one a dead
+  process left), and a stale one reads "Check the door".
+- **No hold on the Island.** It drops an ended activity; the Lock Screen and
+  the widget keep the result (Amit's call).
+- **Nothing waits before the unlock, and the widget's result comes first.**
+  The pre-push review found that ending old activities was awaited before
+  the unlock, and the activity's end before the widget's result write, so a
+  slow ActivityKit call could cost the unlock time or, at the ~30 s limit,
+  the widget's result. Old activities now end on their own tasks, the
+  request is synchronous, and the result is written before the end.
+
+On the Simulator (iOS 27.2) the compact Island showed the lock icon and the
+timer from the tap about 3 s after it, and left at the end; the system log
+had the activity dismissed 12 s after its end. `XCUIScreen` screenshots taken
+inside the UI test never showed the Island, while `xcrun simctl io
+screenshot` frames taken at the same time did, so the UI test checks the
+tap, not the Island. On the phone (02:40 UTC, both doors over Bluetooth in
+2.6 and 6.0 s from the widget, with the new `name` parameter) Amit: "island
+looks good".
+
+## 2026-11-07 — Robustness TRIAL with formal verification: what changed
+
+Asked for after the front door failed to lock from the app (memory,
+`deviation_labs/homely_vibes_august_robustness_trial_2026-11-07.md`). The
+front door is direct, not bridged (the garage is), and rarely answers over
+Bluetooth: 2 connects (3.7 and 4.0 s) and 2 misses in three days, against
+28 garage connects of 0.2–1.5 s. Both lock attempts spent 12 s on a scan
+that never saw it, then the cloud: the first request was cancelled by a
+re-tap after 1.6 s, the second cut by the 30 s deadline after 19.4 s while
+the screen said "Timed out". Two new Quint models and the session's own
+reading of `app.log` found what to change:
+
+- **A tap after a failed lock unlocked.** A failure set the door unknown,
+  and a tap on an unknown door unlocks. The phone did it twice on 11-03
+  (a jam on lock, then the next tap unlocked). Now a tap after a failure
+  repeats the failed command (`retry`; `noUnlockAfterFailedLock` in the
+  model, `withDeadline` violates, `withRetry` holds).
+- **The screen could show a state the lock was not in, unwarned.** A cloud
+  request the phone drops still runs at August and can land after the next
+  command (`ghost_order.qnt`, a 6-step trace). Now dropping one shows "An
+  earlier request may still move the door" for 60 s, and the expiry of the
+  background time makes the door unknown (`ghostWarned` holds
+  `honestOrWarned` whether August keeps order or not). Routing the next
+  command to the cloud was rejected: it holds only if August runs requests
+  in order.
+- **"Timed out" when the request was with August.** The screen now says
+  "Sent to August, no reply yet", lets the request run to 60 s (Amit) and
+  shows a late reply as a line, never as a success.
+- **One gate per lock** (Amit): a tap on one door no longer waits for the
+  other door's command; `gate.qnt` checks the gate itself.
+- Smaller: the cloud fallback's state read used the selected lock, not the
+  commanded one, so a widget tap on the other door could report the wrong
+  door; a read that disagrees with the command is now unknown. A cancel
+  that landed before the Bluetooth command registered was lost (a Swift
+  probe showed it). A tap older than 35 s could clear a newer tap's widget
+  mark. Old Live Activities get up to 0.5 s to end before a new one starts,
+  and none wait in the usual case. An August reply without the offline key
+  no longer deletes the stored one. The three-item key migration is gone.
+- **Logging.** Cancel and jam lines name the lock; a `cloud … sent` line
+  marks the point after which August holds the request; after a request
+  the phone gave up on, or a jam, August's door state is read at +10 s and
+  +30 s and logged, so the next "it did not lock" has an answer.
+
+Refuted: remembering a Bluetooth miss per lock and cutting the next setup to
+2 s (it would have cut both front-door connects that worked, and for the
+garage it speeds up the bridge loop of 2026-11-03), and skipping Bluetooth
+while the bridge is busy. Open, measured: the garage's six "jammed" (0x1F,
+yalexs `MECH_POSITION`) reports. Four had no earlier movement from us and two
+followed an unlock by 1–3 s; the door-state reads after a jam will say more.
+

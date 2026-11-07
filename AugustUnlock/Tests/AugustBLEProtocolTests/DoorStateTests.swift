@@ -13,10 +13,20 @@ final class DoorStateTests: XCTestCase {
         XCTAssertEqual(state.marks(count: 2, at: t0), [.none, .running])
     }
 
+    func testAnOldTapCannotClearANewerTapsMark() {
+        var state = DoorState()
+        _ = state.start(0, at: t0)
+        XCTAssertTrue(state.start(0, at: t0 + DoorState.runningLimit + 1), "the old tap's mark expired")
+        state.finish(0, startedAt: t0, outcome: .ok, at: t0 + DoorState.runningLimit + 2)
+        XCTAssertEqual(state.marks(count: 1, at: t0 + DoorState.runningLimit + 2), [.running], "the newer tap still runs")
+        state.finish(0, startedAt: t0 + DoorState.runningLimit + 1, outcome: .failed, at: t0 + DoorState.runningLimit + 3)
+        XCTAssertEqual(state.marks(count: 1, at: t0 + DoorState.runningLimit + 3), [.failed])
+    }
+
     func testAResultHoldsThenClears() {
         var state = DoorState()
         _ = state.start(0, at: t0)
-        state.finish(0, outcome: .ok, at: t0)
+        state.finish(0, startedAt: t0, outcome: .ok, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0), [.ok, .none])
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.hold - 0.1), [.ok, .none])
         XCTAssertEqual(state.marks(count: 2, at: t0 + DoorState.hold), [.none, .none])
@@ -26,7 +36,7 @@ final class DoorStateTests: XCTestCase {
 
     func testAFailureShowsAndANewTapReplacesIt() {
         var state = DoorState()
-        state.finish(1, outcome: .failed, at: t0)
+        state.finish(1, startedAt: t0, outcome: .failed, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0 + 1), [.none, .failed])
         _ = state.start(1, at: t0 + 1)
         XCTAssertEqual(state.marks(count: 2, at: t0 + 1), [.none, .running])
@@ -37,7 +47,7 @@ final class DoorStateTests: XCTestCase {
         var state = DoorState()
         _ = state.start(0, at: t0)
         _ = state.start(1, at: t0)
-        state.finish(0, outcome: .ok, at: t0)
+        state.finish(0, startedAt: t0, outcome: .ok, at: t0)
         XCTAssertEqual(state.marks(count: 2, at: t0), [.ok, .running])
         // Door 1 clears at its own hold; door 2's limit is a later entry.
         XCTAssertEqual(state.clearDates(at: t0), [t0 + DoorState.hold, t0 + DoorState.runningLimit])
@@ -63,7 +73,7 @@ final class DoorStateTests: XCTestCase {
     func testACloudLegCutOffAfterItsSendShowsNoReply() {
         var state = DoorState()
         _ = state.start(0, at: t0)
-        state.finish(0, outcome: .noReply, at: t0 + 28)
+        state.finish(0, startedAt: t0, outcome: .noReply, at: t0 + 28)
         XCTAssertEqual(state.marks(count: 2, at: t0 + 28), [.noReply, .none])
         XCTAssertEqual(state.marks(count: 2, at: t0 + 28 + DoorState.hold), [.none, .none])
     }
@@ -79,7 +89,7 @@ final class DoorStateTests: XCTestCase {
     func testRoundTripsThroughJSON() throws {
         var state = DoorState()
         _ = state.start(0, at: t0)
-        state.finish(1, outcome: .failed, at: t0)
+        state.finish(1, startedAt: t0, outcome: .failed, at: t0)
         let data = try JSONEncoder().encode(state)
         XCTAssertEqual(try JSONDecoder().decode(DoorState.self, from: data), state)
     }
