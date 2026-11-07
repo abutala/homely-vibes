@@ -46,7 +46,7 @@ class Plan:
     strangers: list[dict[str, Any]] = field(default_factory=list)
     # Unknown on the IoT network but seen elsewhere too. The blocklist is
     # mesh-wide by MAC, so blocking these would also cut the main network.
-    shared_macs: list[str] = field(default_factory=list)
+    shared: list[dict[str, Any]] = field(default_factory=list)
     refusal: Optional[str] = None
 
 
@@ -78,14 +78,15 @@ def plan_blocks(
         and canonical_mac(c["mac"]) not in blocked
     ]
     shared = sorted(
-        canonical_mac(c["mac"]) for c in unknown if canonical_mac(c["mac"]) in elsewhere
+        (c for c in unknown if canonical_mac(c["mac"]) in elsewhere),
+        key=lambda c: canonical_mac(c["mac"]),
     )
     strangers = [c for c in unknown if canonical_mac(c["mac"]) not in elsewhere]
 
     if len(strangers) > max_blocks:
         return Plan(
             strangers=strangers,
-            shared_macs=shared,
+            shared=shared,
             refusal=f"{len(strangers)} unknown devices is more than the cap of {max_blocks}",
         )
-    return Plan(to_block=strangers, strangers=strangers, shared_macs=shared)
+    return Plan(to_block=strangers, strangers=strangers, shared=shared)
