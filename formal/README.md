@@ -10,6 +10,7 @@ the implementation is in. Gotchas and findings: [Logbook.md](Logbook.md).
 |---|---|
 | [ring_token_lock.qnt](ring_token_lock.qnt) | Is the flock around the shared Ring refresh token airtight? Instances: `current` (before the sidecar inherited the lock), `orphanFixed` (the code now), `allFixed` (`auth` also locked: not built). |
 | [august_unlock_command.qnt](august_unlock_command.qnt) | Can an AugustUnlock command hold the screen after the phone naps, can a return to the app unlock by itself after a timeout, is Change Lock ever refused, and what does a cloud command the phone gave up on do? Instances: `beforeDeadline` (before #57), `deadlineOnly` (#57's first push), `withDeadline` (main), `resumeOnly` (main if a passed deadline does not fire on wake). |
+| [screenshare_connect.qnt](screenshare_connect.qnt) | Does a ScreenShare tunnel app's launch leave a hung window or a dead tunnel behind, fail on a healthy link, end a working session or a password prompt, take a frozen session for a live one, or reopen what the user cancelled? Instances: `shareMain` (before 2026-11-06), `shareProposed` (first retry design), `shareFinal` (the launcher now). Proved with TLC (`// backend: tlc`). |
 
 ## Setup and run
 
@@ -20,11 +21,13 @@ make formal-verify 2>&1 | tee /tmp/formal_verify.log  # exhaustive proof of the 
 ```
 
 `formal-verify` needs JDK 21 (macOS: `brew install openjdk@21`, which is keg-only and
-leaves your default `java` alone; the script finds it, or honours `JAVA_HOME`).
+leaves your default `java` alone; the scripts find it, or honour `JAVA_HOME`). So does
+`formal` for a model marked `// backend: tlc`: both scripts check it with TLC, which runs
+from the Apalache jar that `formal-verify` downloads, so run `formal-verify` once first.
 
 None of these is part of `make setup`, `make lint` or `make test`, so the prod host never
-installs Quint. CI runs both ([formal.yml](../.github/workflows/formal.yml)) when `formal/`,
-`lib/file_lock.py`, `RingBeams/` or the Makefile change; it is not a required check.
+installs Quint. CI runs both ([formal.yml](../.github/workflows/formal.yml)) when a model or
+the code it describes changes (the paths are in that file); it is not a required check.
 
 Explore one property by hand (add `--mbt` for the action sequence):
 
@@ -40,8 +43,8 @@ so both a regression and a model that stops reproducing its bug fail.
 
 | Check | Engine | "violated" means | "holds" means |
 |---|---|---|---|
-| `make formal` ([check.sh](check.sh)) | `quint run`, randomized | a real counterexample | only "not found": never a proof |
-| `make formal-verify` ([verify.sh](verify.sh)) | `quint verify`, Apalache | a counterexample the solver built | a proof over every execution of the model |
+| `make formal` ([check.sh](check.sh)) | `quint run`, randomized (TLC for a `// backend: tlc` model) | a real counterexample | only "not found": never a proof (TLC: a proof) |
+| `make formal-verify` ([verify.sh](verify.sh)) | `quint verify`, Apalache (TLC for a model with `// backend: tlc`) | a counterexample the checker built | a proof over every execution of the model |
 
 A proof is about the **model**: it holds only under the model's assumptions (A1 in
 [ring_token_lock.qnt](ring_token_lock.qnt)) and says nothing about whether the code matches
@@ -57,6 +60,7 @@ a test per modelled hazard, named for the model property it mirrors:
 |---|---|
 | `lockedWritersExclusive`, sidecar orphan | `lib/test_file_lock.py` and `RingBeams/test_beams_manager.py`, the `*_after_parent_is_killed` tests |
 | `noStuckCommand`, `noAutoUnlockAfterAwayTimeout`, `changeLockAlwaysPossible` | `AugustUnlock/Tests/AugustBLEProtocolTests/CommandMachineTests.swift` (the pure `CommandMachine` the app's view drives; a stress run with simulated Bluetooth and cloud) |
+| `cleanFailure`, `noLiveSessionKilled`, `promptNeverKilled` and the rest of `screenshare_connect` | `ScreenShare/test_build_app.py` (the probe and stop shell against real local sockets) and `ScreenShare/test_launcher_decide.py` (the launcher's pure `decide` and `classify` handlers under `osascript`) |
 
 Trace validation (replay real logs against the model) is the next step up.
 

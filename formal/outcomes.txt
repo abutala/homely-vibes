@@ -47,3 +47,44 @@ beforeDeadline  noSurpriseMoves               violated
 deadlineOnly    noSurpriseMoves               violated
 withDeadline    noSurpriseMoves               violated
 resumeOnly      noSurpriseMoves               violated
+
+# screenshare_connect.qnt — one launch of a ScreenShare tunnel app. shareMain is
+# main before 2026-11-06 (it reuses a stale tunnel and leaves a hung window);
+# shareProposed is the first retry design; shareFinal is the design after the TRIAL.
+shareMain       cleanFailure            violated
+shareProposed   cleanFailure            violated
+shareFinal      cleanFailure            holds
+
+shareMain       cleanSuccess            violated
+shareProposed   cleanSuccess            violated
+shareFinal      cleanSuccess            holds
+
+shareMain       noFailedHealthyLaunch   violated
+shareProposed   noFailedHealthyLaunch   violated
+shareFinal      noFailedHealthyLaunch   holds
+
+shareMain       successIsLive           violated
+shareProposed   successIsLive           violated
+shareFinal      successIsLive           holds
+
+shareMain       noLiveSessionKilled     holds
+shareProposed   noLiveSessionKilled     violated
+shareFinal      noLiveSessionKilled     holds
+
+shareMain       promptNeverKilled       holds
+shareProposed   promptNeverKilled       violated
+shareFinal      promptNeverKilled       holds
+
+shareMain       respectsUserCancel      holds
+shareProposed   respectsUserCancel      violated
+shareFinal      respectsUserCancel      holds
+
+shareMain       boundedAttempts         holds
+shareProposed   boundedAttempts         holds
+shareFinal      boundedAttempts         holds
+
+# The 30 s launch deadline the owner chose on 2026-11-06; main and the first design
+# wait 90 s or 30 s per attempt.
+shareMain       withinDeadline          violated
+shareProposed   withinDeadline          violated
+shareFinal      withinDeadline          holds

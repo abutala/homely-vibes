@@ -1,9 +1,10 @@
 name: Formal
 
-# Runs the Quint model checks (make formal) and the exhaustive proofs
-# (make formal-verify). Path-filtered: the model describes the Ring token lock,
-# so it only needs to run when the model or the code it describes changes. Not a
-# required check; a skipped run reports nothing.
+# Runs the exhaustive proofs (make formal-verify) and the model checks (make
+# formal). Proofs first: they download the Apalache jar, whose TLC the
+# `// backend: tlc` models need in both steps. Path-filtered: it runs when a
+# model or the code it describes changes. Not a required check; a skipped run
+# reports nothing.
 
 on:
   push:
@@ -13,6 +14,8 @@ on:
       - "lib/file_lock.py"
       - "RingBeams/**"
       - "RingSecurity/**"
+      - "ScreenShare/launcher.applescript"
+      - "ScreenShare/build_app.py"
       - "Makefile"
       - ".github/workflows/formal.yml"
   pull_request:
@@ -22,6 +25,8 @@ on:
       - "lib/file_lock.py"
       - "RingBeams/**"
       - "RingSecurity/**"
+      - "ScreenShare/launcher.applescript"
+      - "ScreenShare/build_app.py"
       - "Makefile"
       - ".github/workflows/formal.yml"
   workflow_dispatch:
@@ -60,8 +65,8 @@ jobs:
       - name: Install Quint
         run: make formal-deps
 
-      - name: Check models
-        run: make formal
-
       - name: Prove models
         run: make formal-verify
+
+      - name: Check models
+        run: make formal
