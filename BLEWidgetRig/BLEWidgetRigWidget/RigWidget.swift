@@ -54,6 +54,14 @@ struct RigView: View {
     let entry: RigEntry
 
     var body: some View {
+        VStack(spacing: 4) {
+            buttons
+            Text(entry.caption).font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+        }
+        .containerBackground(.fill.tertiary, for: .widget)
+    }
+
+    private var buttons: some View {
         HStack(spacing: 0) {
             VStack(spacing: 6) {
                 Button(intent: RigBackgroundProbeIntent()) { icon("moon.fill") }.accessibilityLabel("Background")
@@ -72,8 +80,6 @@ struct RigView: View {
             .frame(maxWidth: .infinity)
         }
         .tint(.primary)
-        .overlay(alignment: .bottom) { Text(entry.caption).font(.caption2).monospacedDigit().foregroundStyle(.secondary) }
-        .containerBackground(.fill.tertiary, for: .widget)
     }
 
     private func icon(_ name: String) -> some View {
