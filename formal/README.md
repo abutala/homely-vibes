@@ -26,8 +26,9 @@ leaves your default `java` alone; the scripts find it, or honour `JAVA_HOME`). S
 from the Apalache jar that `formal-verify` downloads, so run `formal-verify` once first.
 
 None of these is part of `make setup`, `make lint` or `make test`, so the prod host never
-installs Quint. CI runs both ([formal.yml](../.github/workflows/formal.yml)) when a model or
-the code it describes changes (the paths are in that file); it is not a required check.
+installs Quint. CI runs both ([formal.yml](../.github/workflows/formal.yml)) on demand only:
+`gh workflow run formal.yml --ref <branch>`, or Run workflow on the Actions tab. Run it, or the
+two targets locally, when a model or the code it describes changes; it is not a required check.
 
 Explore one property by hand (add `--mbt` for the action sequence):
 

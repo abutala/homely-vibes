@@ -1,34 +1,12 @@
 name: Formal
 
 # Runs the exhaustive proofs (make formal-verify) and the model checks (make
-# formal). Proofs first: they download the Apalache jar, whose TLC the
-# `// backend: tlc` models need in both steps. Path-filtered: it runs when a
-# model or the code it describes changes. Not a required check; a skipped run
-# reports nothing.
+# formal), on demand only: Actions > Formal > Run workflow, or
+# `gh workflow run formal.yml --ref <branch>`. Proofs first: they download the
+# Apalache jar, whose TLC the `// backend: tlc` models need in both steps. Not a
+# required check.
 
 on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "formal/**"
-      - "lib/file_lock.py"
-      - "RingBeams/**"
-      - "RingSecurity/**"
-      - "ScreenShare/launcher.applescript"
-      - "ScreenShare/build_app.py"
-      - "Makefile"
-      - ".github/workflows/formal.yml"
-  pull_request:
-    branches: [ "main" ]
-    paths:
-      - "formal/**"
-      - "lib/file_lock.py"
-      - "RingBeams/**"
-      - "RingSecurity/**"
-      - "ScreenShare/launcher.applescript"
-      - "ScreenShare/build_app.py"
-      - "Makefile"
-      - ".github/workflows/formal.yml"
   workflow_dispatch:
 
 permissions:
