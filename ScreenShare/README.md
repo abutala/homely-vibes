@@ -68,10 +68,16 @@ The app starts the tunnel itself. Setup is config only:
 4. Launch the app. The first launch asks for the remote password once: tick "Remember this
    password in my keychain". Screen Sharing then saves a `localhost` entry with the same name.
 
-On launch the app starts `ssh -L <local_port>:localhost:<remote_port>` in the background,
-unless that port already listens, which means a tunnel is up. The tunnel closes when the
-session ends, about 30 s after its link dies, or after 5 minutes unused. If SSH fails, or no
-session shows within 90 s, the app says why and offers `fallback_app`.
+On launch the app reuses a tunnel only if the server's VNC answers through it. Otherwise it
+stops the old tunnel and starts `ssh -L <local_port>:localhost:<remote_port>` in the
+background, then checks that VNC answers. The tunnel closes when the session ends, about 30 s
+after its link dies, or after 5 minutes unused.
+
+A connect that fails (SSH error, VNC does not answer, "Connection failed") is cleaned up and
+tried again, up to 3 times while at least 10 s of the launch's 30 s is left. A connect that hangs on "Connecting…" is cancelled when the
+launch reaches 30 s. Then the app says why and offers `fallback_app`, so a dead link reaches
+the fallback in about 30 s. A password prompt stops the clock: the app waits up to 90 s
+for it. If you click Cancel, the app stops and does not retry.
 
 The fit needs no setting: from Actual Size the app zooms in until a scroll bar appears, then
 zooms out one step. A remote larger than this screen gets scaling instead.

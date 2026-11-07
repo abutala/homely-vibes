@@ -1,6 +1,12 @@
 import plistlib
+import shutil
 import socket
 import subprocess
+import sys
+import threading
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -9,6 +15,9 @@ from lib.config import SshTunnelConfig
 from ScreenShare.icon import initials, make_icon
 from ScreenShare.build_app import (
     _absolute_path,
+    _bash,
+    _shell_functions,
+    DEADLINE_SECONDS,
     TEMPLATE,
     WAIT_SECONDS,
     Connection,
@@ -21,6 +30,7 @@ from ScreenShare.build_app import (
     find_connection,
     parse_connections,
     render,
+    stop_command,
     through_tunnel,
     tunnel_command,
 )
@@ -90,10 +100,16 @@ def test_render_fills_every_placeholder() -> None:
     assert render("__URL__|__TITLE__", conn) == '"vnc://x"|"Ma\\"c"'
 
 
-def test_render_fills_tunnel_fallback_and_wait() -> None:
+def test_render_fills_tunnel_stop_fallback_and_times() -> None:
     conn = Connection(name="n", address="a", url="vnc://a")
-    out = render("__TUNNEL__|__FALLBACK__|__WAIT__", conn, "ssh x", "Remote App")
-    assert out == f'"ssh x"|"Remote App"|{WAIT_SECONDS}'
+    out = render(
+        "__TUNNEL__|__STOP__|__FALLBACK__|__WAIT__|__DEADLINE__",
+        conn,
+        "ssh x",
+        "Remote App",
+        "kill",
+    )
+    assert out == f'"ssh x"|"kill"|"Remote App"|{WAIT_SECONDS}|{DEADLINE_SECONDS}'
 
 
 def test_render_does_not_replace_inside_a_value() -> None:
@@ -194,28 +210,160 @@ def _free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def test_tunnel_command_skips_ssh_when_port_already_listens() -> None:
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        listener.listen()
-        port = listener.getsockname()[1]
-        unreachable = SshTunnelConfig(host="127.0.0.1", port=_free_port())
-        result = subprocess.run(
-            ["/bin/sh", "-c", tunnel_command(unreachable, port)], capture_output=True, timeout=10
-        )
-    assert result.returncode == 0
+@contextmanager
+def _vnc_server(banner: bytes, delay: float = 0.0) -> Iterator[int]:
+    """A local listener that sends `banner` to each client after `delay` (empty: says nothing)."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    listener.settimeout(0.2)
+    done = threading.Event()
+
+    def serve() -> None:
+        while not done.is_set():
+            try:
+                client, _ = listener.accept()
+            except TimeoutError:
+                continue
+            time.sleep(delay)
+            if banner:
+                client.sendall(banner)
+            done.wait(3)
+            client.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield int(listener.getsockname()[1])
+    finally:
+        done.set()
+        thread.join()
+        listener.close()
+
+
+def _run(command: str, timeout: float = 20) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["/bin/sh", "-c", command], capture_output=True, text=True, timeout=timeout
+    )
+
+
+def _probe(port: int) -> int:
+    return _run(_bash(_shell_functions(port, 1) + "probe")).returncode
+
+
+def test_tunnel_command_runs_under_bash() -> None:
+    assert tunnel_command(SshTunnelConfig(host="vnc.example.com"), 5901).startswith("/bin/bash -c ")
+
+
+@pytest.mark.parametrize(
+    ("banner", "delay", "up"),
+    [
+        (b"RFB 003.008\n", 0.0, True),
+        (b"RFB 003.008\n", 0.5, True),  # a slow host, inside the timeout
+        (b"", 0.0, False),  # a stale ssh holds the port; nothing answers
+        (b"SSH-2.0-x\n", 0.0, False),  # something else answers
+    ],
+)
+def test_probe_wants_a_vnc_banner(banner: bytes, delay: float, up: bool) -> None:
+    with _vnc_server(banner, delay) as port:
+        assert (_probe(port) == 0) is up
+
+
+def test_probe_fails_when_nothing_listens() -> None:
+    assert _probe(_free_port()) != 0
+
+
+def test_tunnel_command_reuses_a_tunnel_that_answers() -> None:
+    unreachable = SshTunnelConfig(host="127.0.0.1", port=_free_port())
+    with _vnc_server(b"RFB 003.008\n") as port:
+        result = _run(tunnel_command(unreachable, port, probe_seconds=1))
+    assert (result.returncode, result.stdout.strip()) == (0, "reused")
+
+
+def test_tunnel_command_replaces_a_silent_tunnel() -> None:
+    """A port that listens but never answers is not reused: ssh runs (and fails here)."""
+    unreachable = SshTunnelConfig(host="127.0.0.1", port=_free_port())
+    with _vnc_server(b"") as port:
+        result = _run(tunnel_command(unreachable, port, probe_seconds=1))
+    assert result.returncode != 0
+    assert "Connection refused" in result.stderr
 
 
 def test_tunnel_command_fails_with_ssh_error_on_stderr() -> None:
     unreachable = SshTunnelConfig(host="127.0.0.1", port=_free_port())
-    result = subprocess.run(
-        ["/bin/sh", "-c", tunnel_command(unreachable, _free_port())],
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
+    result = _run(tunnel_command(unreachable, _free_port(), probe_seconds=1))
     assert result.returncode != 0
     assert "Connection refused" in result.stderr
+
+
+LISTENER_C = r"""
+#include <arpa/inet.h>
+#include <stdlib.h>
+#include <unistd.h>
+int main(int argc, char **argv) {
+    int s = socket(AF_INET, SOCK_STREAM, 0), one = 1;
+    setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+    struct sockaddr_in a = {.sin_family = AF_INET, .sin_port = htons(atoi(argv[1])),
+                            .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
+    if (bind(s, (struct sockaddr *)&a, sizeof a) || listen(s, 8)) return 1;
+    for (;;) pause();
+}
+"""
+
+needs_mac_cc = pytest.mark.skipif(
+    sys.platform != "darwin" or shutil.which("cc") is None, reason="needs macOS lsof and cc"
+)
+
+
+@pytest.fixture(scope="module")
+def listener_binary(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """A silent listener; `stop` matches on the process name, so tests copy it as `ssh`."""
+    folder = tmp_path_factory.mktemp("listener")
+    (folder / "listen.c").write_text(LISTENER_C)
+    subprocess.run(["cc", "-o", str(folder / "listen"), str(folder / "listen.c")], check=True)
+    return folder / "listen"
+
+
+@contextmanager
+def _listening(
+    binary: Path, name: str, forward_port_offset: int
+) -> Iterator[subprocess.Popen[bytes]]:
+    """Run the listener as `name` on a free port, with `-L <port + offset>:localhost:5900`."""
+    named = binary.with_name(name)
+    shutil.copy(binary, named)
+    port = _free_port()
+    proc = subprocess.Popen(
+        [str(named), str(port), "-L", f"{port + forward_port_offset}:localhost:5900"]
+    )
+    proc.port = port  # type: ignore[attr-defined]
+    try:
+        for _ in range(50):
+            with socket.socket() as sock:
+                if sock.connect_ex(("127.0.0.1", port)) == 0:
+                    break
+            time.sleep(0.05)
+        yield proc
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+@needs_mac_cc
+def test_stop_ends_the_ssh_that_forwards_the_port(listener_binary: Path) -> None:
+    with _listening(listener_binary, "ssh", 0) as proc:
+        assert _run(stop_command(proc.port)).returncode == 0  # type: ignore[attr-defined]
+        assert proc.wait(timeout=3) is not None
+
+
+@needs_mac_cc
+@pytest.mark.parametrize(
+    ("name", "offset"), [("ssh", 1), ("python3", 0)], ids=["ssh-for-another-port", "not-ssh"]
+)
+def test_stop_leaves_other_processes(listener_binary: Path, name: str, offset: int) -> None:
+    with _listening(listener_binary, name, offset) as proc:
+        assert _run(stop_command(proc.port)).returncode == 0  # type: ignore[attr-defined]
+        time.sleep(0.3)
+        assert proc.poll() is None
 
 
 def test_connection_label_uses_name_for_localhost() -> None:
