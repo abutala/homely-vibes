@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional, Generator, Tuple
 from contextlib import contextmanager
 
 from RachioFlume.rachio_client import WateringEvent, Zone
+from RachioFlume.ecowitt_client import SoilReading
 from RachioFlume.flume_client import WaterReading
 from lib.logger import get_logger
 
@@ -130,6 +131,19 @@ class WaterTrackingDB:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """
+            )
+
+            # Soil moisture probes on an Ecowitt gateway, one row per channel per poll.
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS soil_readings (
+                    read_at TIMESTAMP NOT NULL,
+                    channel INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    moisture_pct REAL NOT NULL,
+                    UNIQUE(read_at, channel)
                 )
             """
             )
@@ -403,6 +417,40 @@ class WaterTrackingDB:
                 [(reading.timestamp, reading.value, reading.unit) for reading in readings],
             )
             conn.commit()
+
+    def save_soil_readings(self, readings: List[SoilReading]) -> None:
+        """Save soil readings; a repeated (time, channel) replaces the stored value."""
+        with self.get_connection() as conn:
+            conn.executemany(
+                """
+                INSERT INTO soil_readings (read_at, channel, name, moisture_pct)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(read_at, channel) DO UPDATE SET
+                    name = excluded.name, moisture_pct = excluded.moisture_pct
+                """,
+                [(r.read_at, r.channel, r.name, r.moisture_pct) for r in readings],
+            )
+            conn.commit()
+
+    def get_soil_readings(self, start_date: datetime, end_date: datetime) -> List[SoilReading]:
+        """Soil readings in [start_date, end_date), oldest first."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT read_at, channel, name, moisture_pct FROM soil_readings
+                WHERE read_at >= ? AND read_at < ? ORDER BY read_at, channel
+                """,
+                (start_date, end_date),
+            ).fetchall()
+        return [
+            SoilReading(
+                row["channel"],
+                row["name"],
+                row["moisture_pct"],
+                datetime.fromisoformat(str(row["read_at"])),
+            )
+            for row in rows
+        ]
 
     def get_zone_sessions(self, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
         """Get zone watering sessions for a date range."""

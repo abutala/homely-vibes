@@ -1,7 +1,7 @@
 """Weekly reporting system for water tracking data."""
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from pathlib import Path
@@ -13,6 +13,7 @@ from RachioFlume.alert_rules import (
     resolve_hose_threshold,
 )
 from RachioFlume.data_storage import WaterTrackingDB
+from RachioFlume.ecowitt_client import SoilReading
 from lib.config import get_config
 from lib.logger import get_logger
 
@@ -110,6 +111,41 @@ def _idle_row(zone_number: int, zone_name: str, note: str, problem: bool) -> Zon
 
 
 @dataclass
+class SoilStats:
+    """One soil probe over the report period."""
+
+    channel: int
+    label: str  # the channel's name in the Ecowitt app, else "Soil CH<n>"
+    latest_pct: float
+    min_pct: float
+    max_pct: float
+    last_read: datetime
+
+
+def soil_stats(readings: List[SoilReading]) -> List[SoilStats]:
+    """Latest, low and high moisture per channel. `readings` must be oldest first;
+    the newest reading also gives the channel's label."""
+    by_channel: Dict[int, List[SoilReading]] = {}
+    for r in readings:
+        by_channel.setdefault(r.channel, []).append(r)
+    stats = []
+    for channel, rows in sorted(by_channel.items()):
+        last = rows[-1]
+        pcts = [r.moisture_pct for r in rows]
+        stats.append(
+            SoilStats(
+                channel=channel,
+                label=last.name or f"Soil CH{channel}",
+                latest_pct=last.moisture_pct,
+                min_pct=min(pcts),
+                max_pct=max(pcts),
+                last_read=last.read_at,
+            )
+        )
+    return stats
+
+
+@dataclass
 class ReportSummary:
     """Summary statistics for the entire report."""
 
@@ -128,6 +164,7 @@ class WaterUsageReport:
     period_end: datetime
     summary: ReportSummary
     zones: List[ZoneStats]
+    soil: List[SoilStats] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for compatibility."""
@@ -319,6 +356,7 @@ class WeeklyReporter:
             period_end=period_end,
             summary=summary,
             zones=formatted_zones,
+            soil=soil_stats(self.db.get_soil_readings(period_start, period_end)),
         )
 
     def _idle_zones(

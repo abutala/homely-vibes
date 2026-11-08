@@ -412,6 +412,8 @@ class RachioFlumeConfig:
     """RachioFlume integration-level configuration"""
 
     alerts: RachioFlumeAlertsConfig
+    # Ecowitt gateway with soil probes, polled with the collector; "" turns soil off.
+    soil_gateway_host: str = ""
 
 
 @dataclass

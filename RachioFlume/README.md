@@ -293,7 +293,13 @@ kill <process_id>
    - Every enabled zone and known valve gets a row; idle ones carry a `note`. `rfmanager.py report` fetches the live schedule-to-zones map (`scheduleRules` + `flexScheduleRules` on the device payload) to tie a skip event to its zones; when Rachio is unreachable the report still sends and idle zones read `no run recorded`
    - Rendering lives in `report_format.py`: `problems()`, `format_html()` for email (auto-detected by `lib.Mailer`), `format_text()` for the log
 
-6. **AlertEngine** (`alert_engine.py`) + **AlertRule** (`alert_rules.py`)
+6. **EcowittClient** (`ecowitt_client.py`)
+   - Reads soil probes (WH51, WH51L) from an Ecowitt gateway's local `GET /get_livedata_info`; no key
+   - On only when `rachio_flume.soil_gateway_host` is set; the collector saves one `soil_readings` row per channel per poll
+   - The weekly report adds a soil line per channel (now, low–high for the period) and lists a probe silent for over a day as a problem. Report only: nothing here changes a schedule
+   - Name each channel in the Ecowitt app (for example "Fig 12in"); unnamed channels show as `Soil CH<n>`
+
+7. **AlertEngine** (`alert_engine.py`) + **AlertRule** (`alert_rules.py`)
    - Runs at the end of each collector cycle
    - **Zone-end reporting**: detects when a Rachio zone finishes and sends one P-2 (silent) report per zone *per cycle* — no per-day dedup; the message carries a cycle counter so repeat runs are distinguishable. Includes runtime, avg GPM, total gallons
    - **Zone anomaly detection**: checks zone-end flow against per-zone thresholds (configured in `config/default.yaml` under `rachio_flume.alerts.zone_thresholds`). Alerts at P2 when flow exceeds `avg + max(0.5 GPM, 10% of avg)`. Unknown zones default to 0.5 GPM threshold.
@@ -302,7 +308,7 @@ kill <process_id>
    - Each rule waits until its own window is clear of irrigation plus `irrigation_tail_minutes`
    - Per-rule fire state and per-zone reported-today counts persisted as JSON in `collection_metadata`
 
-7. **SyntheticDataset** (`synthetic_data.py`) + **Simulator** (`simulate_alerts.py`)
+8. **SyntheticDataset** (`synthetic_data.py`) + **Simulator** (`simulate_alerts.py`)
    - In-code scenarios (household, irrigation, leak, pipe-break) built via `SyntheticDataset.add_*` helpers
    - Plays back through `AlertEngine` with fake clients and a capturing Pushover
    - Used by `test_alert_simulation.py` for regression assertions
@@ -314,6 +320,7 @@ kill <process_id>
 - **watering_events**: Raw events from Rachio API
 - **water_readings**: Time-series usage data from Flume
 - **zone_sessions**: Computed watering sessions with usage correlation
+- **soil_readings**: Soil moisture per Ecowitt channel per poll, keyed on `(read_at, channel)`
 
 ## API Rate Limits
 
