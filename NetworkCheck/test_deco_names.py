@@ -11,7 +11,13 @@ from typing import Any
 import pytest
 from omegaconf import OmegaConf
 
-from NetworkCheck.deco_names import canonical_names, name_changes, sync_names, unlabelled
+from NetworkCheck.deco_names import (
+    canonical_names,
+    client_status,
+    name_changes,
+    sync_names,
+    unlabelled,
+)
 from NetworkCheck.iot_gatekeeper import GatekeeperState, _sync_labels
 
 LOG = logging.getLogger("test")
@@ -158,3 +164,37 @@ class TestList:
         assert OmegaConf.to_container(OmegaConf.create("\n".join(lines))) == {
             "AA-BB-CC-00-00-09": name
         }
+
+
+class TestClientStatus:
+    def _online(self, mac: str, ip: str, name: str) -> dict[str, Any]:
+        return {
+            **_client(mac, name),
+            "ip": ip,
+            "interface": "iot",
+            "connection_type": "band2_4",
+        }
+
+    def test_lists_online_clients_by_address_and_flags_labels(self) -> None:
+        clients = [
+            self._online("AA-BB-CC-00-00-02", "192.0.2.20", "Plug"),
+            self._online("AA-BB-CC-00-00-01", "192.0.2.3", "Lamp"),
+            self._online("AA-BB-CC-00-00-03", "192.0.2.100", "raw-name"),
+        ]
+        wanted = {"AA-BB-CC-00-00-01": "Lamp", "AA-BB-CC-00-00-02": "Plug - Hall"}
+        assert client_status(clients, wanted, []) == [
+            "192.0.2.3  AA-BB-CC-00-00-01  iot  band2_4  Lamp",
+            "192.0.2.20  AA-BB-CC-00-00-02  iot  band2_4  Plug  (label pending: Plug - Hall)",
+            "192.0.2.100  AA-BB-CC-00-00-03  iot  band2_4  raw-name  (no label)",
+        ]
+
+    def test_reports_labelled_devices_that_are_offline(self) -> None:
+        assert client_status([], {"AA-BB-CC-00-00-09": "Plug - Far"}, []) == [
+            "offline  AA-BB-CC-00-00-09  Plug - Far"
+        ]
+
+    def test_blocked_device_is_blocked_not_offline(self) -> None:
+        blocked = [_client("AA-BB-CC-00-00-09", "Phone")]
+        assert client_status([], {"AA-BB-CC-00-00-09": "Plug - Far"}, blocked) == [
+            "blocked  AA-BB-CC-00-00-09  Phone"
+        ]

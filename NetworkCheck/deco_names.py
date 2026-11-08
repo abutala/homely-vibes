@@ -15,6 +15,7 @@ Labels are household data: logs carry MACs only, as in the gatekeeper.
 Usage:
     python -m NetworkCheck.deco_names sync [--dry-run]
     python -m NetworkCheck.deco_names list   # online clients with no label in config
+    python -m NetworkCheck.deco_names status # every client, blocked and labelled device
 """
 
 import argparse
@@ -107,9 +108,49 @@ def unlabelled(clients: list[dict[str, Any]], wanted: Mapping[str, str]) -> list
     return lines
 
 
+def client_status(
+    clients: list[dict[str, Any]],
+    wanted: Mapping[str, str],
+    blocked: list[dict[str, Any]],
+) -> list[str]:
+    """Online clients by address, then blocked, then labelled devices that are off.
+    Interactive only: this prints device names, so never run it from cron."""
+    lines = []
+    for client in sorted(clients, key=lambda c: _ip_order(str(c.get("ip", "")))):
+        mac = canonical_mac(client["mac"])
+        name = decode_name(client.get("name", ""))
+        label = wanted.get(mac)
+        flag = (
+            ""
+            if label == name
+            else "  (no label)"
+            if label is None
+            else f"  (label pending: {label})"
+        )
+        lines.append(
+            f"{client.get('ip', '?')}  {mac}  {client.get('interface', '?')}  "
+            f"{client.get('connection_type', '?')}  {name}{flag}"
+        )
+    blocked_macs = {canonical_mac(b["mac"]) for b in blocked}
+    lines += [
+        f"blocked  {canonical_mac(b['mac'])}  {decode_name(b.get('name', ''))}" for b in blocked
+    ]
+    online = {canonical_mac(c["mac"]) for c in clients}
+    lines += [
+        f"offline  {mac}  {label}"
+        for mac, label in sorted(wanted.items())
+        if mac not in online and mac not in blocked_macs
+    ]
+    return lines
+
+
+def _ip_order(ip: str) -> list[int]:
+    return [int(part) for part in ip.split(".") if part.isdigit()]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Apply Deco client labels from config")
-    parser.add_argument("command", choices=["sync", "list"])
+    parser.add_argument("command", choices=["sync", "list", "status"])
     parser.add_argument("--dry-run", action="store_true", help="Log what would change")
     args = parser.parse_args()
 
@@ -124,6 +165,10 @@ def main() -> None:
         deco = DecoClient(wd.deco_host, wd.deco_username, wd.deco_password)
         if args.command == "list":
             for line in unlabelled(deco.list_clients(), wanted):
+                print(line)
+            return
+        if args.command == "status":
+            for line in client_status(deco.list_clients(), wanted, deco.list_blocked()):
                 print(line)
             return
         done = sync_names(deco, wanted, logger, dry_run=args.dry_run)

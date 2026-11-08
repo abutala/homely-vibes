@@ -309,7 +309,26 @@ uv run python -m NetworkCheck.deco_names list | tee /tmp/deco_names.txt
 # Apply now instead of waiting for the next tick
 uv run python -m NetworkCheck.deco_names sync --dry-run
 uv run python -m NetworkCheck.deco_names sync
+
+# Every online client, blocked device and labelled device that is off (prints names)
+uv run python -m NetworkCheck.deco_names status | tee /tmp/deco_status.txt
 ```
+
+### Naming an unknown client (`deco_discovery.py`)
+
+A vendor's app often hides the MAC, so match on what the device announces: its vendor ID,
+which the app and Alexa also show. Each command joins that ID to the client's MAC through
+its IP. Run them by hand: they print labels and hold the admin session.
+
+```bash
+# eWeLink (Sonoff) devices, by mDNS. macOS only: it uses dns-sd
+uv run python -m NetworkCheck.deco_discovery ewelink | tee /tmp/deco_ewelink.txt
+
+# Tuya (Smart Life) devices, by their UDP broadcast
+uv run python -m NetworkCheck.deco_discovery tuya --secs 30 | tee /tmp/deco_tuya.txt
+```
+
+An August lock's own MAC and its bridge come from `August/august_manager.py details`.
 
 ```yaml
 # config/local.yaml
