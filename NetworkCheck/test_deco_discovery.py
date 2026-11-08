@@ -57,6 +57,10 @@ class TestDnsSd:
     def test_no_answer_is_none(self) -> None:
         assert parse_address("Timestamp A/R Flags IF Hostname Address TTL\n") is None
 
+    def test_no_such_record_is_none(self) -> None:
+        line = " 1:00:58.412  Add  1  15  eWeLink_1000aaaa01.local. No Such Record  0\n"
+        assert parse_address(line) is None
+
 
 class TestTuya:
     def test_encrypted_broadcast_gives_the_device_id(self) -> None:

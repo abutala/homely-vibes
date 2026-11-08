@@ -53,7 +53,7 @@ def parse_address(output: str) -> Optional[str]:
     """The address from `dns-sd -G v4`, or None if nothing answered."""
     for line in output.splitlines():
         fields = line.split()
-        if len(fields) >= 6 and fields[1] == "Add":
+        if len(fields) >= 6 and fields[1] == "Add" and fields[5].count(".") == 3:
             return fields[5]
     return None
 
