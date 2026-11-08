@@ -99,7 +99,9 @@ def main() -> None:
     args = parser.parse_args()
 
     logger = get_logger(__name__)
-    log_invocation(logger)
+    if args.command == "sync":
+        # `list` output is pasted into config; the banner goes to stdout too.
+        log_invocation(logger)
     cfg = get_config().network_check
     wanted = canonical_names(cfg.deco_names)
     wd = cfg.uplink_watchdog

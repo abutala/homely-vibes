@@ -303,7 +303,7 @@ alerted. Logs carry MACs only.
 
 ```bash
 # Online clients with no label yet, as config lines (prints names -- run by hand)
-uv run python -m NetworkCheck.deco_names list 2>&1 | tee /tmp/deco_names.log
+uv run python -m NetworkCheck.deco_names list | tee /tmp/deco_names.txt
 
 # Apply now instead of waiting for the next tick
 uv run python -m NetworkCheck.deco_names sync --dry-run
