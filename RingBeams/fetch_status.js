@@ -8,6 +8,9 @@
 //     - Python ring-doorbell OAuth JSON dict (extracts .refresh_token)
 // Env vars (optional):
 //   RING_BEAMS_TIMEOUT_S   self-timeout in seconds (see watchdog.js)
+//   RING_BEAMS_RAW         "1": each device is all of Ring's fields plus
+//                          locationName, for config_dump.py. Access-code devices
+//                          are dropped here, so a code never reaches stdout.
 //
 // stdout: {"devices": [{zid, name, deviceType, categoryId, batteryLevel,
 //                       batteryStatus, tamperStatus, faulted, commStatus,
@@ -20,7 +23,7 @@
 //   3  token file unreadable / malformed         → auth-class
 //   4  any other failure, or watchdog timeout
 //   5  Ring rejected the token / wants 2FA     → auth-class
-// Python (beams_manager.run_sidecar) maps 3 and 5 to BeamsAuthError; every
+// Python (beams_manager._sidecar_payload) maps 3 and 5 to BeamsAuthError; every
 // other non-zero code is a generic RuntimeError so a Node-version drift (e.g.
 // undici requiring global File on Node <20) does NOT get misclassified as
 // "Ring: Auth Required".
@@ -34,6 +37,9 @@ armWatchdog();
 // refresh token or wants 2FA. Network errors never reach here: its
 // requestWithRetry retries them until the watchdog fires (exit 4).
 const AUTH_ERROR = /Refresh token is not valid|Failed to fetch oauth token|2-factor authentication/;
+
+const RAW = process.env.RING_BEAMS_RAW === '1';
+const ACCESS_CODE_TYPE = 'access-code';
 
 const tokenFile = process.env.RING_BEAMS_TOKEN_FILE;
 if (!tokenFile) {
@@ -110,7 +116,7 @@ async function main() {
             } catch (e) {
                 // Ring rotated server-side but our write failed — the file now
                 // holds an already-consumed token. Surface loudly so the next
-                // invalid_grant is diagnosable (Python's run_sidecar tees this
+                // invalid_grant is diagnosable (Python's _sidecar_payload tees this
                 // to stderr → cron log). Don't exit non-zero: we still have a
                 // valid in-memory session and returning devices is more useful
                 // than paging on a token-write hiccup.
@@ -151,6 +157,12 @@ async function main() {
         for (const d of locDevices) {
             try {
                 const x = d.data;
+                if (RAW) {
+                    if (!String(x.deviceType).startsWith(ACCESS_CODE_TYPE)) {
+                        devices.push({ ...x, locationName: loc.name });
+                    }
+                    continue;
+                }
                 devices.push({
                     zid: x.zid,
                     name: x.name,

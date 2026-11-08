@@ -15,8 +15,9 @@ import getpass
 import json
 import logging
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 import aiohttp
 from ring_doorbell import AuthenticationError, Auth, Requires2FAError, Ring
@@ -45,6 +46,20 @@ def _load_token(path: str) -> Optional[dict[str, Any]]:
 
 def _save_token(path: str, token: dict[str, Any]) -> None:
     write_secret_atomic(path, token)
+
+
+@asynccontextmanager
+async def open_auth(token_file: str) -> AsyncIterator[Auth]:
+    """An authenticated Ring client that saves a rotated token. Hold the token flock."""
+    token = _load_token(token_file)
+    if not token:
+        raise RingAuthError(
+            f"No Ring token at {token_file}. Run: uv run python RingSecurity/ring_manager.py auth"
+        )
+    async with aiohttp.ClientSession() as session:
+        yield Auth(
+            USER_AGENT, token, lambda t: _save_token(token_file, t), http_client_session=session
+        )
 
 
 async def _auth_flow(username: str, password: str, token_file: str) -> None:

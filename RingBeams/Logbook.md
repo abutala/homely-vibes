@@ -27,7 +27,7 @@ while RingSecurity took the free lock. Ring rotates on every use, so the loser g
 `invalid_grant`. Not observed in production; the cost would have been a spurious
 "Ring: Auth Required" and a re-auth.
 
-Fix: `acquire_lock` yields its fd and `run_sidecar` passes it via `pass_fds`, so the
+Fix: `acquire_lock` yields its fd and `_sidecar_payload` passes it via `pass_fds`, so the
 sidecar shares the open file description and the lock lives until the last holder exits.
 Because that makes a hung orphan hold the lock indefinitely, with no parent left to
 enforce `sidecar_timeout_seconds`, the sidecar now arms `watchdog.js` and exits 4 on
@@ -91,12 +91,25 @@ resolving `import` specifiers"* -- it applies only to CommonJS `require()`. Only
 
 ### The dependency preflight must run *after* the token check
 
-`run_sidecar` checks for the token file before `_require_sidecar_deps()`. Reversed, a
+`_sidecar_payload` checks for the token file before `_require_sidecar_deps()`. Reversed, a
 missing token reports "run `make node-deps`" instead of `BeamsAuthError` -> P0
 "Ring: Auth Required", sending you after the wrong problem. Local runs cannot catch a
 regression here: with `node_modules` installed the preflight never fires. CI has no
 `node_modules`, so `test_missing_token_raises_auth_error` is where the ordering is
 actually exercised.
+
+### Access codes must stop in the sidecar
+
+Raw mode copies every field Ring sends, and `access-code` device types may hold alarm codes. The
+sidecar drops them before stdout, so a code never reaches Python, a log or a file.
+`config_dump.write_dump` then checks the whole dump and refuses to write if a key or value looks
+like a secret. Its error names paths, never values.
+
+### Ring's mode API is on another host
+
+`/devices/v1/mode/location/<id>` and `/devices/v1/devices/<id>/settings/motion` on `api.ring.com`
+return 404. Mode data is at `app.ring.com/api/v1/mode/location/<id>`, and motion settings are in the
+device's own `settings`.
 
 ### `npm WARN EBADENGINE` on Node 25 is noise
 

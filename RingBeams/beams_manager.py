@@ -32,7 +32,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from lib.config import RingBeamsConfig, get_config
 from lib.file_lock import LockTimeoutError, acquire_lock
@@ -112,22 +112,20 @@ def _alert_text(exc: Exception) -> str:
     return message.splitlines()[0][:ALERT_MAX_CHARS]
 
 
-def run_sidecar(
+def _sidecar_payload(
     cfg: RingBeamsConfig,
     logger: logging.Logger,
     *,
-    node_path: Optional[str] = None,
-    script_path: Optional[str] = None,
-    lock_fd: Optional[int] = None,
-) -> tuple[list[DeviceRecord], list[str]]:
-    """Invoke fetch_status.js. Returns (devices, per-location errors).
+    node_path: Optional[str],
+    script_path: Optional[str],
+    lock_fd: Optional[int],
+    raw: bool,
+) -> dict[str, Any]:
+    """Invoke fetch_status.js and return its parsed stdout.
 
     ``lock_fd`` is the token flock's fd from ``acquire_lock``. The sidecar
     inherits it, so a hard-killed parent leaves the lock held until the orphan
     exits rather than letting it rotate the refresh token unserialized.
-
-    Per-location errors are surfaced (not raised) so a partial failure never
-    masks itself as "all healthy" — the caller pushes them to Pushover at P1.
     """
     node = node_path or _resolve_node()
     script = script_path or str(Path(__file__).resolve().parent / "fetch_status.js")
@@ -147,6 +145,9 @@ def run_sidecar(
     env = os.environ.copy()
     env["RING_BEAMS_TOKEN_FILE"] = token_file
     env["RING_BEAMS_TIMEOUT_S"] = str(cfg.sidecar_timeout_seconds)
+    env.pop("RING_BEAMS_RAW", None)
+    if raw:
+        env["RING_BEAMS_RAW"] = "1"
 
     logger.info(f"Spawning node sidecar: {node} {script}")
     proc = subprocess.run(
@@ -190,10 +191,42 @@ def run_sidecar(
         logger.warning(f"sidecar stderr on success: {proc.stderr.strip()}")
 
     try:
-        payload = json.loads(proc.stdout)
+        return json.loads(proc.stdout)  # type: ignore[no-any-return]
     except json.JSONDecodeError as e:
         raise RuntimeError(f"sidecar produced non-JSON stdout: {e}") from e
 
+
+def run_raw_sidecar(
+    cfg: RingBeamsConfig,
+    logger: logging.Logger,
+    *,
+    node_path: Optional[str] = None,
+    script_path: Optional[str] = None,
+    lock_fd: Optional[int] = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Return every field Ring holds for each alarm and Beams device, plus errors."""
+    payload = _sidecar_payload(
+        cfg, logger, node_path=node_path, script_path=script_path, lock_fd=lock_fd, raw=True
+    )
+    return list(payload.get("devices", [])), list(payload.get("errors", []) or [])
+
+
+def run_sidecar(
+    cfg: RingBeamsConfig,
+    logger: logging.Logger,
+    *,
+    node_path: Optional[str] = None,
+    script_path: Optional[str] = None,
+    lock_fd: Optional[int] = None,
+) -> tuple[list[DeviceRecord], list[str]]:
+    """Invoke fetch_status.js. Returns (devices, per-location errors).
+
+    Per-location errors are surfaced (not raised) so a partial failure never
+    masks itself as "all healthy" — the caller pushes them to Pushover at P1.
+    """
+    payload = _sidecar_payload(
+        cfg, logger, node_path=node_path, script_path=script_path, lock_fd=lock_fd, raw=False
+    )
     out: list[DeviceRecord] = []
     for d in payload.get("devices", []):
         out.append(

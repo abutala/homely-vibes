@@ -72,6 +72,24 @@ PATH=/opt/homebrew/bin:/usr/bin:/bin
 ```
 (Adjust for Linux — usually `/usr/local/bin` or `/usr/bin`.)
 
+## Config dump
+
+A backup of every Ring device, which changes no device setting: cameras, doorbells, chimes, modes, alarm sensors,
+keypads and Beams. Run it from the primary checkout, because the token path is relative:
+
+```bash
+uv run python RingBeams/config_dump.py --out /path/outside/this/repo 2>&1 | tee /tmp/ring_config_dump.log
+```
+
+It writes `ring_dump.json` and `devices.md`, both `0600`. Keep them out of this repo:
+`ring_dump.json` holds the home address, and `devices.md` holds room names. The dump's own REST
+calls are all GETs, and the sidecar only asks for the device list. Login and `ring-client-api` still
+write to Ring's record of this client (session, push token), as the daily checks do. The refresh
+token rotates, so the run holds the token flock.
+
+It writes nothing if the account device list, the sidecar, the secret check or the index render fails. An
+optional endpoint that fails is recorded in `_fetch_log`.
+
 ## Tests
 
 ```bash
