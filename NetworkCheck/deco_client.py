@@ -210,6 +210,10 @@ class DecoClient:
         if self._stok is None:
             self.login()
 
+    def read_form(self, path: str, form: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Read one admin form as it is. The caller must pass a read operation."""
+        return self._read(path, form, payload)
+
     def list_decos(self) -> list[dict[str, Any]]:
         """Return the mesh device list (one entry per Deco unit)."""
         data = self._read("admin/device", "device_list", {"operation": "read"})

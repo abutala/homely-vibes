@@ -417,6 +417,11 @@ the blocklist appears to show in the app's offline list, so clearing that list b
   the router wants (`sign=<hex>&data=<urlencoded base64>`). Don't "fix" it.
 - **`sign` covers `seq + len(data)`** — the length of the *base64* string,
   computed before URL-encoding.
+- **`/admin/firmware?form=config_multipart` is the config restore upload.** The web UI's bundle names
+  it, and that UI offers no backup route. Never POST to it to look for an export. Measured on an
+  XE75 Pro, firmware 1.4.5: `read`, `get`, `list` and `load` got no data from the forms tried for
+  IoT network settings, DHCP, reservations, port forwarding, IPv6, LAN IP, time, parental controls
+  and QoS, so `deco_config_dump.py` cannot back those up.
 - **The admin account is single-session.** Any second login -- the Deco phone
   app, or another of our scripts -- evicts the first, which then gets
   `{"data": ""}`. Reads log in again once; our scripts share one file lock.
