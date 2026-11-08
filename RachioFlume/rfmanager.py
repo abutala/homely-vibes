@@ -14,6 +14,7 @@ from RachioFlume.alert_rules import (
 )
 from RachioFlume.collector import WaterTrackingCollector
 from RachioFlume.data_storage import WaterTrackingDB
+from RachioFlume.ecowitt_client import EcowittClient
 from RachioFlume.flume_client import FlumeClient
 from RachioFlume.hose_timer_processor import HoseTimerProcessor
 from RachioFlume.rachio_client import RachioClient, schedule_zones_from_device
@@ -229,11 +230,13 @@ def run_collection(args: argparse.Namespace) -> int:
         alert_engine = _build_alert_engine() if cfg.rachio_flume.alerts.enabled else None
         db = WaterTrackingDB(DB_PATH)
         hose_processors = _build_hose_processors(db)
+        soil_host = cfg.rachio_flume.soil_gateway_host
         collector = WaterTrackingCollector(
             DB_PATH,
             args.interval,
             alert_engine=alert_engine,
             hose_processors=hose_processors,
+            soil_client=EcowittClient(soil_host) if soil_host else None,
         )
         if alert_engine is not None:
             logger.info(f"Alerts enabled with {len(alert_engine.rules)} rules")

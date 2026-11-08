@@ -2,14 +2,16 @@
 
 Problems come first; a quiet week is one green line. Expected idle zones (skips,
 zones in no schedule) fold into grey lines, one per reason; disabled zones are not shown.
+Soil probes, when a gateway is configured, get one line each after the zone table.
 """
 
 from dataclasses import dataclass
+from datetime import timedelta
 from html import escape
 from itertools import groupby
 from typing import List
 
-from RachioFlume.reporter import WaterUsageReport, ZoneStats
+from RachioFlume.reporter import SoilStats, WaterUsageReport, ZoneStats
 from lib import Mailer
 
 
@@ -19,9 +21,18 @@ class Problem:
     detail: str
 
 
+# A probe reports every few minutes; a day of silence means a dead battery or lost radio.
+SOIL_SILENT_AFTER = timedelta(days=1)
+
+
+def _silent(s: SoilStats, report: WaterUsageReport) -> bool:
+    return report.period_end - s.last_read > SOIL_SILENT_AFTER
+
+
 def problems(report: WaterUsageReport) -> List[Problem]:
-    """Zones that need a look: flow over the limit, a run with no water, or an
-    idle zone the reporter marked as a problem (missed run, valve offline)."""
+    """What needs a look: a zone with flow over the limit or a run with no water,
+    an idle zone the reporter marked as a problem (missed run, valve offline), a
+    soil probe silent for a day, or a configured soil gateway with no readings."""
     found: List[Problem] = []
     for z in report.zones:
         if z.alert_sessions:
@@ -38,7 +49,22 @@ def problems(report: WaterUsageReport) -> List[Problem]:
             )
         if z.problem:
             found.append(Problem(z.zone_name, z.note))
+    found.extend(
+        Problem(s.label, f"no soil reading since {s.last_read:%m/%d}")
+        for s in report.soil
+        if _silent(s, report)
+    )
+    if report.soil_expected and not report.soil:
+        found.append(Problem("Soil", "no readings from the soil gateway"))
     return found
+
+
+def _soil_line(s: SoilStats) -> str:
+    if s.min_pct is None or s.max_pct is None:
+        return (
+            f"{s.label}: no reading this period (last {s.latest_pct:.0f}% on {s.last_read:%m/%d})"
+        )
+    return f"{s.label}: {s.latest_pct:.0f}% now, range {s.min_pct:.0f}–{s.max_pct:.0f}%"
 
 
 def _ran(report: WaterUsageReport) -> List[ZoneStats]:
@@ -86,6 +112,8 @@ def format_text(report: WaterUsageReport) -> str:
             f"{z.total_water_gallons:>5.0f} {z.average_flow_rate_gpm:>5.1f}"
             for z in ran
         )
+    if report.soil:
+        lines += ["", "Soil moisture:"] + [f"  {_soil_line(s)}" for s in report.soil]
     quiet = _quiet_idle(report)
     if quiet:
         lines += ["", "Not run:"] + [f"  {q}" for q in quiet]
@@ -141,6 +169,13 @@ def _zone_table(ran: List[ZoneStats]) -> str:
     )
 
 
+def _soil_html(report: WaterUsageReport) -> str:
+    if not report.soil:
+        return ""
+    items = "<br>".join(escape(_soil_line(s)) for s in report.soil)
+    return f'<p style="margin:12px 0 0;font-size:14px;"><b>Soil moisture</b><br>{items}</p>'
+
+
 def format_html(report: WaterUsageReport) -> str:
     quiet = _quiet_idle(report)
     quiet_html = (
@@ -156,7 +191,8 @@ def format_html(report: WaterUsageReport) -> str:
         "'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1a1a1a;\">"
         '<div style="max-width:480px;">'
         f'<div style="font-size:13px;color:{GREY};">{_period(report)} · {_totals(report)}</div>'
-        f"{_problem_box(problems(report))}{_zone_table(_ran(report))}{quiet_html}"
+        f"{_problem_box(problems(report))}{_zone_table(_ran(report))}{_soil_html(report)}"
+        f"{quiet_html}"
         "</div></body></html>"
     )
 
