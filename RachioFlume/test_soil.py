@@ -165,6 +165,12 @@ class TestStorage:
     def test_no_gateway_no_soil_problem(self, db: WaterTrackingDB) -> None:
         assert rf.problems(self._report(db, host="")) == []
 
+    def test_gateway_unset_drops_old_probes(self, db: WaterTrackingDB) -> None:
+        db.save_soil_readings([_reading(1, 70, 24 * 10)])
+        report = self._report(db, host="")
+        assert report.soil == []
+        assert rf.problems(report) == []
+
 
 class FakeEcowitt:
     def __init__(self, fail: bool = False) -> None:

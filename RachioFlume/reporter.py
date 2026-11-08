@@ -362,9 +362,14 @@ class WeeklyReporter:
             period_end=period_end,
             summary=summary,
             zones=formatted_zones,
-            soil=soil_stats(
-                self.db.get_soil_readings(period_start, period_end),
-                self.db.get_last_soil_readings(period_end),
+            # Off means off: probes stored before the gateway was unset stay out.
+            soil=(
+                soil_stats(
+                    self.db.get_soil_readings(period_start, period_end),
+                    self.db.get_last_soil_readings(period_end),
+                )
+                if soil_host
+                else []
             ),
             soil_expected=bool(soil_host),
         )
