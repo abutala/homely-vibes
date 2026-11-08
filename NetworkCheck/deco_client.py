@@ -27,6 +27,7 @@ import base64
 import hashlib
 import json
 import math
+import re
 import secrets
 import time
 from collections.abc import Callable
@@ -54,6 +55,9 @@ _MAX_AES_KEY = (10**_AES_DIGITS) - 1
 
 # PKCS#1 v1.5 padding overhead; the router chunks plaintext to fit one block.
 _PKCS1_HEADER_BYTES = 11
+
+READ_OPERATIONS = frozenset({"read", "get", "list"})
+_SESSION_TOKEN = re.compile(r"stok=[0-9a-zA-Z]+")
 
 _DEFAULT_TIMEOUT = 15
 _POST_ATTEMPTS = 3
@@ -89,6 +93,11 @@ def _form(params: dict[str, str]) -> str:
     that carries meaning to a human.
     """
     return params.get("form", "request")
+
+
+def scrub_session(err: object) -> str:
+    """Request errors quote the URL, which holds the session token."""
+    return _SESSION_TOKEN.sub("stok=REDACTED", str(err))
 
 
 def _byte_len(n: int) -> int:
@@ -211,7 +220,9 @@ class DecoClient:
             self.login()
 
     def read_form(self, path: str, form: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """Read one admin form as it is. The caller must pass a read operation."""
+        """Read one admin form as it is. `_read` can repeat a call, so only reads pass."""
+        if payload.get("operation") not in READ_OPERATIONS:
+            raise ValueError(f"not a read operation: {path} {form} {payload.get('operation')}")
         return self._read(path, form, payload)
 
     def list_decos(self) -> list[dict[str, Any]]:
@@ -407,18 +418,21 @@ class DecoClient:
             except _TRANSIENT_ERRORS as err:
                 if attempt == attempts:
                     raise DecoAPIError(
-                        f"Deco {_form(params)} request failed after {attempt} attempt(s): {err}"
+                        f"Deco {_form(params)} request failed after {attempt} attempt(s): "
+                        f"{scrub_session(err)}"
                     ) from err
                 logger.warning(
                     "Deco %s attempt %d/%d failed (%s); retrying",
                     _form(params),
                     attempt,
                     attempts,
-                    err,
+                    scrub_session(err),
                 )
                 self._sleep(_RETRY_BACKOFF_S)
             except requests.RequestException as err:
-                raise DecoAPIError(f"Deco {_form(params)} request failed: {err}") from err
+                raise DecoAPIError(
+                    f"Deco {_form(params)} request failed: {scrub_session(err)}"
+                ) from err
             except ValueError as err:
                 raise DecoAPIError(f"Deco {_form(params)} response was not JSON: {err}") from err
         raise AssertionError("unreachable")

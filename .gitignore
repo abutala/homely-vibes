@@ -60,3 +60,8 @@ _apalache-out/
 .hypothesis/
 # A symlink to the primary checkout (the `node_modules/` rule above skips symlinks)
 formal/node_modules
+
+# Device backups hold passwords and addresses. They belong in a private repo.
+deco_dump.json
+ring_dump.json
+devices.md

@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import argparse
 import base64
-import binascii
 import json
-import re
 import sys
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -25,9 +23,7 @@ from lib.config import get_config
 from lib.logger import get_logger
 from lib.secure_io import write_secret_atomic
 
-READ_OPERATIONS = frozenset({"read", "get", "list"})
-ENCODED_FIELDS = frozenset({"name", "nickname", "ssid"})
-SESSION_TOKEN = re.compile(r"stok=[0-9a-zA-Z]+")
+ENCODED_FIELDS = frozenset({"name", "ssid"})
 
 
 @dataclass(frozen=True)
@@ -36,6 +32,7 @@ class Form:
     form: str
     operation: str = "read"
     params: dict[str, str] = field(default_factory=dict)
+    required: str | None = None
 
     @property
     def key(self) -> str:
@@ -50,11 +47,11 @@ class Form:
 
 
 FORMS = (
-    Form("admin/device", "device_list"),
+    Form("admin/device", "device_list", required="device_list"),
     Form("admin/device", "mode"),
-    Form("admin/client", "client_list", params={"device_mac": "default"}),
+    Form("admin/client", "client_list", params={"device_mac": "default"}, required="client_list"),
     Form("admin/client", "black_list", "list"),
-    Form("admin/wireless", "wlan"),
+    Form("admin/wireless", "wlan", required="band2_4"),
     Form("admin/wireless", "power"),
     Form("admin/network", "internet"),
     Form("admin/network", "wan_ipv4"),
@@ -69,7 +66,7 @@ ReadForm = Callable[[str, str, dict[str, Any]], dict[str, Any]]
 def _decoded(text: str) -> str | None:
     try:
         return base64.b64decode(text, validate=True).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError):
+    except ValueError:
         return None
 
 
@@ -90,9 +87,11 @@ def collect(read_form: ReadForm, taken_at: str) -> dict[str, Any]:
     """Read every form. Any failure stops the dump, so a partial one is never written."""
     dump: dict[str, Any] = {"taken_at": taken_at}
     for form in FORMS:
-        if form.operation not in READ_OPERATIONS:
-            raise ValueError(f"not a read operation: {form.key} {form.operation}")
-        dump[form.key] = add_decoded_names(read_form(form.path, form.form, form.payload))
+        response = read_form(form.path, form.form, form.payload)
+        result = response.get("result")
+        if form.required and not (isinstance(result, dict) and result.get(form.required)):
+            raise RuntimeError(f"{form.key} returned no {form.required}")
+        dump[form.key] = add_decoded_names(response)
     return dump
 
 
@@ -108,13 +107,18 @@ def _table(header: tuple[str, ...], rows: list[tuple[Any, ...]]) -> list[str]:
     return [row(header), "|" + "---|" * len(header), *sorted(row(r) for r in rows), ""]
 
 
+def _name(entry: dict[str, Any], field_name: str) -> Any:
+    """A plain name that was not base64 has no decoded copy."""
+    return entry.get(f"{field_name}_decoded") or entry.get(field_name)
+
+
 def _form(name: str) -> Form:
     return next(f for f in FORMS if f.form == name)
 
 
 def _network_rows(wlan: dict[str, Any]) -> list[tuple[Any, ...]]:
     return [
-        (band, kind, net.get("ssid_decoded"), net.get("enable"), net.get("channel"))
+        (band, kind, _name(net, "ssid"), net.get("enable"), net.get("channel"))
         for band, nets in wlan.items()
         if isinstance(nets, dict)
         for kind, net in nets.items()
@@ -143,7 +147,7 @@ def render_devices_md(dump: dict[str, Any]) -> str:
                 ("Name", "Model", "Role", "MAC", "IP", "Software", "Hardware"),
                 [
                     (
-                        u.get("nickname_decoded") or u.get("nickname"),
+                        u.get("nickname"),
                         u.get("device_model"),
                         u.get("role"),
                         u.get("mac"),
@@ -166,7 +170,7 @@ def render_devices_md(dump: dict[str, Any]) -> str:
                 ("Name", "MAC", "IP", "Network", "Link", "Online"),
                 [
                     (
-                        c.get("name_decoded"),
+                        _name(c, "name"),
                         c.get("mac"),
                         c.get("ip"),
                         c.get("interface"),
@@ -180,7 +184,7 @@ def render_devices_md(dump: dict[str, Any]) -> str:
             "",
             *_table(
                 ("Name", "MAC", "Type"),
-                [(b.get("name_decoded"), b.get("mac"), b.get("client_type")) for b in blocked],
+                [(_name(b, "name"), b.get("mac"), b.get("client_type")) for b in blocked],
             ),
         ]
     )
@@ -192,11 +196,6 @@ def write_dump(out_dir: Path, dump: dict[str, Any]) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     write_secret_atomic(out_dir / "deco_dump.json", json.dumps(dump, indent=1, sort_keys=True))
     write_secret_atomic(out_dir / "devices.md", index)
-
-
-def scrub_session(message: str) -> str:
-    """Client errors quote the request URL, which holds the session token."""
-    return SESSION_TOKEN.sub("stok=REDACTED", message)
 
 
 def main() -> None:
@@ -212,7 +211,7 @@ def main() -> None:
             dump = collect(deco.read_form, datetime.now(UTC).isoformat())
         write_dump(args.out, dump)
     except Exception as e:
-        logger.error(f"Deco config dump failed: {scrub_session(str(e))}")
+        logger.error(f"Deco config dump failed: {e}")
         sys.exit(1)
     logger.info(f"Deco config dump written to {args.out}")
 

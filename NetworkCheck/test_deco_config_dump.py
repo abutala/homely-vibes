@@ -10,14 +10,12 @@ from typing import Any
 
 import pytest
 
-from NetworkCheck.deco_client import DecoAPIError
+from NetworkCheck.deco_client import READ_OPERATIONS, DecoAPIError, DecoClient, scrub_session
 from NetworkCheck.deco_config_dump import (
     FORMS,
-    READ_OPERATIONS,
     add_decoded_names,
     collect,
     render_devices_md,
-    scrub_session,
     write_dump,
 )
 
@@ -33,7 +31,7 @@ RESPONSES: dict[str, dict[str, Any]] = {
     "device_list": {
         "device_list": [
             {
-                "nickname": _b64("Unit A"),
+                "nickname": "Unit A",
                 "device_model": "model-1",
                 "role": "master",
                 "mac": "AA-AA-AA-AA-AA-AA",
@@ -89,7 +87,7 @@ class TestCollect:
 
         def read(path: str, form: str, payload: dict[str, Any]) -> dict[str, Any]:
             calls.append((path, form, payload))
-            return {"result": {}}
+            return _read(path, form, payload)
 
         collect(read, TAKEN_AT)
 
@@ -114,6 +112,53 @@ class TestCollect:
         with pytest.raises(DecoAPIError):
             collect(read, TAKEN_AT)
 
+    @pytest.mark.parametrize(
+        ("form", "response"),
+        [
+            ("device_list", {}),
+            ("device_list", {"error_code": 0}),
+            ("device_list", {"result": {"device_list": []}}),
+            ("client_list", {"result": {"client_list": []}}),
+            ("wlan", {"result": {"is_eg": False}}),
+            ("wlan", {"result": None}),
+        ],
+    )
+    def test_an_empty_required_form_stops_the_dump(
+        self, form: str, response: dict[str, Any]
+    ) -> None:
+        def read(path: str, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+            return response if name == form else _read(path, name, payload)
+
+        with pytest.raises(RuntimeError, match=form):
+            collect(read, TAKEN_AT)
+
+    def test_an_empty_blocklist_is_fine(self) -> None:
+        def read(path: str, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+            if name == "black_list":
+                return {"result": {"client_list": []}}
+            return _read(path, name, payload)
+
+        assert collect(read, TAKEN_AT)["admin/client?form=black_list"]["result"] == {
+            "client_list": []
+        }
+
+    def test_a_form_with_no_result_key_is_kept_as_it_is(self) -> None:
+        def read(path: str, name: str, payload: dict[str, Any]) -> dict[str, Any]:
+            if name == "switch_list":
+                return {"data": {"x": True}, "success": True}
+            return _read(path, name, payload)
+
+        dump = collect(read, TAKEN_AT)
+
+        assert dump["admin/component_control?form=switch_list"]["success"] is True
+
+
+class TestReadForm:
+    @pytest.mark.parametrize("payload", [{"operation": "reboot"}, {"operation": "write"}, {}])
+    def test_refuses_anything_but_a_read_before_it_logs_in(self, payload: dict[str, Any]) -> None:
+        with pytest.raises(ValueError, match="not a read operation"):
+            DecoClient("http://192.0.2.1", "user", "pass").read_form("admin/x", "y", payload)
+
 
 class TestAddDecodedNames:
     def test_adds_a_decoded_copy_and_keeps_the_original(self) -> None:
@@ -124,7 +169,7 @@ class TestAddDecodedNames:
     def test_walks_nested_lists(self) -> None:
         assert add_decoded_names({"a": [{"name": _b64("X")}]})["a"][0]["name_decoded"] == "X"
 
-    @pytest.mark.parametrize("value", ["not base64!", None, 3, _b64("x")[:-1]])
+    @pytest.mark.parametrize("value", ["not base64!", None, 3, _b64("x")[:-1], "K\u00fcche"])
     def test_leaves_a_value_it_cannot_decode(self, value: Any) -> None:
         assert add_decoded_names({"name": value}) == {"name": value}
 
@@ -144,13 +189,21 @@ class TestRenderDevicesMd:
         assert "| Client A | BB-BB-BB-BB-BB-BB | 192.0.2.2 | main | band5 | True |" in text
         assert "| Client B | CC-CC-CC-CC-CC-CC | x |" in text
 
-    def test_a_plain_text_nickname_is_shown_as_it_is(self) -> None:
+    def test_a_nickname_is_never_decoded(self) -> None:
         def read(path: str, form: str, payload: dict[str, Any]) -> dict[str, Any]:
             if form == "device_list":
-                return {"result": {"device_list": [{"nickname": "office"}]}}
+                return {"result": {"device_list": [{"nickname": "TV01"}]}}
             return _read(path, form, payload)
 
-        assert "| office |" in render_devices_md(collect(read, TAKEN_AT))
+        assert "| TV01 |" in render_devices_md(collect(read, TAKEN_AT))
+
+    def test_a_plain_client_name_is_shown_as_it_is(self) -> None:
+        def read(path: str, form: str, payload: dict[str, Any]) -> dict[str, Any]:
+            if form == "client_list":
+                return {"result": {"client_list": [{"name": "Plain name!", "mac": "M"}]}}
+            return _read(path, form, payload)
+
+        assert "| Plain name! | M |" in render_devices_md(collect(read, TAKEN_AT))
 
     def test_never_prints_a_password(self) -> None:
         assert WIFI_PASSWORD not in render_devices_md(_dump())
@@ -175,8 +228,8 @@ class TestWriteDump:
 
 
 def test_scrub_session_removes_the_token_from_an_error() -> None:
-    message = "500 for url: http://192.0.2.1/cgi-bin/luci/;stok=abc123DEF/admin/x?form=y"
+    error = ValueError("500 for url: http://192.0.2.1/cgi-bin/luci/;stok=abc123DEF/admin/x?form=y")
 
-    assert scrub_session(message) == (
+    assert scrub_session(error) == (
         "500 for url: http://192.0.2.1/cgi-bin/luci/;stok=REDACTED/admin/x?form=y"
     )

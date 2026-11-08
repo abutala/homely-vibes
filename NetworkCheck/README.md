@@ -302,7 +302,7 @@ writes nothing if any read fails. The JSON holds Wi-Fi passwords, so keep it out
 uv run python -m NetworkCheck.deco_config_dump --out /path/outside/this/repo 2>&1 | tee /tmp/deco_dump.log
 ```
 
-It logs in, so it can evict a session on another host. Run it where the other NetworkCheck scripts
+An empty answer for the mesh units, clients or Wi-Fi counts as a failed read. It logs in, so it can evict a session on another host. Run it where the other NetworkCheck scripts
 run, because `deco_admin_lock` works only within one host. The local API does not answer for IoT
 network settings, DHCP, reservations or port forwarding, so the dump lacks those.
 
