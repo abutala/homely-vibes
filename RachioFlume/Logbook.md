@@ -248,3 +248,11 @@ for the same reason — the hose API has no zone number. Display strings for
 both come from `compact_zone_label()` (splits on `" - "` and takes the head),
 so `"Z13 FS - Upper Deck Planters"` shows as `"Z13 FS"` in the email and
 Pushover header. No separate `name:` field in config.
+
+### The Ecowitt gateway needs no cloud and no key
+
+A GW1100 serves `GET /get_livedata_info` on the LAN with no auth. Soil probes come back
+under `ch_soil` as strings: `{"channel": "1", "name": "", "battery": "2", "humidity": "80%"}`.
+`name` stays empty until the channel is named in the Ecowitt app, so the report falls back to
+`Soil CH<n>`. The report ignores `battery`: its scale is not confirmed. A probe with a dead
+battery shows as silence instead, flagged after a day.

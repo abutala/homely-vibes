@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 
 from RachioFlume.alert_engine import CONTROLLER_STATUS_KEY, AlertEngine
+from RachioFlume.ecowitt_client import EcowittClient
 from RachioFlume.hose_timer_processor import HoseTimerProcessor
 from RachioFlume.rachio_client import RachioClient
 from RachioFlume.flume_client import FlumeClient
@@ -29,12 +30,14 @@ class WaterTrackingCollector:
         hose_processors: Optional[List[HoseTimerProcessor]] = None,
         rachio_client: Optional[RachioClient] = None,
         flume_client: Optional[FlumeClient] = None,
+        soil_client: Optional[EcowittClient] = None,
     ):
         self.logger = get_logger(__name__)
 
         self.db = WaterTrackingDB(db_path)
         self.rachio_client = rachio_client or RachioClient()
         self.flume_client = flume_client or FlumeClient()
+        self.soil_client = soil_client
         self.poll_interval = poll_interval_seconds
         self.alert_engine = alert_engine
         self.hose_processors = hose_processors or []
@@ -123,6 +126,17 @@ class WaterTrackingCollector:
         except Exception as e:
             self.logger.error(f"Error collecting Flume data: {e}")
 
+    async def collect_soil_data(self) -> None:
+        """Save one reading per soil probe; a no-op with no gateway configured."""
+        if self.soil_client is None:
+            return
+        try:
+            readings = self.soil_client.soil_readings(datetime.now())
+            self.db.save_soil_readings(readings)
+            self.logger.info(f"Saved {len(readings)} soil readings from Ecowitt")
+        except Exception as e:
+            self.logger.error(f"Error collecting soil data: {e}")
+
     async def process_collected_data(self) -> None:
         """Process collected data to compute zone sessions and statistics."""
         try:
@@ -138,10 +152,10 @@ class WaterTrackingCollector:
         """Run one collection cycle."""
         self.logger.info("Starting data collection cycle")
 
-        # Collect from both APIs concurrently
         await asyncio.gather(
             self.collect_rachio_data(),
             self.collect_flume_data(),
+            self.collect_soil_data(),
             return_exceptions=True,
         )
 
