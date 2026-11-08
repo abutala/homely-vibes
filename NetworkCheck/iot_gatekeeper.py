@@ -4,13 +4,16 @@
 The IoT SSID's password is old and widely shared, and it cannot change: the IoT
 devices are too hard to re-provision. So the MAC is the credential. Every tick
 reads the client list and blocks any device on the IoT network whose MAC is not
-on the allowlist. The main and guest networks are never touched.
+on the allowlist. The main and guest networks are never blocked. After a clean
+read, the tick also re-applies the Deco client labels (`deco_names.py`) on every
+network: labels only, no access change.
 
 The Deco's own Allow List cannot do this: it covers every SSID except guest,
 and devices on the main network must be free to change their MAC.
 
 Layout:
     gatekeeper_policy.py -- who to block; pure and testable
+    deco_names.py        -- client labels from config, re-applied each tick
     deco_client.py       -- the Deco local admin API (blocklist verbs)
     common.py            -- notifier, invocation banner, shared Deco admin lock
 
@@ -18,8 +21,6 @@ Deployment: cron runs `check` every few minutes, offset from the watchdog.
 """
 
 import argparse
-import base64
-import binascii
 import json
 import logging
 import os
@@ -33,11 +34,13 @@ from lib.logger import get_logger
 from lib.notifications import Notifier
 from NetworkCheck.common import deco_admin_lock, log_invocation, network_notifier
 from NetworkCheck.deco_client import DecoAPIError, DecoAuthError, DecoClient
+from NetworkCheck.deco_names import NameControl, canonical_names, sync_names
 from NetworkCheck.gatekeeper_policy import (
     IOT_INTERFACE,
     Plan,
     canonical_allowlist,
     canonical_mac,
+    decode_name,
     plan_blocks,
 )
 
@@ -98,14 +101,6 @@ def describe(client: dict[str, Any]) -> str:
     """MAC and device type only, for logs. Client names are household data and
     stay out of the cron log, as in the watchdog's census."""
     return f"{canonical_mac(client['mac'])} ({client.get('client_type', '?')})"
-
-
-def decode_name(raw: object) -> str:
-    """Client names arrive base64-encoded; fall back to the raw value."""
-    try:
-        return base64.b64decode(str(raw), validate=True).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError):
-        return str(raw)
 
 
 def push_label(client: dict[str, Any]) -> str:
@@ -299,17 +294,21 @@ class IotGatekeeper:
         return mac
 
 
-def _build(logger: logging.Logger) -> IotGatekeeper:
+def _deco() -> DecoClient:
+    wd = get_config().network_check.uplink_watchdog
+    return DecoClient(wd.deco_host, wd.deco_username, wd.deco_password)
+
+
+def _build(logger: logging.Logger, deco: DecoClient) -> IotGatekeeper:
     cfg = get_config()
-    wd = cfg.network_check.uplink_watchdog
     gk = cfg.network_check.iot_gatekeeper
-    deco = DecoClient(wd.deco_host, wd.deco_username, wd.deco_password)
     state_file = os.path.join(cfg.paths.logging_dir, gk.state_file)
     return IotGatekeeper(gk, deco, network_notifier(), logger, state_file)
 
 
 def _run(args: argparse.Namespace, logger: logging.Logger) -> None:
-    gatekeeper = _build(logger)
+    deco = _deco()
+    gatekeeper = _build(logger, deco)
     if args.command == "snapshot":
         for line in gatekeeper.snapshot():
             print(line)
@@ -320,6 +319,30 @@ def _run(args: argparse.Namespace, logger: logging.Logger) -> None:
     else:
         done = gatekeeper.check_once(dry_run=args.dry_run)
         print(f"{'would block' if args.dry_run else 'blocked'}={len(done)}")
+        labels = get_config().network_check.deco_names
+        _sync_labels(deco, gatekeeper.state, labels, logger, args.dry_run)
+
+
+def _sync_labels(
+    deco: NameControl,
+    state: GatekeeperState,
+    labels: Optional[dict[str, str]],
+    logger: logging.Logger,
+    dry_run: bool,
+) -> None:
+    """Re-apply `deco_names` on the same login, so a device that was offline gets
+    its label on the first tick after it reconnects. Only after a clean read:
+    while the login is paused or reads fail, another login would add to the
+    failed attempts and hold the admin lock longer. Labels are cosmetic: a
+    failure is logged and retried next tick, never alerted."""
+    if state.auth_paused_until is not None or state.read_failures:
+        return
+    try:
+        wanted = canonical_names(labels)
+        if wanted:
+            sync_names(deco, wanted, logger, dry_run=dry_run)
+    except Exception as err:
+        logger.error("Deco label sync failed: %s", err)
 
 
 def main() -> None:

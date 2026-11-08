@@ -16,7 +16,7 @@ Usage:
 
 import os
 import types
-from dataclasses import dataclass, is_dataclass
+from dataclasses import dataclass, field, is_dataclass
 from enum import StrEnum
 from typing import Dict, get_origin, get_args
 
@@ -478,6 +478,8 @@ class NetworkCheckConfig:
     min_ul_bw: int
     uplink_watchdog: UplinkWatchdogConfig
     iot_gatekeeper: IotGatekeeperConfig
+    # Deco client labels, MAC -> label; household data, so set only in local.yaml.
+    deco_names: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
