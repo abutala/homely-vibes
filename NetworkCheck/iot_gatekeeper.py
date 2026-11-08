@@ -319,11 +319,16 @@ def _run(args: argparse.Namespace, logger: logging.Logger) -> None:
     else:
         done = gatekeeper.check_once(dry_run=args.dry_run)
         print(f"{'would block' if args.dry_run else 'blocked'}={len(done)}")
-        _sync_labels(deco, gatekeeper.state, logger, args.dry_run)
+        labels = get_config().network_check.deco_names
+        _sync_labels(deco, gatekeeper.state, labels, logger, args.dry_run)
 
 
 def _sync_labels(
-    deco: NameControl, state: GatekeeperState, logger: logging.Logger, dry_run: bool
+    deco: NameControl,
+    state: GatekeeperState,
+    labels: Optional[dict[str, str]],
+    logger: logging.Logger,
+    dry_run: bool,
 ) -> None:
     """Re-apply `deco_names` on the same login, so a device that was offline gets
     its label on the first tick after it reconnects. Only after a clean read:
@@ -333,7 +338,7 @@ def _sync_labels(
     if state.auth_paused_until is not None or state.read_failures:
         return
     try:
-        wanted = canonical_names(get_config().network_check.deco_names)
+        wanted = canonical_names(labels)
         if wanted:
             sync_names(deco, wanted, logger, dry_run=dry_run)
     except Exception as err:

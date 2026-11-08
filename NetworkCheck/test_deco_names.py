@@ -9,8 +9,9 @@ import logging
 from typing import Any
 
 import pytest
+from omegaconf import OmegaConf
 
-from NetworkCheck.deco_names import canonical_names, name_changes, sync_names
+from NetworkCheck.deco_names import canonical_names, name_changes, sync_names, unlabelled
 from NetworkCheck.iot_gatekeeper import GatekeeperState, _sync_labels
 
 LOG = logging.getLogger("test")
@@ -37,6 +38,14 @@ class FakeDeco:
         for c in self.clients:
             if c["mac"] == mac:
                 c["name"] = base64.b64encode(name.encode()).decode()
+
+
+class Spy(FakeDeco):
+    reads = 0
+
+    def list_clients(self) -> list[dict[str, Any]]:
+        self.reads += 1
+        return super().list_clients()
 
 
 WANTED = {"AA-BB-CC-00-00-01": "Fan - Room A", "AA-BB-CC-00-00-02": "Phone - Person B"}
@@ -124,19 +133,28 @@ class TestCap:
 
 
 class TestGatekeeperTick:
-    class NoTouch:
-        def list_clients(self) -> list[dict[str, Any]]:
-            raise AssertionError("must not log in or read")
-
-        def rename(self, mac: str, name: str, client_type: str) -> None:
-            raise AssertionError("must not write")
-
     @pytest.mark.parametrize(
         "state",
         [GatekeeperState(auth_paused_until=123.0), GatekeeperState(read_failures=1)],
     )
     def test_no_sync_after_a_failed_read_or_login(self, state: GatekeeperState) -> None:
-        _sync_labels(self.NoTouch(), state, LOG, dry_run=False)
+        deco = Spy([_client("AA-BB-CC-00-00-01", "old")])
+        _sync_labels(deco, state, dict(WANTED), LOG, dry_run=False)
+        assert deco.reads == 0 and deco.renamed == []
+
+    def test_clean_read_syncs(self) -> None:
+        deco = Spy([_client("AA-BB-CC-00-00-01", "old")])
+        _sync_labels(deco, GatekeeperState(), dict(WANTED), LOG, dry_run=False)
+        assert deco.renamed == [("AA-BB-CC-00-00-01", "Fan - Room A", "iot_device")]
 
     def test_null_config_is_empty(self) -> None:
         assert canonical_names(None) == {}
+
+
+class TestList:
+    def test_hostile_name_stays_valid_yaml(self) -> None:
+        name = 'Evil" : x\\ \n- y'
+        lines = unlabelled([_client("AA-BB-CC-00-00-09", name)], {})
+        assert OmegaConf.to_container(OmegaConf.create("\n".join(lines))) == {
+            "AA-BB-CC-00-00-09": name
+        }

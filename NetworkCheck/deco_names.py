@@ -18,6 +18,7 @@ Usage:
 """
 
 import argparse
+import json
 import logging
 from typing import Any, Mapping, Protocol
 
@@ -93,13 +94,14 @@ def sync_names(
 
 def unlabelled(clients: list[dict[str, Any]], wanted: Mapping[str, str]) -> list[str]:
     """Config lines for online clients with no label yet. Interactive only: this
-    prints device names, so never run it from cron."""
+    prints device names, so never run it from cron. A device picks its own name,
+    so it is JSON-escaped: a quote or backslash in it cannot break local.yaml."""
     lines = []
     for c in sorted(clients, key=lambda c: (str(c.get("client_type")), str(c.get("mac")))):
         mac = canonical_mac(c["mac"])
         if mac not in wanted:
             lines.append(
-                f'"{mac}": "{decode_name(c.get("name", ""))}"'
+                f'"{mac}": {json.dumps(decode_name(c.get("name", "")))}'
                 f"  # {c.get('client_type', '?')}, {c.get('ip', '?')}"
             )
     return lines
