@@ -2,6 +2,7 @@
 
 Problems come first; a quiet week is one green line. Expected idle zones (skips,
 zones in no schedule) fold into grey lines, one per reason; disabled zones are not shown.
+Soil probes, when a gateway is configured, get one line each after the zone table.
 """
 
 from dataclasses import dataclass
@@ -29,8 +30,9 @@ def _silent(s: SoilStats, report: WaterUsageReport) -> bool:
 
 
 def problems(report: WaterUsageReport) -> List[Problem]:
-    """Zones that need a look: flow over the limit, a run with no water, or an
-    idle zone the reporter marked as a problem (missed run, valve offline)."""
+    """What needs a look: a zone with flow over the limit or a run with no water,
+    an idle zone the reporter marked as a problem (missed run, valve offline), a
+    soil probe silent for a day, or a configured soil gateway with no readings."""
     found: List[Problem] = []
     for z in report.zones:
         if z.alert_sessions:
@@ -52,11 +54,17 @@ def problems(report: WaterUsageReport) -> List[Problem]:
         for s in report.soil
         if _silent(s, report)
     )
+    if report.soil_expected and not report.soil:
+        found.append(Problem("Soil", "no readings from the soil gateway"))
     return found
 
 
 def _soil_line(s: SoilStats) -> str:
-    return f"{s.label}: {s.latest_pct:.0f}% now, {s.min_pct:.0f}–{s.max_pct:.0f}% this week"
+    if s.min_pct is None or s.max_pct is None:
+        return (
+            f"{s.label}: no reading this period (last {s.latest_pct:.0f}% on {s.last_read:%m/%d})"
+        )
+    return f"{s.label}: {s.latest_pct:.0f}% now, range {s.min_pct:.0f}–{s.max_pct:.0f}%"
 
 
 def _ran(report: WaterUsageReport) -> List[ZoneStats]:

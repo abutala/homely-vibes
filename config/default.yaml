@@ -372,6 +372,7 @@ flume:
 # they hold, and send a P0 "all clear" after clear_after_minutes of failing.
 # Whole-house flow rules are suppressed entirely while a Rachio zone irrigates.
 rachio_flume:
+  # === Soil moisture (weekly report only, never an alert) ===
   # Ecowitt gateway (host or IP) whose soil probes go into the weekly report.
   # Empty turns soil collection off.
   soil_gateway_host: ""

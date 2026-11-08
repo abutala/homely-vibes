@@ -21,7 +21,7 @@ A Python integration that connects Rachio irrigation controllers with Flume wate
   - **Hose-valve battery health check**: P1 when a valve reports `batteryStatus` `LOW` or `REPLACE`. Rachio exposes a four-value enum — `GOOD` / `LOW` / `REPLACE` / `UNKNOWN` — and **no percentage anywhere in the API** ([getValve schema](https://rachio.readme.io/reference/valveservice_getvalve)), so there is no level to threshold and nothing to tune but the repeat cadence (`valve_battery.retrigger_minutes`, default 1440). `UNKNOWN` never fires: that is the valve saying it hasn't reported in, which is the offline check's job, and paging on it would fire on every BLE dropout. An unrecognized value logs a warning rather than paging, so a firmware that adds an enum member can't spontaneously start waking you up. No debounce (unlike `connected`, the status doesn't flap with range); stale roster rows are skipped, same as the offline check. P0 once on recovery.
   - Mute support; P0 "all clear" for sustained-flow rules after `clear_after_minutes` of failing.
 - **Synthetic Simulator** (`simulate_alerts.py`): Replay scenarios through the alert engine without hitting real APIs or Pushover; wired into `test_alert_simulation.py`. See [TESTABILITY.md](TESTABILITY.md).
-- **HTML Email Report** (`report_format.py`; prod cron sends it weekly): problems first, then the numbers. A red `Needs attention` box lists each zone with a run above its flow limit (`1/4 runs above 0.8 GPM`), a run with no water measured, a zone in an active schedule with no run or skip recorded, or an offline hose valve; a quiet week shows one green `No problems` line. The subject carries the count (`Oct 31 – Nov 7: 3 problems` or `: OK`). Below it, one table of the zones and valves that ran (Min, Gal, GPM; problem rows in red), then grey `Not run:` lines, one per reason — `skipped: weather 11/03` (a Rachio `*_SKIP` event on a schedule that holds the zone), `in no active schedule`, or `no run recorded` (a connected hose valve, or any zone when Rachio is unreachable and its schedules are unknown). Disabled zones are not shown. Inline styles only, so Gmail and iOS Mail render it the same; it fits a 375 px phone.
+- **HTML Email Report** (`report_format.py`; prod cron sends it weekly): problems first, then the numbers. A red `Needs attention` box lists each zone with a run above its flow limit (`1/4 runs above 0.8 GPM`), a run with no water measured, a zone in an active schedule with no run or skip recorded, an offline hose valve, a soil probe silent for a day, or a configured soil gateway with no readings; a quiet week shows one green `No problems` line. The subject carries the count (`Oct 31 – Nov 7: 3 problems` or `: OK`). Below it, one table of the zones and valves that ran (Min, Gal, GPM; problem rows in red), then a `Soil moisture` line per probe when a soil gateway is configured, then grey `Not run:` lines, one per reason — `skipped: weather 11/03` (a Rachio `*_SKIP` event on a schedule that holds the zone), `in no active schedule`, or `no run recorded` (a connected hose valve, or any zone when Rachio is unreachable and its schedules are unknown). Disabled zones are not shown. Inline styles only, so Gmail and iOS Mail render it the same; it fits a 375 px phone.
 - **Continuous Monitoring**: Automated data collection service
 - **SQLite Storage**: Persistent data storage with session tracking
 
@@ -296,8 +296,8 @@ kill <process_id>
 6. **EcowittClient** (`ecowitt_client.py`)
    - Reads soil probes (WH51, WH51L) from an Ecowitt gateway's local `GET /get_livedata_info`; no key
    - On only when `rachio_flume.soil_gateway_host` is set; the collector saves one `soil_readings` row per channel per poll
-   - The weekly report adds a soil line per channel (now, low–high for the period) and lists a probe silent for over a day as a problem. Report only: nothing here changes a schedule
-   - Name each channel in the Ecowitt app (for example "Fig 12in"); unnamed channels show as `Soil CH<n>`
+   - The weekly report adds a soil line per channel ever seen (now, low–high for the period) and lists a probe silent for over a day as a problem, however long it has been silent. A configured gateway with no readings at all is a problem too. Report only: nothing here changes a schedule
+   - Name each channel in the Ecowitt app (for example "Bed 12in"); unnamed channels show as `Soil CH<n>`
 
 7. **AlertEngine** (`alert_engine.py`) + **AlertRule** (`alert_rules.py`)
    - Runs at the end of each collector cycle
@@ -348,6 +348,10 @@ Z1 FS        6    41   6.7
 Z2 FS        6     0   0.0
 ...
 Z13 BUD     40    18   0.4
+
+Soil moisture:
+  Bed 4in: 80% now, range 70–85%
+  Bed 12in: 73% now, range 71–76%
 
 Not run:
   Z3 FB, Z4 FB, Z7 FDB, Z9 FD, Z12 FDB — skipped: weather 11/03, climate 11/06

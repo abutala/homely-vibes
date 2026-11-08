@@ -90,19 +90,26 @@ def _reading(channel: int, pct: float, hours_ago: float, name: str = "") -> Soil
 
 class TestStats:
     def test_latest_low_high_per_channel(self) -> None:
-        rows = [
+        period = [
             _reading(1, 70, 48),
             _reading(1, 85, 24),
             _reading(1, 80, 1, name="Bed 4in"),
             _reading(2, 60, 2),
         ]
-        assert soil_stats(rows) == [
+        last = [_reading(2, 60, 2), _reading(1, 80, 1, name="Bed 4in")]
+        assert soil_stats(period, last) == [
             SoilStats(1, "Bed 4in", 80.0, 70.0, 85.0, NOW - timedelta(hours=1)),
             SoilStats(2, "Soil CH2", 60.0, 60.0, 60.0, NOW - timedelta(hours=2)),
         ]
 
+    def test_channel_silent_all_period_keeps_its_row(self) -> None:
+        last = [_reading(1, 75, 24 * 10)]
+        assert soil_stats([], last) == [
+            SoilStats(1, "Soil CH1", 75.0, None, None, NOW - timedelta(days=10))
+        ]
+
     def test_none_is_empty(self) -> None:
-        assert soil_stats([]) == []
+        assert soil_stats([], []) == []
 
 
 @pytest.fixture
@@ -123,12 +130,40 @@ class TestStorage:
             81.0
         ]
 
+    def test_last_reading_per_channel_has_no_lower_bound(self, db: WaterTrackingDB) -> None:
+        db.save_soil_readings(
+            [_reading(1, 70, 24 * 30), _reading(1, 72, 24 * 20), _reading(2, 50, 1)]
+        )
+        assert db.get_last_soil_readings(NOW) == [_reading(1, 72, 24 * 20), _reading(2, 50, 1)]
+
+    def _report(self, db: WaterTrackingDB, host: str = "gateway.example.com") -> WaterUsageReport:
+        return WeeklyReporter(str(db.db_path)).generate_period_report_with_dates(
+            NOW - timedelta(days=7),
+            NOW,
+            zone_thresholds={},
+            schedule_zones={},
+            soil_gateway_host=host,
+        )
+
     def test_weekly_report_carries_soil(self, db: WaterTrackingDB) -> None:
         db.save_soil_readings([_reading(1, 70, 30), _reading(1, 80, 1)])
-        report = WeeklyReporter(str(db.db_path)).generate_period_report_with_dates(
-            NOW - timedelta(days=7), NOW, zone_thresholds={}, schedule_zones={}
-        )
+        report = self._report(db)
         assert [(s.channel, s.latest_pct, s.min_pct) for s in report.soil] == [(1, 80.0, 70.0)]
+        assert report.soil_expected
+
+    def test_probe_silent_all_week_is_a_problem(self, db: WaterTrackingDB) -> None:
+        db.save_soil_readings([_reading(1, 70, 24 * 10), _reading(2, 60, 1)])
+        found = rf.problems(self._report(db))
+        assert [(p.zone, p.detail) for p in found] == [("Soil CH1", "no soil reading since 10/28")]
+
+    def test_gateway_set_but_never_read_is_a_problem(self, db: WaterTrackingDB) -> None:
+        found = rf.problems(self._report(db))
+        assert [(p.zone, p.detail) for p in found] == [
+            ("Soil", "no readings from the soil gateway")
+        ]
+
+    def test_no_gateway_no_soil_problem(self, db: WaterTrackingDB) -> None:
+        assert rf.problems(self._report(db, host="")) == []
 
 
 class FakeEcowitt:
@@ -150,22 +185,24 @@ class TestCollector:
             soil_client=cast(EcowittClient, soil),
         )
 
+    @staticmethod
+    def _stored(collector: WaterTrackingCollector) -> list[SoilReading]:
+        return collector.db.get_soil_readings(datetime(2000, 1, 1), datetime(2100, 1, 1))
+
     @pytest.mark.asyncio
     async def test_saves_each_poll(self, tmp_path: Path) -> None:
         collector = self._collector(tmp_path, FakeEcowitt())
         await collector.collect_soil_data()
-        start = datetime.now() - timedelta(minutes=1)
-        assert (
-            len(collector.db.get_soil_readings(start, datetime.now() + timedelta(minutes=1))) == 2
-        )
+        assert [r.channel for r in self._stored(collector)] == [1, 2]
 
     @pytest.mark.asyncio
-    async def test_gateway_down_does_not_raise(self, tmp_path: Path) -> None:
+    async def test_gateway_down_saves_nothing_and_does_not_raise(self, tmp_path: Path) -> None:
         collector = self._collector(tmp_path, FakeEcowitt(fail=True))
         await collector.collect_soil_data()
+        assert self._stored(collector) == []
 
 
-def _report_with(soil: list[SoilStats]) -> WaterUsageReport:
+def _report_with(soil: list[SoilStats], expected: bool = True) -> WaterUsageReport:
     return WaterUsageReport(
         report_generated=NOW,
         period_start=NOW - timedelta(days=7),
@@ -173,6 +210,7 @@ def _report_with(soil: list[SoilStats]) -> WaterUsageReport:
         summary=ReportSummary(0, 0.0, 0.0, 0),
         zones=[],
         soil=soil,
+        soil_expected=expected,
     )
 
 
@@ -183,16 +221,23 @@ class TestFormat:
     def test_text_shows_now_and_range(self) -> None:
         text = rf.format_text(_report_with([self.FRESH]))
         assert "Soil moisture" in text
-        assert "Bed 4in: 80% now, 70–85% this week" in text
+        assert "Bed 4in: 80% now, range 70–85%" in text
 
-    def test_html_shows_soil_table(self) -> None:
+    def test_html_shows_soil_lines(self) -> None:
         html = rf.format_html(_report_with([self.FRESH]))
-        assert "Bed 4in" in html and "80%" in html
+        assert "Bed 4in: 80% now, range 70–85%" in html
+
+    def test_silent_all_period_line(self) -> None:
+        old = SoilStats(3, "Bed 8in", 75.0, None, None, NOW - timedelta(days=10))
+        text = rf.format_text(_report_with([old]))
+        assert "Bed 8in: no reading this period (last 75% on 10/28)" in text
 
     def test_silent_sensor_is_a_problem(self) -> None:
         found = rf.problems(_report_with([self.FRESH, self.STALE]))
         assert [(p.zone, p.detail) for p in found] == [("Bed 12in", "no soil reading since 11/05")]
 
-    def test_no_sensors_no_section(self) -> None:
-        assert "Soil" not in rf.format_text(_report_with([]))
-        assert "Soil" not in rf.format_html(_report_with([]))
+    def test_no_gateway_no_section(self) -> None:
+        report = _report_with([], expected=False)
+        assert "Soil" not in rf.format_text(report)
+        assert "Soil" not in rf.format_html(report)
+        assert rf.problems(report) == []

@@ -452,6 +452,27 @@ class WaterTrackingDB:
             for row in rows
         ]
 
+    def get_last_soil_readings(self, before: datetime) -> List[SoilReading]:
+        """The newest reading per channel before `before`, however old. SQLite fills
+        the bare columns from the row that holds MAX(read_at)."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT channel, name, moisture_pct, MAX(read_at) AS read_at FROM soil_readings
+                WHERE read_at < ? GROUP BY channel ORDER BY channel
+                """,
+                (before,),
+            ).fetchall()
+        return [
+            SoilReading(
+                row["channel"],
+                row["name"],
+                row["moisture_pct"],
+                datetime.fromisoformat(str(row["read_at"])),
+            )
+            for row in rows
+        ]
+
     def get_zone_sessions(self, start_date: datetime, end_date: datetime) -> List[Dict[str, Any]]:
         """Get zone watering sessions for a date range."""
         with self.get_connection() as conn:

@@ -117,29 +117,29 @@ class SoilStats:
     channel: int
     label: str  # the channel's name in the Ecowitt app, else "Soil CH<n>"
     latest_pct: float
-    min_pct: float
-    max_pct: float
+    min_pct: Optional[float]  # None when the probe sent nothing in the period
+    max_pct: Optional[float]
     last_read: datetime
 
 
-def soil_stats(readings: List[SoilReading]) -> List[SoilStats]:
-    """Latest, low and high moisture per channel. `readings` must be oldest first;
-    the newest reading also gives the channel's label."""
-    by_channel: Dict[int, List[SoilReading]] = {}
-    for r in readings:
-        by_channel.setdefault(r.channel, []).append(r)
+def soil_stats(period: List[SoilReading], last: List[SoilReading]) -> List[SoilStats]:
+    """One row per channel ever seen: latest reading and its label from `last` (the
+    newest per channel, however old), low and high from `period` (oldest first).
+    A channel silent for the whole period keeps its row, with no low or high."""
+    by_channel: Dict[int, List[float]] = {}
+    for r in period:
+        by_channel.setdefault(r.channel, []).append(r.moisture_pct)
     stats = []
-    for channel, rows in sorted(by_channel.items()):
-        last = rows[-1]
-        pcts = [r.moisture_pct for r in rows]
+    for newest in sorted(last, key=lambda r: r.channel):
+        pcts = by_channel.get(newest.channel)
         stats.append(
             SoilStats(
-                channel=channel,
-                label=last.name or f"Soil CH{channel}",
-                latest_pct=last.moisture_pct,
-                min_pct=min(pcts),
-                max_pct=max(pcts),
-                last_read=last.read_at,
+                channel=newest.channel,
+                label=newest.name or f"Soil CH{newest.channel}",
+                latest_pct=newest.moisture_pct,
+                min_pct=min(pcts) if pcts else None,
+                max_pct=max(pcts) if pcts else None,
+                last_read=newest.read_at,
             )
         )
     return stats
@@ -165,6 +165,7 @@ class WaterUsageReport:
     summary: ReportSummary
     zones: List[ZoneStats]
     soil: List[SoilStats] = field(default_factory=list)
+    soil_expected: bool = False  # a soil gateway is configured
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for compatibility."""
@@ -188,6 +189,7 @@ class WeeklyReporter:
         percent_above: Optional[float] = None,
         min_runtime_minutes: Optional[int] = None,
         schedule_zones: Optional[Dict[str, List[int]]] = None,
+        soil_gateway_host: Optional[str] = None,
     ) -> WaterUsageReport:
         """Generate a comprehensive period report.
 
@@ -199,6 +201,8 @@ class WeeklyReporter:
                 each read from config when omitted
             schedule_zones: Zone numbers per enabled Rachio schedule, used to say
                 why a zone did not run; None when unknown (reasons fall back)
+            soil_gateway_host: Ecowitt gateway; read from config when omitted.
+                Set means soil readings are expected, so their absence is a problem
 
         Returns:
             WaterUsageReport containing period statistics
@@ -209,7 +213,9 @@ class WeeklyReporter:
 
         # Load anomaly config once — used to compute per-zone / per-valve
         # threshold (baseline + slack) and count how many sessions crossed it.
-        za_cfg = get_config().rachio_flume.alerts.zone_anomaly
+        rf_cfg = get_config().rachio_flume
+        za_cfg = rf_cfg.alerts.zone_anomaly
+        soil_host = rf_cfg.soil_gateway_host if soil_gateway_host is None else soil_gateway_host
         abs_gpm = za_cfg.absolute_gpm if absolute_gpm is None else absolute_gpm
         pct_above = za_cfg.percent_above if percent_above is None else percent_above
         # Same floor the alert engine applies: a seconds-long run divides a whole Flume
@@ -356,7 +362,11 @@ class WeeklyReporter:
             period_end=period_end,
             summary=summary,
             zones=formatted_zones,
-            soil=soil_stats(self.db.get_soil_readings(period_start, period_end)),
+            soil=soil_stats(
+                self.db.get_soil_readings(period_start, period_end),
+                self.db.get_last_soil_readings(period_end),
+            ),
+            soil_expected=bool(soil_host),
         )
 
     def _idle_zones(
