@@ -7,6 +7,8 @@ nothing and say so": an empty allowlist, an IoT network that looks empty, and
 more strangers in one tick than the cap all refuse the whole tick.
 """
 
+import base64
+import binascii
 import re
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -90,3 +92,11 @@ def plan_blocks(
             refusal=f"{len(strangers)} unknown devices is more than the cap of {max_blocks}",
         )
     return Plan(to_block=strangers, strangers=strangers, shared=shared)
+
+
+def decode_name(raw: object) -> str:
+    """Client names arrive base64-encoded; fall back to the raw value."""
+    try:
+        return base64.b64decode(str(raw), validate=True).decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return str(raw)

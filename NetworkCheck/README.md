@@ -292,6 +292,34 @@ Cron on the Linux prod host, offset from the watchdog's `*/10`:
 Both scripts hold one file lock (`{logging_dir}/deco_admin.lock`) for as long
 as they talk to the Deco: the admin account is single-session.
 
+### Client labels (`deco_names.py`)
+
+The Deco's client names are whatever each device advertises. `network_check.deco_names`
+in `config/local.yaml` holds the labels you want, MAC to label, and every gatekeeper
+`check` tick re-applies them on the same login. The Deco lists only clients that are
+online, so a label for a device that is off today is applied on the first tick after it
+reconnects. Labels are cosmetic: a failed rename is logged and retried next tick, never
+alerted. Logs carry MACs only.
+
+```bash
+# Online clients with no label yet, as config lines (prints names -- run by hand)
+uv run python -m NetworkCheck.deco_names list 2>&1 | tee /tmp/deco_names.log
+
+# Apply now instead of waiting for the next tick
+uv run python -m NetworkCheck.deco_names sync --dry-run
+uv run python -m NetworkCheck.deco_names sync
+```
+
+```yaml
+# config/local.yaml
+network_check:
+  deco_names:
+    "AA-BB-CC-DD-EE-01": "Fan - Basement"   # quote every MAC
+```
+
+A blank label or a malformed MAC renames nothing. A phone or laptop with a private
+(rotating) Wi-Fi address keeps its label only while the device keeps that address.
+
 ### Alert priorities
 
 - **P1** — blocked nothing because of a refusal (cap, empty IoT network, a

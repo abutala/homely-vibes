@@ -18,8 +18,6 @@ Deployment: cron runs `check` every few minutes, offset from the watchdog.
 """
 
 import argparse
-import base64
-import binascii
 import json
 import logging
 import os
@@ -33,11 +31,13 @@ from lib.logger import get_logger
 from lib.notifications import Notifier
 from NetworkCheck.common import deco_admin_lock, log_invocation, network_notifier
 from NetworkCheck.deco_client import DecoAPIError, DecoAuthError, DecoClient
+from NetworkCheck.deco_names import canonical_names, sync_names
 from NetworkCheck.gatekeeper_policy import (
     IOT_INTERFACE,
     Plan,
     canonical_allowlist,
     canonical_mac,
+    decode_name,
     plan_blocks,
 )
 
@@ -98,14 +98,6 @@ def describe(client: dict[str, Any]) -> str:
     """MAC and device type only, for logs. Client names are household data and
     stay out of the cron log, as in the watchdog's census."""
     return f"{canonical_mac(client['mac'])} ({client.get('client_type', '?')})"
-
-
-def decode_name(raw: object) -> str:
-    """Client names arrive base64-encoded; fall back to the raw value."""
-    try:
-        return base64.b64decode(str(raw), validate=True).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError):
-        return str(raw)
 
 
 def push_label(client: dict[str, Any]) -> str:
@@ -299,17 +291,21 @@ class IotGatekeeper:
         return mac
 
 
-def _build(logger: logging.Logger) -> IotGatekeeper:
+def _deco() -> DecoClient:
+    wd = get_config().network_check.uplink_watchdog
+    return DecoClient(wd.deco_host, wd.deco_username, wd.deco_password)
+
+
+def _build(logger: logging.Logger, deco: DecoClient) -> IotGatekeeper:
     cfg = get_config()
-    wd = cfg.network_check.uplink_watchdog
     gk = cfg.network_check.iot_gatekeeper
-    deco = DecoClient(wd.deco_host, wd.deco_username, wd.deco_password)
     state_file = os.path.join(cfg.paths.logging_dir, gk.state_file)
     return IotGatekeeper(gk, deco, network_notifier(), logger, state_file)
 
 
 def _run(args: argparse.Namespace, logger: logging.Logger) -> None:
-    gatekeeper = _build(logger)
+    deco = _deco()
+    gatekeeper = _build(logger, deco)
     if args.command == "snapshot":
         for line in gatekeeper.snapshot():
             print(line)
@@ -320,6 +316,19 @@ def _run(args: argparse.Namespace, logger: logging.Logger) -> None:
     else:
         done = gatekeeper.check_once(dry_run=args.dry_run)
         print(f"{'would block' if args.dry_run else 'blocked'}={len(done)}")
+        _sync_labels(deco, logger, args.dry_run)
+
+
+def _sync_labels(deco: DecoClient, logger: logging.Logger, dry_run: bool) -> None:
+    """Re-apply `deco_names` on the same login, so a device that was offline gets
+    its label on the first tick after it reconnects. Labels are cosmetic: a
+    failure is logged and retried next tick, never alerted."""
+    try:
+        wanted = canonical_names(get_config().network_check.deco_names)
+        if wanted:
+            sync_names(deco, wanted, logger, dry_run=dry_run)
+    except Exception as err:
+        logger.error("Deco label sync failed: %s", err)
 
 
 def main() -> None:

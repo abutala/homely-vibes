@@ -417,6 +417,12 @@ network or more strangers than the cap all block nothing that tick.
   cosmetic to our scripts. The gatekeeper keys on MAC, `interface` and
   `online`; NodeCheck's Deco probe on MAC and `online`; the watchdog on
   `connection_type`.
+- **`client_list` read lists online clients only.** Measured 2026-11-07 on XE75
+  Pro 1.4.5: `{"device_mac": "default"}` returned 81 clients, every one
+  `online: true`; `{"device_mac": "offline"}` returned none; a read with no
+  `params` answered HTTP 500. The Deco app's offline list is not on this local
+  API, so nothing here can enumerate or forget offline clients. Labels for
+  offline devices wait in config until the device reconnects.
 - **A burst of admin writes times the Deco out.** Two of 74 back-to-back renames
   got a read timeout. Both writes still landed, so read back after a write;
   never resend one.
