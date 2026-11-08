@@ -23,11 +23,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Coroutine
 
-import aiohttp
-from ring_doorbell import AuthenticationError, Auth, Requires2FAError, RingError
+from ring_doorbell import AuthenticationError, Requires2FAError, RingError
 
 from RingBeams.beams_manager import run_raw_sidecar
-from RingSecurity.ring_manager import USER_AGENT, RingAuthError, _load_token, _save_token
+from RingSecurity.ring_manager import open_auth
 from lib.config import get_config
 from lib.file_lock import acquire_lock
 from lib.logger import get_logger
@@ -255,15 +254,7 @@ def take_dump(token_file: str, rest: RestCollector, sidecar: Sidecar) -> dict[st
 
 
 async def _collect_live(token_file: str, taken_at: str) -> dict[str, Any]:
-    token = _load_token(token_file)
-    if not token:
-        raise RingAuthError(
-            f"No Ring token at {token_file}. Run: uv run python RingSecurity/ring_manager.py auth"
-        )
-    async with aiohttp.ClientSession() as session:
-        auth = Auth(
-            USER_AGENT, token, lambda t: _save_token(token_file, t), http_client_session=session
-        )
+    async with open_auth(token_file) as auth:
 
         async def query(url: str) -> Any:
             return (await auth.async_query(url)).json()

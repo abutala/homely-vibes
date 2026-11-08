@@ -66,6 +66,7 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 - **Purpose**: Daily battery + offline health check for Ring cameras and doorbells via REST.
 - **Authentication**: 2FA via `ring_manager.py auth`; token stored in `config/tokens/ring_auth_token.json`.
 - **Token sharing**: see RingBeams — shared token, POSIX flock.
+- **Settings helper**: `set_device_settings.py` changes one device's settings. It is a dry run unless given `--apply`, and it reports every field that moved.
 
 ## SamsungFrame Module (`SamsungFrame/`)
 - **Authentication**: WebSocket token-based auth, saved to `config samsung_frame.token_file`
