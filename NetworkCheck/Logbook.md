@@ -382,6 +382,28 @@ until a human notices, so the gatekeeper is the opposite of the watchdog's
 fail-closed census: an unreadable list, an empty allowlist, an empty IoT
 network or more strangers than the cap all block nothing that tick.
 
+### Naming unknown clients (2026-11-08)
+
+Labelling every client by hand showed what identifies a device, in the order worth trying:
+
+- **The household's own records first.** A gadget ledger with a MAC column named most
+  devices at once, offline ones too.
+- **mDNS names eWeLink devices.** Each announces `eWeLink_<device id>`, the ID the app and
+  Alexa show, while the app shows no MAC. Resolve it to an IP, then the Deco gives the MAC.
+- **Tuya devices broadcast on UDP 6666/6667** about every 20 seconds, with their `gwId`. Newer
+  firmware encrypts it under a public key derived from a fixed seed. A wired host hears them
+  even from the IoT network, where client isolation stops ARP and ping.
+- **Some cloud IDs embed the MAC.** Older Tuya `gwId`s, Meross UUIDs and Magic Home IDs end
+  in it. Newer Tuya IDs do not.
+- **A sibling MAC is evidence, not proof.** An August lock's Bluetooth MAC from the API was
+  one below its Wi-Fi client's. Its TLS certificate named another device's maker outright.
+- **A hardware MAC from a receipt never appears for a phone or Mac on a private address.**
+  Labelling that MAC only makes a stale duplicate.
+
+Two Deco behaviours caught us while doing it: `sync` reports only what it renamed this run,
+so `renamed=3` for four labels meant one device was offline, not a success. And a device on
+the blocklist appears to show in the app's offline list, so clearing that list brings it back.
+
 ## Landmines
 
 - **IoT/Guest SSID client isolation is real and measured.** Any plug on that

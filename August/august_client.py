@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 import json
 from dataclasses import dataclass
 import aiohttp
@@ -81,6 +81,27 @@ class LockState:
     lock_status: LockStatus
     battery_level: float
     door_state: LockDoorStatus
+
+
+LOCK_DETAIL_FIELDS = (
+    "LockName",
+    "Type",
+    "skuNumber",
+    "SerialNumber",
+    "macAddress",
+    "currentFirmwareVersion",
+)
+BRIDGE_DETAIL_FIELDS = ("mfgBridgeID", "deviceModel", "firmwareVersion", "operative", "hyperBridge")
+
+
+def lock_summary(raw: Mapping[str, Any]) -> dict[str, Any]:
+    """Identity fields of a lock detail. An allowlist: the full detail holds the lock's
+    offline keys, which must never be printed. A lock with built-in Wi-Fi is its own
+    `Bridge` (deviceModel august-lock); one behind a bridge names that bridge."""
+    summary = {key: raw[key] for key in LOCK_DETAIL_FIELDS if key in raw}
+    bridge = raw.get("Bridge") or {}
+    summary["Bridge"] = {key: bridge[key] for key in BRIDGE_DETAIL_FIELDS if key in bridge} or None
+    return summary
 
 
 def battery_summary(statuses: Iterable[LockState], threshold_pct: int) -> tuple[str, int]:
@@ -254,6 +275,15 @@ class AugustClient:
                 priority=1,
             )
             return False
+
+    async def get_lock_summaries(self) -> list[dict[str, Any]]:
+        locks = await self.get_locks()
+        assert self.api is not None
+        assert self.access_token is not None
+        return [
+            lock_summary((await self.api.async_get_lock_detail(self.access_token, lock_id)).raw)
+            for lock_id in locks
+        ]
 
     async def get_locks(self) -> Dict[str, Lock]:
         await self._ensure_session()

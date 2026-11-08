@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
 import argparse
+import json
 import sys
 from typing import Optional
 import logging
@@ -28,6 +29,16 @@ async def _test(battery_pct: int) -> None:
             title="August Battery Status",
             priority=1,
         )
+    finally:
+        await client.close()
+
+
+async def _details() -> None:
+    cfg = get_config()
+    client = AugustClient(cfg.august.email, cfg.august.password)
+    try:
+        for summary in await client.get_lock_summaries():
+            print(json.dumps(summary))
     finally:
         await client.close()
 
@@ -62,6 +73,9 @@ async def _run_command(
 
     elif args.command == "test":
         await _test(args.battery_pct)
+
+    elif args.command == "details":
+        await _details()
 
 
 def main() -> None:
@@ -112,6 +126,9 @@ def main() -> None:
         default=20,
         help="Below this a lock is low and the report goes out at P1 (default: 20)",
     )
+
+    # Details command
+    _ = subparsers.add_parser("details", help="Each lock's model, serial, MAC and bridge")
 
     args = parser.parse_args()
 

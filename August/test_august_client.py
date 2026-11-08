@@ -11,6 +11,7 @@ from unittest.mock import Mock, MagicMock, patch, AsyncMock
 from yalexs.lock import LockStatus, LockDoorStatus
 from lib.MyPushover import Pushover
 from August.august_client import (
+    lock_summary,
     AugustClient,
     AugustMonitor,
     LockState,
@@ -44,6 +45,26 @@ class TestLockState:
 
 def _lock(name: str, battery: float) -> LockState:
     return LockState(name, name, 0.0, LockStatus.LOCKED, battery, LockDoorStatus.CLOSED)
+
+
+class TestLockSummary:
+    def test_keeps_identity_fields_and_never_keys(self) -> None:
+        raw = {
+            "LockName": "Door",
+            "SerialNumber": "S1",
+            "macAddress": "AA:BB:CC:00:00:01",
+            "OfflineKeys": {"loaded": [{"key": "secret"}]},
+            "Bridge": {"mfgBridgeID": "B1", "deviceModel": "august-connect", "token": "secret"},
+        }
+        assert lock_summary(raw) == {
+            "LockName": "Door",
+            "SerialNumber": "S1",
+            "macAddress": "AA:BB:CC:00:00:01",
+            "Bridge": {"mfgBridgeID": "B1", "deviceModel": "august-connect"},
+        }
+
+    def test_no_bridge_is_none(self) -> None:
+        assert lock_summary({"LockName": "Door"}) == {"LockName": "Door", "Bridge": None}
 
 
 class TestBatterySummary:
