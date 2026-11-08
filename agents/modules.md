@@ -60,6 +60,7 @@ One block per module that has non-obvious setup. Usage lives in each module's `R
 - **Purpose**: Daily battery, offline and tamper health check for Ring Beams motion sensors and Ring Alarm sensors via Node sidecar (ring-client-api over socket.io).
 - **Sidecar**: `fetch_status.js` — exit-code contract documented at top of file (0/1/2/3/4/5). Python parent maps 3 and 5 to `BeamsAuthError`; other non-zero codes raise `RuntimeError` (so a Node module-load crash never gets misclassified as "auth required").
 - **Token sharing**: reads/writes the same `config/tokens/ring_auth_token.json` as RingSecurity; a POSIX flock (`lib.file_lock`) serializes the two runs so overlapping refreshes don't produce `invalid_grant`.
+- **Config dump**: `config_dump.py` writes a backup of every Ring device, changing no device setting, from REST and the sidecar's raw mode, under the same flock.
 
 ## RingSecurity Module (`RingSecurity/`)
 - **Purpose**: Daily battery + offline health check for Ring cameras and doorbells via REST.
