@@ -292,6 +292,20 @@ Cron on the Linux prod host, offset from the watchdog's `*/10`:
 Both scripts hold one file lock (`{logging_dir}/deco_admin.lock`) for as long
 as they talk to the Deco: the admin account is single-session.
 
+### Config backup (`deco_config_dump.py`)
+
+A read-only dump of what the Deco's local API answers: mesh units, Wi-Fi networks, clients, the
+blocklist and WAN settings. It writes `deco_dump.json` and `devices.md` to `--out`, both `0600`, and
+writes nothing if any read fails. The JSON holds Wi-Fi passwords, so keep it out of this repo.
+
+```bash
+uv run python -m NetworkCheck.deco_config_dump --out /path/outside/this/repo 2>&1 | tee /tmp/deco_dump.log
+```
+
+An empty answer for the mesh units, clients or Wi-Fi counts as a failed read. It logs in, so it can evict a session on another host. Run it where the other NetworkCheck scripts
+run, because `deco_admin_lock` works only within one host. The local API does not answer for IoT
+network settings, DHCP, reservations or port forwarding, so the dump lacks those.
+
 ### Client labels (`deco_names.py`)
 
 The Deco's client names are whatever each device advertises. `network_check.deco_names`
