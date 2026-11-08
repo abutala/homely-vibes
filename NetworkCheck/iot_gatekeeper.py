@@ -4,13 +4,16 @@
 The IoT SSID's password is old and widely shared, and it cannot change: the IoT
 devices are too hard to re-provision. So the MAC is the credential. Every tick
 reads the client list and blocks any device on the IoT network whose MAC is not
-on the allowlist. The main and guest networks are never touched.
+on the allowlist. The main and guest networks are never blocked. After a clean
+read, the tick also re-applies the Deco client labels (`deco_names.py`) on every
+network: labels only, no access change.
 
 The Deco's own Allow List cannot do this: it covers every SSID except guest,
 and devices on the main network must be free to change their MAC.
 
 Layout:
     gatekeeper_policy.py -- who to block; pure and testable
+    deco_names.py        -- client labels from config, re-applied each tick
     deco_client.py       -- the Deco local admin API (blocklist verbs)
     common.py            -- notifier, invocation banner, shared Deco admin lock
 
@@ -31,7 +34,7 @@ from lib.logger import get_logger
 from lib.notifications import Notifier
 from NetworkCheck.common import deco_admin_lock, log_invocation, network_notifier
 from NetworkCheck.deco_client import DecoAPIError, DecoAuthError, DecoClient
-from NetworkCheck.deco_names import canonical_names, sync_names
+from NetworkCheck.deco_names import NameControl, canonical_names, sync_names
 from NetworkCheck.gatekeeper_policy import (
     IOT_INTERFACE,
     Plan,
@@ -316,13 +319,19 @@ def _run(args: argparse.Namespace, logger: logging.Logger) -> None:
     else:
         done = gatekeeper.check_once(dry_run=args.dry_run)
         print(f"{'would block' if args.dry_run else 'blocked'}={len(done)}")
-        _sync_labels(deco, logger, args.dry_run)
+        _sync_labels(deco, gatekeeper.state, logger, args.dry_run)
 
 
-def _sync_labels(deco: DecoClient, logger: logging.Logger, dry_run: bool) -> None:
+def _sync_labels(
+    deco: NameControl, state: GatekeeperState, logger: logging.Logger, dry_run: bool
+) -> None:
     """Re-apply `deco_names` on the same login, so a device that was offline gets
-    its label on the first tick after it reconnects. Labels are cosmetic: a
+    its label on the first tick after it reconnects. Only after a clean read:
+    while the login is paused or reads fail, another login would add to the
+    failed attempts and hold the admin lock longer. Labels are cosmetic: a
     failure is logged and retried next tick, never alerted."""
+    if state.auth_paused_until is not None or state.read_failures:
+        return
     try:
         wanted = canonical_names(get_config().network_check.deco_names)
         if wanted:

@@ -73,8 +73,9 @@ network_check:
   min_dl_bw: 150  # Mbps
   min_ul_bw: 4    # Mbps
   # Deco client labels, "MAC": "Type - Name". Set in local.yaml; quote every MAC.
-  # The IoT gatekeeper's tick re-applies them, so an offline device is labelled
-  # once it reconnects. `python -m NetworkCheck.deco_names list` prints the rest.
+  # While iot_gatekeeper is enabled, its tick re-applies them, so an offline
+  # device is labelled once it reconnects. `python -m NetworkCheck.deco_names
+  # list` prints the clients with no label yet.
   deco_names: {}
 
   # Deco watchdog. Two symptoms of one sick router, one clock, one lever:

@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from NetworkCheck.deco_names import canonical_names, name_changes, sync_names
+from NetworkCheck.iot_gatekeeper import GatekeeperState, _sync_labels
 
 LOG = logging.getLogger("test")
 
@@ -111,3 +112,31 @@ class TestSync:
             sync_names(deco, WANTED, LOG)
         assert "Person B" not in caplog.text
         assert "AA-BB-CC-00-00-02" in caplog.text
+
+
+class TestCap:
+    def test_renames_at_most_the_cap_then_the_rest(self) -> None:
+        wanted = {f"AA-BB-CC-00-00-{i:02X}": f"Label {i}" for i in range(1, 6)}
+        deco = FakeDeco([_client(mac, "old") for mac in wanted])
+        assert len(sync_names(deco, wanted, LOG, max_renames=3)) == 3
+        assert len(sync_names(deco, wanted, LOG, max_renames=3)) == 2
+        assert sync_names(deco, wanted, LOG, max_renames=3) == []
+
+
+class TestGatekeeperTick:
+    class NoTouch:
+        def list_clients(self) -> list[dict[str, Any]]:
+            raise AssertionError("must not log in or read")
+
+        def rename(self, mac: str, name: str, client_type: str) -> None:
+            raise AssertionError("must not write")
+
+    @pytest.mark.parametrize(
+        "state",
+        [GatekeeperState(auth_paused_until=123.0), GatekeeperState(read_failures=1)],
+    )
+    def test_no_sync_after_a_failed_read_or_login(self, state: GatekeeperState) -> None:
+        _sync_labels(self.NoTouch(), state, LOG, dry_run=False)
+
+    def test_null_config_is_empty(self) -> None:
+        assert canonical_names(None) == {}

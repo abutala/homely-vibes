@@ -3,8 +3,12 @@
 
 The Deco only lists clients that are online, so a device can be labelled only
 while it is connected. `sync` renames every listed client whose label differs;
-the IoT gatekeeper runs the same sync on each tick, so a device that is offline
-today gets its label on the first tick after it reconnects.
+the IoT gatekeeper runs the same sync on each tick that read the Deco cleanly
+(only while the gatekeeper is enabled), so a device that is offline today gets
+its label on the first tick after it reconnects.
+
+At most MAX_RENAMES_PER_RUN writes per run: a burst of admin writes times the
+Deco out (Logbook), and the tick holds the shared admin lock. Later runs do the rest.
 
 Labels are household data: logs carry MACs only, as in the gatekeeper.
 
@@ -23,6 +27,8 @@ from NetworkCheck.common import deco_admin_lock, log_invocation
 from NetworkCheck.deco_client import DecoClient
 from NetworkCheck.gatekeeper_policy import canonical_mac, decode_name
 
+MAX_RENAMES_PER_RUN = 10
+
 
 class NameControl(Protocol):
     """The slice of `DecoClient` the sync needs."""
@@ -32,11 +38,12 @@ class NameControl(Protocol):
     def rename(self, mac: str, name: str, client_type: str) -> None: ...
 
 
-def canonical_names(raw: Mapping[str, str]) -> dict[str, str]:
+def canonical_names(raw: Mapping[str, str] | None) -> dict[str, str]:
     """Config map with canonical MACs and trimmed labels. Raises on a bad MAC or
-    a blank label, so a typo renames nothing instead of the wrong device."""
+    a blank label, so a typo renames nothing at all instead of the wrong device.
+    A bare `deco_names:` key (null) is an empty map."""
     names: dict[str, str] = {}
-    for mac, label in raw.items():
+    for mac, label in (raw or {}).items():
         label = str(label).strip()
         if not label:
             raise ValueError(f"Blank label for {mac!r}")
@@ -61,11 +68,17 @@ def sync_names(
     wanted: Mapping[str, str],
     logger: logging.Logger,
     dry_run: bool = False,
+    max_renames: int = MAX_RENAMES_PER_RUN,
 ) -> list[str]:
-    """Rename what differs. Returns the MACs renamed (or, in a dry run, that would
-    be). A failed rename is logged and left for the next run."""
+    """Rename what differs, up to `max_renames`. Returns the MACs renamed (or, in a
+    dry run, that would be). A failed rename is logged and left for the next run."""
+    changes = name_changes(deco.list_clients(), wanted)
+    if len(changes) > max_renames:
+        logger.info(
+            "%d labels differ; setting %d now, the rest next run", len(changes), max_renames
+        )
     done = []
-    for client, label in name_changes(deco.list_clients(), wanted):
+    for client, label in changes[:max_renames]:
         mac = canonical_mac(client["mac"])
         if not dry_run:
             try:

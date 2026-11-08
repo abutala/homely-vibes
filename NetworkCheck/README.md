@@ -295,11 +295,12 @@ as they talk to the Deco: the admin account is single-session.
 ### Client labels (`deco_names.py`)
 
 The Deco's client names are whatever each device advertises. `network_check.deco_names`
-in `config/local.yaml` holds the labels you want, MAC to label, and every gatekeeper
-`check` tick re-applies them on the same login. The Deco lists only clients that are
-online, so a label for a device that is off today is applied on the first tick after it
-reconnects. Labels are cosmetic: a failed rename is logged and retried next tick, never
-alerted. Logs carry MACs only.
+in `config/local.yaml` holds the labels you want, MAC to label. While the gatekeeper is
+enabled, each `check` tick that read the Deco cleanly re-applies them on the same login,
+at most 10 renames a tick. The Deco lists only clients that are online, so a label for a
+device that is off today is applied on the first tick after it reconnects. Labels are
+cosmetic: a failed rename is logged and retried next tick, never alerted. Logs carry
+MACs only.
 
 ```bash
 # Online clients with no label yet, as config lines (prints names -- run by hand)
@@ -317,7 +318,8 @@ network_check:
     "AA-BB-CC-DD-EE-01": "Fan - Basement"   # quote every MAC
 ```
 
-A blank label or a malformed MAC renames nothing. A phone or laptop with a private
+One blank label or malformed MAC renames nothing at all, and logs the error each tick.
+A phone or laptop with a private
 (rotating) Wi-Fi address keeps its label only while the device keeps that address.
 
 ### Alert priorities
