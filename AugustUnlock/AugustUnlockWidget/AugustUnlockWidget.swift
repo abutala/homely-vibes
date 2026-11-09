@@ -225,6 +225,9 @@ struct MarkCircle: View {
             Circle()
                 .fill(fill.gradient)
                 .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
+                // The disc only: with the glyph in the same group, tinted mode
+                // draws both in one color and the glyph is lost.
+                .widgetAccentable(tinted)
             Image(systemName: symbol)
                 .font(.system(size: primary ? 26 : 22, weight: .semibold))
                 .foregroundStyle(tinted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
@@ -232,7 +235,6 @@ struct MarkCircle: View {
         .frame(width: side, height: side)
         // Every column keeps the big circle's height, so the captions line up.
         .frame(height: Self.bigSide)
-        .widgetAccentable(tinted)
     }
 
     private var tinted: Bool { primary || mark != .none }

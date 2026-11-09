@@ -182,12 +182,10 @@ struct ContentView: View {
                 .padding(.top, 8)
                 .padding(.bottom, 18)
                 .accessibilityAddTraits(.isHeader)
-            // The cards take the free space, up to a size that still reads as
-            // a card on an account with one lock.
-            VStack(spacing: 16) {
-                ForEach(model.doors) { door in
-                    DoorRow(door: door).frame(minHeight: 140, maxHeight: 280)
-                }
+            // Large text or many locks scroll, with Sign Out still in reach.
+            ViewThatFits(in: .vertical) {
+                doorCards
+                ScrollView { doorCards }
             }
             .layoutPriority(1)
             Spacer(minLength: 24)
@@ -206,6 +204,18 @@ struct ContentView: View {
             .foregroundStyle(.secondary)
             // Clear of the build stamp.
             .padding(.bottom, 24)
+        }
+    }
+}
+
+private extension ContentView {
+    /// The cards take the free space, up to a size that still reads as a card
+    /// on an account with one lock.
+    var doorCards: some View {
+        VStack(spacing: 16) {
+            ForEach(model.doors) { door in
+                DoorRow(door: door).frame(minHeight: 140, maxHeight: 280)
+            }
         }
     }
 }

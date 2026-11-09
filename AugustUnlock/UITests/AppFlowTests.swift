@@ -121,7 +121,7 @@ final class AppFlowTests: XCTestCase {
         XCTAssertTrue(status("Over the cloud").waitForExistence(timeout: 3), app.debugDescription)
         XCTAssertTrue(status("Sent to August, no reply yet \u{2014} tap to retry").waitForExistence(timeout: 35), app.debugDescription)
         XCTAssertTrue(status("An earlier request may still move the door").waitForExistence(timeout: 6), app.debugDescription)
-        let late = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Late reply: Unlocked after'")).firstMatch
+        let late = status("Late reply: Unlocked after")
         XCTAssertTrue(late.waitForExistence(timeout: 15), app.debugDescription)
         XCTAssertFalse(status("An earlier request may still move the door").exists, "the late request is done")
     }

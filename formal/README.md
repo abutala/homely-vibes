@@ -71,7 +71,7 @@ a test per modelled hazard, named for the model property it mirrors:
 | `cancelledWaiterDrops` (gate) | `AugustUnlock/Tests/AugustBLEProtocolTests/CommandGateTests.swift` |
 | `cleanFailure`, `noLiveSessionKilled`, `promptNeverKilled` and the rest of `screenshare_connect` | `ScreenShare/test_build_app.py` (the probe and stop shell against real local sockets) and `ScreenShare/test_launcher_decide.py` (the launcher's pure `decide` and `classify` handlers under `osascript`) |
 
-The glue in `ContentView` (the deadline task, the background keep-alive, the stage stream) is
+The glue in `DoorController` (the deadline task, the background keep-alive, the stage stream) is
 covered only by the Simulator UI tests, not by a model.
 
 Trace validation (replay real logs against the model) is the next step up.
