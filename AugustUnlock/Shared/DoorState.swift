@@ -20,6 +20,15 @@ struct DoorState: Codable, Equatable {
     var running: [String: Date] = [:]
     /// The last result per position, keyed by the position's text (JSON).
     var results: [String: Result] = [:]
+    /// When a door's unlock tap ended with no reply: August may still run it.
+    var unanswered: [String: Date] = [:]
+
+    /// The widget's center button, after the two doors.
+    static let lockBothPosition = 2
+    static let positionCount = 3
+    /// How long an unanswered unlock can still land: a bridged lock's ~60 s,
+    /// the screen's `CommandMachine.mayStillMoveWindow`.
+    static let unansweredWindow: TimeInterval = 60
 
     /// How long a result stays on the widget. WidgetKit draws a reload some
     /// seconds after it is asked for, so a short hold was gone before it
@@ -54,6 +63,25 @@ struct DoorState: Codable, Equatable {
         if let current = running[String(position)], current != startedAt { return }
         running[String(position)] = nil
         results[String(position)] = Result(outcome: outcome, at: now)
+        if outcome == .noReply, position != Self.lockBothPosition { unanswered[String(position)] = now }
+    }
+
+    /// Lock Both's replies, one per door by position, written together when
+    /// the tap ends so a fast door's mark is still held when the widget draws
+    /// (it redraws only after the tap). A locked door drops any old mark; a
+    /// door that did not lock shows why; a door running its own tap is left
+    /// to report. Returns the center's result: "Locked" only if every door
+    /// locked and no unanswered unlock can still land after it.
+    mutating func recordLocks(_ outcomes: [Outcome], at now: Date) -> Outcome {
+        let settled = outcomes.enumerated().map { position, outcome -> Outcome in
+            let key = String(position)
+            let held = unanswered[key].map { now < $0 + Self.unansweredWindow } ?? false
+            let settled: Outcome = outcome == .ok && held ? .noReply : outcome
+            if running[key] == nil { results[key] = settled == .ok ? nil : Result(outcome: settled, at: now) }
+            return settled
+        }
+        if settled.isEmpty || settled.contains(.failed) { return .failed }
+        return settled.contains(.noReply) ? .noReply : .ok
     }
 
     /// The mark per position at `now`: a result older than `hold` is gone,

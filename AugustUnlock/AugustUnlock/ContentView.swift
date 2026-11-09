@@ -4,70 +4,19 @@ private enum Phase {
     case loading
     case needsLogin
     case needsCode
-    case pickLock
     case ready
 }
 
 struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var phase: Phase = .loading
+    @State private var model = DoorsModel()
 
     @State private var email = ""
     @State private var password = ""
     @State private var code = ""
-    @State private var availableLocks: [AugustLock] = []
     @State private var errorMessage: String?
     @State private var isBusy = false
-    /// The command state machine (`CommandMachine`, mirrored by
-    /// `formal/august_unlock_command.qnt`): this view feeds it events and
-    /// runs the effects it returns.
-    @State private var machine = CommandMachine()
-    /// The status check, lock or unlock in flight, kept so a newer one can
-    /// cancel it — see `run(_:)`.
-    @State private var operationTask: Task<Void, Never>?
-    @State private var deadlineTask: Task<Void, Never>?
-    /// Shown in the lock picker after "Change Lock" cut a command short.
-    @State private var changeLockNote: String?
-    /// Set when the scene actually reaches `.background`, consumed on the
-    /// next `.active`. A real background resume is `.background ->
-    /// .inactive -> .active` (two onChange calls, never one direct
-    /// `.background -> .active` pairing), so this can't be a same-call
-    /// oldPhase/newPhase check — see the Logbook entry for why.
-    @State private var wasBackgrounded = false
-    /// Quits the app after `BackgroundExitPolicy.defaultTimeout` in the
-    /// background. Checked on a timer (runs only while iOS keeps the process
-    /// awake) and again on return to the foreground (the case that matters,
-    /// since a suspended process runs no timers) — see the Logbook.
-    @State private var exitPolicy = BackgroundExitPolicy()
-    @State private var exitTimer: Task<Void, Never>?
-    /// Wall time of the last lock/unlock, tap or open to the reply, and the
-    /// path that carried it — shown on screen so lag can be read off the
-    /// phone without Console. One value, so the caption and its icon can't
-    /// disagree.
-    @State private var lastTiming: LastTiming?
-    /// The running command's path so far, and which command it belongs to:
-    /// a stage from a cancelled command is dropped.
-    @State private var seenStages: [DoorStage] = []
-    @State private var stagesCommand = UUID()
-    /// The path icon's side, so it scales with Dynamic Type like the caption.
-    @ScaledMetric(relativeTo: .caption) private var captionIconSize: CGFloat = 12
-
-    private struct LastTiming {
-        /// "Last unlock: 1.2 s"
-        let summary: String
-        let path: OperationReply.Path
-
-        var pathLabel: String { "via \(path.rawValue)" }
-        /// The Bluetooth rune is a template vector in Assets.xcassets (SF
-        /// Symbols has none: it is the Bluetooth SIG's mark); the cloud is a symbol.
-        var icon: Image { path == .bluetooth ? Image("bluetooth") : Image(systemName: "cloud") }
-        var tint: Color { path == .bluetooth ? .blue : .secondary }
-    }
-
-    private typealias OperationResult = CommandMachine.Op
-    private var operationResult: OperationResult { machine.op }
-    private var lockState: LockState { machine.door }
-    private var isOperating: Bool { machine.isOperating }
 
     var body: some View {
         VStack(spacing: 24) {
@@ -78,10 +27,8 @@ struct ContentView: View {
                 loginForm
             case .needsCode:
                 codeForm
-            case .pickLock:
-                pickLockView
             case .ready:
-                unlockScreen
+                doorsScreen
             }
         }
         .padding()
@@ -93,104 +40,31 @@ struct ContentView: View {
                 Text("Build \(stamp)").font(.caption2).foregroundStyle(.quaternary)
             }
         }
-        .onAppear {
-            phase = August.shared.isReady ? .ready : .needsLogin
-            openUnlock()
-        }
+        .task { await start() }
         // A tap on the widget outside its toggles opens the app with this
         // URL: the line tells a missed tap from an open by hand.
         .onOpenURL { url in AppLog.note("opened by the widget body: \(url.host ?? url.absoluteString)") }
-        .onChange(of: scenePhase) { _, newPhase in
-            // Covers reopening from the background, not just cold launch —
-            // onAppear alone only fires once per view lifetime. A real
-            // resume is .background -> .inactive -> .active (two separate
-            // onChange calls, so a same-call oldPhase check never matches);
-            // a transient interruption (Control Center, Notification
-            // Center, the incoming-call banner) is .active -> .inactive ->
-            // .active and never touches .background at all. Track having
-            // actually seen .background and consume it on .active, instead
-            // of pattern-matching a single transition.
-            switch newPhase {
-            case .background:
-                wasBackgrounded = true
-                exitPolicy.didBackground(at: Date())
-                armExitTimer()
-                // A kept Bluetooth link would block the official app and the
-                // widget: it closes once any running command has its result.
-                AugustBLELink.applicationDidEnterBackground()
-            case .active:
-                AugustBLELink.applicationDidBecomeActive()
-                guard wasBackgrounded else { break }
-                wasBackgrounded = false
-                exitTimer?.cancel()
-                let expired = exitPolicy.shouldExit(at: Date(), operationInFlight: commandInFlight)
-                exitPolicy.didForeground()
-                if expired { exit(0) }
-                // An operation still in flight kept running in the
-                // background (see `run(_:)`): let it report, don't replace
-                // it — unless it is past its deadline (the phone slept and
-                // its timers with it): then it has failed, and the next tap
-                // is the user's call, not an automatic unlock. Before the
-                // unlock screen there is nothing to send.
-                if phase == .ready { perform(machine.resume(at: Date())) }
-            default:
-                break
-            }
+        .onChange(of: scenePhase) { _, newPhase in model.scenePhaseChanged(to: newPhase) }
+    }
+
+    /// The cached doors show at once and a fresh list follows quietly. With a
+    /// session and no list (a first launch of this build, or a sign-in cut off
+    /// before its code) the list decides: a session August refuses signs in
+    /// again.
+    private func start() async {
+        guard August.shared.hasSession else {
+            phase = .needsLogin
+            return
         }
-    }
-
-    /// Quits once the background deadline passes. An operation still in
-    /// flight postpones it; `run(_:)` calls this again when the operation ends.
-    private func armExitTimer() {
-        exitTimer?.cancel()
-        guard let remaining = exitPolicy.remaining(at: Date()) else { return }
-        exitTimer = Task {
-            try? await Task.sleep(for: .seconds(remaining))
-            guard !Task.isCancelled else { return }
-            exitIfExpired()
+        let cached = August.shared.cachedLocks
+        if !cached.isEmpty {
+            model.show(cached)
+            phase = .ready
+            if let locks = try? await August.shared.fetchLocks(), !locks.isEmpty { model.show(locks) }
+            return
         }
-    }
-
-    /// Runs what the machine asked for: a new command (cancelling the one in
-    /// flight) or a cancel. The machine already holds the new state.
-    private func perform(_ effect: CommandMachine.Effect) {
-        switch effect {
-        case .send(let unlocking):
-            run { try await performOperation(unlocking: unlocking) }
-        case .cancel:
-            operationTask?.cancel()
-            operationTask = nil
-            deadlineTask?.cancel()
-            if case .failure = machine.op { UINotificationFeedbackGenerator().notificationOccurred(.error) }
-        case .letRun:
-            UINotificationFeedbackGenerator().notificationOccurred(.warning)
-            capLateRequest()
-        case .none:
-            break
-        }
-    }
-
-    private func exitIfExpired() {
-        if exitPolicy.shouldExit(at: Date(), operationInFlight: commandInFlight) { exit(0) }
-    }
-
-    /// The screen's command, or a widget tap running in this process: the
-    /// exit waits for either (a tap killed by the exit would leave its door
-    /// marked running with no result). After a tap defers it, the next
-    /// return to the foreground exits.
-    private var commandInFlight: Bool { isOperating || machine.isLate || AppDoorAction.inFlight > 0 }
-
-    /// Opening the app — cold launch, finishing setup, or returning from the
-    /// background — unlocks at once; opening the app is the confirmation
-    /// (requested explicitly). No status fetch first: it cost a full cloud
-    /// round trip before the command, and unlocking an unlocked door is a
-    /// no-op. The reply's `status` is the lock's real state, so nothing from
-    /// before is trusted. A tap still in flight is cancelled and its result
-    /// discarded; the resume path skips this while one is still running
-    /// (see `run(_:)`).
-    private func openUnlock() {
-        guard phase == .ready else { return }
-        perform(machine.open(at: Date()))
+        await resolveLocks()
+        if phase != .ready { phase = .needsLogin }
     }
 
     // MARK: - Login
@@ -229,7 +103,7 @@ struct ContentView: View {
         do {
             let authenticated = try await August.shared.login(email: email, password: password)
             if authenticated {
-                await resolveLock()
+                await resolveLocks()
             } else {
                 try await August.shared.sendVerificationCode()
                 phase = .needsCode
@@ -239,39 +113,20 @@ struct ContentView: View {
         }
     }
 
-    /// After a fresh login/verification: keep an already-chosen lock as-is,
-    /// auto-select the only lock on a single-lock account (today's
-    /// zero-tap behavior), or ask when there's more than one.
-    private func resolveLock() async {
-        if August.shared.hasSelectedLock {
-            enterReady()
-            return
-        }
+    /// After a fresh login or code: fetch the doors and show them. Nothing is
+    /// sent to a door.
+    private func resolveLocks() async {
         do {
             let locks = try await August.shared.fetchLocks()
-            switch locks.count {
-            case 0:
+            guard !locks.isEmpty else {
                 errorMessage = AugustError.noLocks.errorDescription
-            case 1:
-                August.shared.selectLock(locks[0])
-                enterReady()
-            default:
-                availableLocks = locks
-                phase = .pickLock
+                return
             }
+            model.show(locks)
+            phase = .ready
         } catch {
             errorMessage = error.localizedDescription
         }
-    }
-
-    /// Enters the ready/unlock screen and auto-unlocks — the single
-    /// path every "setup just finished" transition (already-signed-in,
-    /// single-lock auto-select, or a fresh lock pick) must go through so the
-    /// promised "opens unlocked" behavior actually holds the first time,
-    /// not just on a later cold launch or background resume.
-    private func enterReady() {
-        phase = .ready
-        openUnlock()
     }
 
     // MARK: - 2FA code
@@ -308,275 +163,29 @@ struct ContentView: View {
         defer { isBusy = false }
         do {
             try await August.shared.validateCode(code)
-            await resolveLock()
+            await resolveLocks()
         } catch {
             errorMessage = error.localizedDescription
         }
     }
 
-    // MARK: - Lock picker
+    // MARK: - Doors
 
-    private var pickLockView: some View {
-        VStack(spacing: 16) {
-            Text("Choose a Lock")
-                .font(.title2).bold()
-            Text("Your August account has more than one lock.")
-                .font(.footnote)
-                .multilineTextAlignment(.center)
-                .foregroundStyle(.secondary)
-            if let changeLockNote {
-                Text(changeLockNote).font(.footnote).foregroundStyle(.secondary)
-            }
-            ForEach(availableLocks) { lock in
-                Button(lock.name) {
-                    August.shared.selectLock(lock)
-                    enterReady()
-                }
-                .buttonStyle(.bordered)
-                .frame(maxWidth: .infinity)
-            }
-        }
-        .frame(maxWidth: 320)
-    }
-
-    // MARK: - Unlock
-
-    private var unlockScreen: some View {
+    private var doorsScreen: some View {
         VStack(spacing: 32) {
-            if let lockName = August.shared.lockName {
-                Text(lockName)
-                    .font(.headline)
-                    .foregroundStyle(.secondary)
+            ForEach(model.doors) { DoorRow(door: $0) }
+            // Live during a command (asked for, 2026-11-01): the commands are
+            // cancelled; a request August already holds may still move a door.
+            Button("Sign Out") {
+                model.signOut()
+                August.shared.signOut()
+                email = ""
+                password = ""
+                code = ""
+                phase = .needsLogin
             }
-
-            Button {
-                performToggle()
-            } label: {
-                ZStack {
-                    Circle()
-                        .fill(buttonColor)
-                        .frame(width: 200, height: 200)
-                    if isOperating {
-                        ProgressView().tint(.white).scaleEffect(1.5)
-                    } else {
-                        Image(systemName: lockIcon)
-                            .font(.system(size: 64))
-                            .foregroundStyle(.white)
-                    }
-                }
-            }
-
-            statusText
-
-            if let lastTiming {
-                HStack(spacing: 4) {
-                    lastTiming.icon
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: captionIconSize, height: captionIconSize)
-                        .foregroundStyle(lastTiming.tint)
-                        .accessibilityLabel(lastTiming.pathLabel)
-                    Text(lastTiming.summary)
-                        .foregroundStyle(.tertiary)
-                        .monospacedDigit()
-                }
-                .font(.caption)
-                .accessibilityElement(children: .combine)
-            }
-
-            HStack(spacing: 24) {
-                Button("Change Lock") {
-                    Task { await presentLockPicker() }
-                }
-                Button("Sign Out") {
-                    perform(machine.cancelForChange(at: Date()))
-                    August.shared.signOut()
-                    email = ""
-                    password = ""
-                    code = ""
-                    lastTiming = nil
-                    phase = .needsLogin
-                }
-            }
-            // Both stay live during a command (asked for, 2026-11-01): the
-            // command is cancelled, and the picker says a request August
-            // already holds may still move the old lock.
             .font(.footnote)
             .foregroundStyle(.secondary)
-        }
-    }
-
-    /// Re-fetches the account's locks and shows the picker again, even if
-    /// there's only one — lets a wrong first-time pick be corrected without
-    /// signing all the way out.
-    private func presentLockPicker() async {
-        errorMessage = nil
-        lastTiming = nil
-        changeLockNote = isOperating ? "The previous command may still complete." : nil
-        perform(machine.cancelForChange(at: Date()))
-        do {
-            availableLocks = try await August.shared.fetchLocks()
-            phase = availableLocks.isEmpty ? .ready : .pickLock
-            if availableLocks.isEmpty {
-                errorMessage = AugustError.noLocks.errorDescription
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
-    private var buttonColor: Color {
-        switch operationResult {
-        case .failure: return .red
-        case .inProgress: return .accentColor
-        case .idle, .success: return lockState == .unlocked ? .green : .accentColor
-        }
-    }
-
-    private var lockIcon: String {
-        switch lockState {
-        case .locked: return "lock.fill"
-        case .unlocked: return "lock.open.fill"
-        case .unknown: return "lock.trianglebadge.exclamationmark.fill"
-        }
-    }
-
-    private var stateLabel: String { lockState.label }
-
-    /// The status, then what a dropped or late cloud request may still do.
-    private var statusText: some View {
-        VStack(spacing: 4) {
-            statusLine
-            TimelineView(.periodic(from: .now, by: 5)) { context in
-                if let warning = machine.warning(at: context.date) {
-                    Text(warning).font(.footnote).foregroundStyle(.orange)
-                }
-            }
-            if let note = machine.lateNote {
-                Text(note).font(.footnote).foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var statusLine: some View {
-        switch operationResult {
-        case .idle:
-            Text("\(stateLabel) \u{2014} tap to \(machine.nextTapUnlocks ? "unlock" : "lock")")
-                .foregroundStyle(.secondary)
-        case .inProgress(let unlocking):
-            VStack(spacing: 4) {
-                Text(unlocking ? "Unlocking\u{2026} tap to lock" : "Locking\u{2026} tap to unlock")
-                    .foregroundStyle(.secondary)
-                if let note = DoorStage.pathNote(seenStages) {
-                    Text(note).font(.footnote).foregroundStyle(.secondary)
-                }
-            }
-        case .success: Text(stateLabel).foregroundStyle(lockState == .unlocked ? .green : .secondary)
-        case .failure(let message): Text(message).foregroundStyle(.red).font(.footnote)
-        }
-    }
-
-    /// The button: the machine decides (lock, unlock, the opposite of a
-    /// command in flight, or nothing for a double tap).
-    private func performToggle() {
-        let replacing = isOperating
-        let effect = machine.tap(at: Date())
-        if case .send = effect, replacing { UIImpactFeedbackGenerator(style: .medium).impactOccurred() }
-        perform(effect)
-    }
-
-    private func performOperation(unlocking: Bool) async throws {
-        let start = ContinuousClock.now
-        let command = UUID()
-        stagesCommand = command
-        seenStages = []
-        let (stages, report) = AsyncStream.makeStream(of: DoorStage.self)
-        let watcher = Task {
-            for await stage in stages where stagesCommand == command {
-                seenStages.append(stage)
-                if stage == .cloud { machine.reachedCloud() }
-            }
-        }
-        defer { report.finish() }
-        let onStage: @Sendable (DoorStage) -> Void = { report.yield($0) }
-        let reply = try await (unlocking ? August.shared.unlock(onStage: onStage) : August.shared.lock(onStage: onStage))
-        report.finish()
-        await watcher.value
-        try Task.checkCancellation()
-        let late = machine.isLate
-        let elapsed = ContinuousClock.now - start
-        let seconds = Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
-        let sent = (August.shared as? FakeAugust).map { ", \($0.commandsSent) sent" } ?? ""
-        lastTiming = LastTiming(
-            summary: "Last \(unlocking ? "unlock" : "lock"): \(String(format: "%.1f", seconds)) s\(sent)", path: reply.path)
-        machine.replied(reply.state, after: seconds)
-        AppLog.note("screen \(unlocking ? "unlock" : "lock") \(late ? "late reply" : "reply") \(reply.state.label) via \(reply.path.rawValue) in \(String(format: "%.1f", seconds)) s")
-        if !late { UINotificationFeedbackGenerator().notificationOccurred(.success) }
-    }
-
-    /// Runs one operation at a time, cancelling any still in flight. Every
-    /// state write in an operation follows a cancellation check, so a
-    /// cancelled one's late reply can't overwrite its replacement's. The
-    /// operation keeps running if the app is backgrounded mid-flight, and the
-    /// app may suspend once it ends. If iOS takes the time back first, the
-    /// operation is dropped and the next open unlocks again.
-    private func run(_ operation: @escaping () async throws -> Void) {
-        operationTask?.cancel()
-        deadlineTask?.cancel()
-        var task: Task<Void, Never>?
-        let keepAlive = BackgroundTask(name: "AugustOperation") {
-            Task { @MainActor in
-                task?.cancel()
-                if task == operationTask { machine.keepAliveExpired(at: Date()) }
-            }
-        }
-        task = Task {
-            do {
-                try await operation()
-            } catch {
-                if !Task.isCancelled {
-                    let late = machine.isLate
-                    machine.failed(error.localizedDescription)
-                    if late {
-                        AppLog.note("screen late request failed: \(error.localizedDescription)")
-                    } else {
-                        UINotificationFeedbackGenerator().notificationOccurred(.error)
-                    }
-                }
-            }
-            keepAlive.end()
-            guard !Task.isCancelled else { return }
-            deadlineTask?.cancel()
-            exitIfExpired()
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            machine.settle()
-        }
-        operationTask = task
-        // The deadline: `Task.sleep` counts on the continuous clock, so a
-        // sleep that outlives the phone's nap fires on wake; the resume path
-        // checks the wall clock as well, in case it does not.
-        deadlineTask = Task {
-            try? await Task.sleep(for: .seconds(CommandDeadline.limit))
-            guard !Task.isCancelled, task == operationTask else { return }
-            let effect = machine.deadlineFired(away: wasBackgrounded, at: Date())
-            AppLog.note("screen deadline: \(effect == .letRun ? "sent to August, running on" : "nothing sent, cancelled")")
-            perform(effect)
-        }
-    }
-
-    /// A request already with August runs to `lateLimit` from its start,
-    /// then is dropped, whichever path (the deadline or a resume) let it run.
-    private func capLateRequest() {
-        guard let task = operationTask, let startedAt = machine.startedAt else { return }
-        let left = max(0, CommandDeadline.lateLimit - Date().timeIntervalSince(startedAt))
-        Task {
-            try? await Task.sleep(for: .seconds(left))
-            guard task == operationTask, machine.isLate else { return }
-            task.cancel()
-            machine.lateGaveUp()
-            AppLog.note("screen late request dropped at \(Int(CommandDeadline.lateLimit)) s")
         }
     }
 }

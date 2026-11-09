@@ -23,8 +23,9 @@ allFixed        noInvalidGrant          holds
 # august_unlock_command.qnt — one lock command at a time in AugustUnlock.
 # beforeDeadline is the app before #57: it must stall (A2 of 2026-11-01) and
 # refuse Change Lock (A1). deadlineOnly is #57's first push: a return after a
-# timeout while away unlocked by itself. withDeadline is main; resumeOnly is
-# main if a passed deadline does not fire on wake (assumption A2 false).
+# timeout while away unlocked by itself. withDeadline is #57; resumeOnly is
+# the app before tapToUnlock if a passed deadline does not fire on wake
+# (assumption A2 false).
 beforeDeadline  noStuckCommand                violated
 deadlineOnly    noStuckCommand                holds
 withDeadline    noStuckCommand                holds
@@ -56,6 +57,16 @@ withRetry       noSurpriseMoves               violated
 withDeadline    noUnlockAfterFailedLock       violated
 withRetry       noUnlockAfterFailedLock       holds
 resumeOnly      noUnlockAfterFailedLock       holds
+
+# tapToUnlock is main: two doors on screen, a return or Sign Out sends nothing.
+# A return before it did send, so onlyATapSends tells them apart.
+withRetry       onlyATapSends                 violated
+tapToUnlock     onlyATapSends                 holds
+tapToUnlock     noStuckCommand                holds
+tapToUnlock     noAutoUnlockAfterAwayTimeout  holds
+tapToUnlock     changeLockAlwaysPossible      holds
+tapToUnlock     noSurpriseMoves               violated
+tapToUnlock     noUnlockAfterFailedLock       holds
 
 # ghost_order.qnt: the screen against the real door with August holding
 # commands. Before #77 the screen could lie unwarned; now it warns.

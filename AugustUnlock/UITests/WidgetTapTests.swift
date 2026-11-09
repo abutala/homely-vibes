@@ -1,9 +1,9 @@
 import XCTest
 
 /// The widget on the Simulator: added through SpringBoard's own gallery, it
-/// draws two buttons before it has a lock list and shows its sign-in caption
-/// (the 2026-11-01 bug), and a tap anywhere on a door's half runs in the
-/// app's process in the background against `FakeAugust`: the tapped door
+/// draws its buttons before it has a lock list and shows its sign-in caption
+/// (the 2026-11-01 bug), and a tap anywhere on a button's column runs in the
+/// app's process in the background against `FakeAugust`: the tapped button
 /// shows its progress and result, the app stays closed. A tap on the
 /// widget's body (the caption under the doors) opens the app, as on any
 /// widget, and the app logs it.
@@ -18,21 +18,28 @@ final class WidgetTapTests: XCTestCase {
     private let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
     private let app = XCUIApplication()
 
-    func testWidgetTapStaysInWidget() throws {
-        app.launchEnvironment = ["AUGUST_SLOW_WIDGET_TAP": "1", "AUGUST_FAKE": "1"]
+    /// Starts with the app quit, the common case on the phone (5 minutes in
+    /// the background), so a tap launches it in the background.
+    private func addWidgetWithTheAppQuit(_ env: [String: String]) throws {
+        app.launchEnvironment = ["AUGUST_FAKE": "1", "AUGUST_FAKE_ONE_LOCK_FAILS": "0"].merging(env) { $1 }
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         XCUIDevice.shared.press(.home)
         XCTAssertTrue(springboard.wait(for: .runningForeground, timeout: 5))
-        // The common case on the phone: the app has quit (5 minutes in the
-        // background), so the tap launches it in the background.
         app.terminate()
 
-        if !springboard.staticTexts["Door 1"].waitForExistence(timeout: 2) {
+        // The switch keeps its name while a result shows; its text does not.
+        if !springboard.switches["Door 1"].waitForExistence(timeout: 2) {
             try addWidget()
         }
-        XCTAssertTrue(springboard.staticTexts["Door 1"].waitForExistence(timeout: 20), springboard.debugDescription)
-        XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "two doors before any lock list")
+        // An earlier test's results may still be held.
+        XCTAssertTrue(springboard.staticTexts["Door 1"].waitForExistence(timeout: DoorStateHold + 20), springboard.debugDescription)
+        XCTAssertTrue(springboard.staticTexts["Door 2"].waitForExistence(timeout: DoorStateHold + 20), "two doors before any lock list")
+        XCTAssertTrue(springboard.switches["Lock Both"].exists, springboard.debugDescription)
+    }
+
+    func testWidgetTapStaysInWidget() throws {
+        try addWidgetWithTheAppQuit(["AUGUST_SLOW_WIDGET_TAP": "1"])
         XCTAssertTrue(springboard.staticTexts["Open the app to sign in"].exists, springboard.debugDescription)
 
         // Each door is a toggle (a switch to accessibility), labelled with its name.
@@ -43,7 +50,7 @@ final class WidgetTapTests: XCTestCase {
         // The Simulator dispatches the intent (`OpenFirstDoorIntent.perform()
         // finished` in its log, 2026-11-02); a tap that opens the app is the
         // inert-button bug, not a Simulator limit (Logbook, 2026-11-02). The
-        // tap lands near the corner of the half: with only the icon and the
+        // tap lands near the corner of the column: with only the icon and the
         // caption live, this opened the app (2026-11-05).
         door.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.12)).tap()
         // The toggle flips at once: the tapped door alone reads "Unlocking…"
@@ -61,6 +68,33 @@ final class WidgetTapTests: XCTestCase {
         // logs "opened by the widget body" (checked by hand in app.log).
         springboard.staticTexts["Open the app to sign in"].tap()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10), "a body tap must open the app")
+    }
+
+    func testLockBothLocksThenClears() throws {
+        try addWidgetWithTheAppQuit(["AUGUST_SLOW_WIDGET_TAP": "1"])
+        // Near the column's corner: the whole column is the button.
+        // The button's own text: the Live Activity has the same words.
+        let center = springboard.switches["Lock Both"]
+        center.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.12)).tap()
+        XCTAssertTrue(center.staticTexts["Locking\u{2026}"].waitForExistence(timeout: 2), springboard.debugDescription)
+        XCTAssertTrue(springboard.staticTexts["Door 1"].exists, "the doors must not move")
+        XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "the doors must not move")
+        XCTAssertTrue(center.staticTexts["Locked"].waitForExistence(timeout: 15), springboard.debugDescription)
+        XCTAssertTrue(springboard.staticTexts["Door 1"].exists, "a locked door shows its name")
+        XCTAssertTrue(springboard.staticTexts["Door 2"].exists, "a locked door shows its name")
+        XCTAssertTrue(center.staticTexts["Lock Both"].waitForExistence(timeout: DoorStateHold + 10), "the result must clear")
+        XCTAssertFalse(app.wait(for: .runningForeground, timeout: 1), "a widget tap opened the app")
+    }
+
+    /// One door fails: the center is not "Locked", and that door says so.
+    func testLockBothNamesTheDoorThatFailed() throws {
+        try addWidgetWithTheAppQuit(["AUGUST_SLOW_WIDGET_TAP": "0", "AUGUST_FAKE_ONE_LOCK_FAILS": "1"])
+        springboard.switches["Lock Both"].tap()
+        // The center and one door, by button: the Live Activity also says
+        // "Failed". A redraw between the two writes shows the door's first.
+        let both = expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: springboard.switches.containing(.staticText, identifier: "Failed"))
+        wait(for: [both], timeout: 15)
+        XCTAssertTrue(springboard.switches["Lock Both"].staticTexts["Failed"].exists, springboard.debugDescription)
     }
 
     /// Long-press the Home Screen → Edit → Add Widget → search → add.
