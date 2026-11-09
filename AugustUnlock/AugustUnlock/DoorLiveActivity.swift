@@ -24,13 +24,13 @@ final class DoorLiveActivity: Sendable {
     }
 
     /// Ends any activity an earlier tap left (a process that died mid-tap, or
-    /// one still in its hold), then starts this tap's at "Unlocking…". Call
+    /// one still in its hold), then starts this tap's at its first stage. Call
     /// only when no other tap runs in this process: overlapping activities
     /// empty the Island early (Logbook 2026-11-07). With no old one (the
     /// usual tap) nothing waits; otherwise the old ones get up to 0.5 s to
     /// end (an end took 14–23 ms on the phone), so two never show at once
     /// and a hung end cannot hold the unlock.
-    static func start(door: String, at tap: Date) async -> DoorLiveActivity? {
+    static func start(door: String, first: DoorStage, at tap: Date) async -> DoorLiveActivity? {
         let old = Activity<DoorUnlockAttributes>.activities
         for activity in old {
             Task { await activity.end(nil, dismissalPolicy: .immediate) }
@@ -45,7 +45,7 @@ final class DoorLiveActivity: Sendable {
         }
         let attributes = DoorUnlockAttributes(door: door, tap: tap)
         do {
-            let activity = try Activity.request(attributes: attributes, content: content(.unlocking, seconds: nil, for: attributes), pushType: nil)
+            let activity = try Activity.request(attributes: attributes, content: content(first, seconds: nil, for: attributes), pushType: nil)
             return DoorLiveActivity(activity: activity)
         } catch {
             AppLog.note("live activity refused: \(error.localizedDescription)")
@@ -69,7 +69,7 @@ final class DoorLiveActivity: Sendable {
         -> ActivityContent<DoorUnlockAttributes.ContentState>
     {
         // A tap is over by `runningLimit`; an activity not ended by then (its
-        // process died) reads stale, never "Unlocking…" for hours.
+        // process died) reads stale, never "Unlocking…" or "Locking…" for hours.
         ActivityContent(state: .init(stage: stage, seconds: seconds), staleDate: attributes.tap.addingTimeInterval(DoorState.runningLimit))
     }
 }

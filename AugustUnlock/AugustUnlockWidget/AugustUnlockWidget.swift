@@ -2,10 +2,10 @@ import AppIntents
 import SwiftUI
 import WidgetKit
 
-/// One full-width row: an unlock button per door, named as August names it.
-/// No lock state is shown and nothing locks (Amit, 2026-11-01). Each tap
-/// runs in the app's process, in the background (`DoorIntents.swift`); the
-/// app never comes forward. The widget shares no code with the app's
+/// One full-width row: an unlock button per door, named as August names it,
+/// with a button between them that locks both (Amit, 2026-11-08). No lock state
+/// is shown. Each tap runs in the app's process, in the background
+/// (`DoorIntents.swift`); the app never comes forward. The widget shares no code with the app's
 /// screens; it reads the app's sign-in (`WidgetCloud`) and the per-door tap
 /// state (`DoorStateStore`) from the Keychain.
 struct AugustUnlockWidget: Widget {
@@ -14,7 +14,7 @@ struct AugustUnlockWidget: Widget {
             DoorsView(entry: entry)
         }
         .configurationDisplayName("Doors")
-        .description("Tap a door to unlock it.")
+        .description("Tap a door to unlock it, or the center to lock both.")
         .supportedFamilies([.systemMedium])
     }
 }
@@ -27,7 +27,8 @@ struct DoorsEntry: TimelineEntry {
     /// button carries it, so a tap opens the door it shows, whatever list
     /// the app holds.
     let locks: [String]
-    /// One per name: what the tapped door shows while and just after a tap.
+    /// One per position, doors then the center (`DoorState.positionCount`):
+    /// what the tapped button shows while and just after a tap.
     let marks: [DoorState.Mark]
     let message: String?
 }
@@ -43,7 +44,7 @@ struct DoorsProvider: TimelineProvider {
     static let fetchDeadline: TimeInterval = 4
 
     func placeholder(in context: Context) -> DoorsEntry {
-        DoorsEntry(date: .now, names: ["Door", "Door"], locks: ["", ""], marks: [.none, .none], message: nil)
+        DoorsEntry(date: .now, names: ["Door", "Door"], locks: ["", ""], marks: [.none, .none, .none], message: nil)
     }
 
     func getSnapshot(in context: Context, completion: @escaping (DoorsEntry) -> Void) {
@@ -62,7 +63,7 @@ struct DoorsProvider: TimelineProvider {
             let entry = await refresh(at: now, reason: "timeline")
             let state = DoorStateStore.load()
             let later = state.clearDates(at: now).map { date in
-                DoorsEntry(date: date, names: entry.names, locks: entry.locks, marks: state.marks(count: DoorNames.count, at: date), message: entry.message)
+                DoorsEntry(date: date, names: entry.names, locks: entry.locks, marks: state.marks(count: DoorState.positionCount, at: date), message: entry.message)
             }
             completion(Timeline(entries: [entry] + later, policy: .never))
         }
@@ -73,7 +74,7 @@ struct DoorsProvider: TimelineProvider {
     /// lock list is used as it is, so its redraw does not wait on August.
     private func refresh(at now: Date, reason: String) async -> DoorsEntry {
         let state = DoorStateStore.load()
-        let marks = state.marks(count: DoorNames.count, at: now)
+        let marks = state.marks(count: DoorState.positionCount, at: now)
         WidgetLog.note("\(reason) door state keychain=\(KeychainStore.lastStatus) running=\(state.running.keys.sorted()) results=\(state.results.count)")
         if marks.contains(.running), !WidgetStore.locks.isEmpty {
             return DoorsEntry(
@@ -98,34 +99,22 @@ struct DoorsProvider: TimelineProvider {
     }
 }
 
-/// One full-width row, a door per half. Built up from Apple's sample button
-/// (default style, `.tint`), which is the shape that runs under this
+/// One full-width row: door, Lock Both, door. Built up from Apple's sample
+/// button (default style, `.tint`), which is the shape that runs under this
 /// install; `.invalidatableContent()` inside the button's label made it
-/// inert (Logbook, 2026-11-02). The whole half is the toggle: a tap on the
-/// empty part of a half opened the app instead (measured on the iOS 27
+/// inert (Logbook, 2026-11-02). The whole column is the toggle: a tap on the
+/// empty part of a column opened the app instead (measured on the iOS 27
 /// Simulator, 2026-11-05). What is left of the body carries `widgetURL`,
 /// so an open from here is logged by the app as a missed tap.
 struct DoorsView: View {
     let entry: DoorsEntry
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 8) {
             HStack(spacing: 0) {
-                ForEach(Array(entry.names.enumerated()), id: \.offset) { position, name in
-                    VStack(spacing: 6) {
-                        // A toggle, not a button: WidgetKit redraws a tapped toggle's
-                        // own state at once, before the intent runs, so the tapped
-                        // door alone reads "Unlocking…" during the tap. The reload
-                        // after the tap draws the true mark. The intent ignores the
-                        // toggle's value.
-                        Toggle(isOn: entry.marks[position] == .running, intent: OpenDoorIntent(position: position, lockID: entry.locks[position], name: name)) {
-                            caption(name, entry.marks[position])
-                        }
-                        .toggleStyle(DoorToggleStyle())
-                        .accessibilityLabel(name)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
+                door(0)
+                lockBoth
+                door(1)
             }
             .tint(.primary)
             if let message = entry.message {
@@ -142,38 +131,129 @@ struct DoorsView: View {
     /// What a tap outside the toggles opens the app with; the app logs it.
     private static let bodyURL = URL(string: "augustunlock://widget-body")!
 
-    /// The door's name, or what its tap did. The "Unlocking…" during the tap
-    /// is the toggle's own on-state (`DoorToggleStyle`), the result after it
-    /// comes from the timeline.
-    private func caption(_ name: String, _ mark: DoorState.Mark) -> some View {
+    /// A toggle, not a button: WidgetKit redraws a tapped toggle's own state
+    /// at once, before the intent runs, so the tapped button alone shows its
+    /// progress during the tap. The reload after the tap draws the true mark.
+    /// The intent ignores the toggle's value.
+    private func door(_ position: Int) -> some View {
+        let name = entry.names[position]
+        let intent = OpenDoorIntent(position: position, lockID: entry.locks[position], name: name)
+        return Toggle(isOn: entry.marks[position] == .running, intent: intent) {
+            caption(name, entry.marks[position], running: "Unlocking\u{2026}", ok: "Unlocked")
+        }
+        .toggleStyle(DoorToggleStyle(icon: "lock.open.fill", running: "Unlocking\u{2026}", mark: entry.marks[position], primary: false))
+        .accessibilityLabel(name)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var lockBoth: some View {
+        let mark = entry.marks[DoorState.lockBothPosition]
+        return Toggle(isOn: mark == .running, intent: SecureDoorsIntent(lockIDs: entry.locks)) {
+            caption(Self.lockBothName, mark, running: "Locking\u{2026}", ok: "Locked")
+        }
+        .toggleStyle(DoorToggleStyle(icon: "lock.fill", running: "Locking\u{2026}", mark: mark, primary: true))
+        .accessibilityLabel(Self.lockBothName)
+        .frame(maxWidth: .infinity)
+    }
+
+    private static let lockBothName = "Lock Both"
+
+    /// The button's name, or what its tap did. The text during the tap is the
+    /// toggle's own on-state (`DoorToggleStyle`), the result after it comes
+    /// from the timeline.
+    private func caption(_ name: String, _ mark: DoorState.Mark, running: String, ok: String) -> some View {
         let (text, color): (String, Color) = switch mark {
         case .none: (name, .primary)
-        case .running: ("Unlocking\u{2026}", .secondary)
-        case .ok: ("Unlocked", .green)
+        case .running: (running, .secondary)
+        case .ok: (ok, .green)
         case .failed: ("Failed", .red)
         case .noReply: ("No reply", .secondary)
         }
-        return Text(text).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(color)
+        return DoorCaption(text: text, color: color)
     }
-
 }
 
-/// The door as a toggle: the lock icon, and under it the label, or
-/// "Unlocking…" while the toggle is on (the tap's optimistic state). The
-/// body fills its half and takes the tap anywhere on it: with only the icon
+struct DoorCaption: View {
+    let text: String
+    let color: Color
+
+    var body: some View {
+        Text(text).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(color)
+    }
+}
+
+/// A widget button as a toggle: its circle, and under it the label, or the
+/// running text while the toggle is on (the tap's optimistic state). The
+/// body fills its column and takes the tap anywhere on it: with only the icon
 /// and the caption live, three quarters of a half opened the app
 /// (Logbook 2026-11-05).
 struct DoorToggleStyle: ToggleStyle {
+    let icon: String
+    let running: String
+    let mark: DoorState.Mark
+    let primary: Bool
+
     func makeBody(configuration: Configuration) -> some View {
         VStack(spacing: 6) {
-            Image(systemName: "lock.open.fill").font(.system(size: 34)).padding(8)
+            MarkCircle(icon: icon, mark: configuration.isOn ? .running : mark, primary: primary)
             if configuration.isOn {
-                Text("Unlocking\u{2026}").font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(.secondary)
+                DoorCaption(text: running, color: .secondary)
             } else {
                 configuration.label
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
+    }
+}
+
+/// The screen's status circle at widget scale: a tinted gradient with a
+/// highlight stroke. Lock Both is bigger and tinted at rest, as the widget's
+/// main action; a door at rest has no color, so nothing implies lock state.
+/// No `.glassEffect`: Apple documents none inside widget content, and the
+/// system already renders the container as glass in clear mode.
+struct MarkCircle: View {
+    let icon: String
+    let mark: DoorState.Mark
+    let primary: Bool
+
+    private static let bigSide: CGFloat = 58
+
+    var body: some View {
+        let side: CGFloat = primary ? Self.bigSide : 50
+        ZStack {
+            Circle()
+                .fill(fill.gradient)
+                .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
+                // The disc only: with the glyph in the same group, tinted mode
+                // draws both in one color and the glyph is lost.
+                .widgetAccentable(tinted)
+            Image(systemName: symbol)
+                .font(.system(size: primary ? 26 : 22, weight: .semibold))
+                .foregroundStyle(tinted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        }
+        .frame(width: side, height: side)
+        // Every column keeps the big circle's height, so the captions line up.
+        .frame(height: Self.bigSide)
+    }
+
+    private var tinted: Bool { primary || mark != .none }
+
+    private var fill: Color {
+        switch mark {
+        case .none: primary ? .accentColor : Color(.systemFill)
+        case .running, .noReply: Color(.systemGray)
+        case .ok: .green
+        case .failed: .red
+        }
+    }
+
+    private var symbol: String {
+        switch mark {
+        case .none, .running: icon
+        case .ok: "checkmark"
+        case .failed: "exclamationmark.triangle.fill"
+        case .noReply: "questionmark"
+        }
     }
 }

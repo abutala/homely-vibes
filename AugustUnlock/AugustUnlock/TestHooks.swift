@@ -11,14 +11,16 @@ enum TestHooks {
 
     private static let slowTapMarker = marker("slow-widget-tap")
     private static let fakeMarker = marker("fake-august")
+    private static let oneLockFailsMarker = marker("fake-one-lock-fails")
 
     /// `AUGUST_SLOW_WIDGET_TAP=1`: a widget tap waits 5 s before the
     /// unlock, so the test can see the toggle's optimistic state.
-    /// `AUGUST_FAKE=1`: a widget tap goes to `FakeAugust` too. `0` clears
-    /// either. A launch without the variable (the background launch the tap
+    /// `AUGUST_FAKE=1`: a widget tap goes to `FakeAugust` too.
+    /// `AUGUST_FAKE_ONE_LOCK_FAILS=1`: every second lock command fails. `0`
+    /// clears any of them. A launch without the variable (the background launch the tap
     /// itself causes) leaves the markers alone.
     static func applyLaunchEnvironment(_ env: [String: String] = ProcessInfo.processInfo.environment) {
-        for (variable, marker) in [("AUGUST_SLOW_WIDGET_TAP", slowTapMarker), ("AUGUST_FAKE", fakeMarker)] {
+        for (variable, marker) in [("AUGUST_SLOW_WIDGET_TAP", slowTapMarker), ("AUGUST_FAKE", fakeMarker), ("AUGUST_FAKE_ONE_LOCK_FAILS", oneLockFailsMarker)] {
             switch env[variable] {
             case "1": try? Data().write(to: marker)
             case "0": try? FileManager.default.removeItem(at: marker)
@@ -29,4 +31,5 @@ enum TestHooks {
 
     static var slowWidgetTap: Bool { FileManager.default.fileExists(atPath: slowTapMarker.path) }
     static var fakeAugust: Bool { FileManager.default.fileExists(atPath: fakeMarker.path) }
+    static var oneLockFails: Bool { FileManager.default.fileExists(atPath: oneLockFailsMarker.path) }
 }

@@ -12,7 +12,19 @@ final class DoorStageTests: XCTestCase {
     }
 
     func testOnlyTheResultsAreFinal() {
-        XCTAssertEqual(DoorStage.allCases.filter(\.isFinal), [.unlocked, .failed, .noReply])
+        XCTAssertEqual(DoorStage.allCases.filter(\.isFinal), [.unlocked, .failed, .noReply, .locked])
+    }
+
+    func testEachLockOutcomeEndsOnItsStage() {
+        XCTAssertEqual(DoorStage.finalForLock(.ok), .locked)
+        XCTAssertEqual(DoorStage.finalForLock(.failed), .failed)
+        XCTAssertEqual(DoorStage.finalForLock(.noReply), .noReply)
+    }
+
+    func testLockCaptions() {
+        XCTAssertEqual(DoorStage.locking.caption(seconds: nil), "Locking\u{2026}")
+        XCTAssertEqual(DoorStage.locked.caption(seconds: 2.14), "Locked 2.1 s")
+        XCTAssertEqual(DoorStage.locked.caption(seconds: nil), "Locked")
     }
 
     func testCaptions() {

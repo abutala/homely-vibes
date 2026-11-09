@@ -1128,3 +1128,49 @@ while the bridge is busy. Open, measured: the garage's six "jammed" (0x1F,
 yalexs `MECH_POSITION`) reports. Four had no earlier movement from us and two
 followed an unlock by 1–3 s; the door-state reads after a jam will say more.
 
+## 2026-11-08 — Lock Both on the widget; two doors on the screen, and only a tap sends
+
+Amit asked for three widget buttons, with the center locking both doors, and an
+app with both doors one below the other, text to the right of the buttons,
+nothing unlocked on open, and the first tap on either door unlocking.
+
+- **The widget's "nothing locks" rule made a door's commands one-way, so a
+  cut-off unlock was harmless. With Lock Both it is not.** An unlock that ended
+  "No reply" stays with August (the ghost of 2026-11-03), and it can land after a
+  later lock: an open door under "Locked". `DoorState.unanswered` keeps each
+  door's unconfirmed unlock for 60 s (the screen's window), and Lock Both reads
+  "No reply" over it. A failed one counts too: a cloud request that ended in a
+  network error may still have gone out. A held lock moves the door the same way,
+  so it stops nothing. Not covered: an unlock the app's screen dropped.
+- **One door can reopen during Lock Both.** A fast door locks, an unlock tap on it
+  succeeds, the slow door locks: an open door under "Locked" (pre-flight review).
+  An unlock tap started since Lock Both's tap keeps the center from "Locked".
+- **A sign-out can race the launch's list fetch.** A late reply would write the
+  list back, and a session with a list skips the code form; a re-login after a
+  401 could write the token back. Both now check they are still signed in.
+- **A reply is not a lock.** The cloud reply carries the lock's state, which may
+  be unknown or even unlocked, so "Locked" needs `state == .locked`
+  (`LockState.lockOutcome`). An unlock tap has always counted any reply.
+- **Lock results are written together when the tap ends.** A door's result is
+  held 12 s and WidgetKit redraws only after the intent ends, so a fast door's
+  failure written as it happened would be gone before a slow door let the
+  widget draw.
+- **The first tap after a return unlocks.** The door may have moved while the
+  app was away, so an idle door becomes unknown. The exception is a retry: a
+  failed lock stays a lock across a return, or the retry rule of 2026-11-07
+  breaks.
+- **`timedOutWhileAway` is gone.** It stopped a return from unlocking after a
+  timeout; a return never unlocks now. `onlyATapSends` in the model pins that.
+- **The door list is cached in the Keychain.** A door must work with no network;
+  the fresh list loads behind it. A build with a session and no list (this
+  update) fetches the list instead of asking for a new sign-in.
+- The new intent is `SecureDoorsIntent`: a name with no word from the module
+  names (2026-11-01).
+- **The screen's title is a config key.** The owner's title is on the security
+  scan's denylist, so `config/local.yaml` holds it and `build_ipa.sh` builds it in.
+- **A whole card is one button.** VoiceOver and the UI tests read a door's status
+  from the button's value.
+- **No `.glassEffect` in the widget.** Apple documents none inside widget content,
+  and the system renders the container as glass in clear mode. The widget repeats
+  the screen's tinted circle instead, and the toggle rules of 2026-11-02 and
+  2026-11-05 stand.

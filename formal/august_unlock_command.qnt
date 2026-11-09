@@ -1,9 +1,8 @@
-// AugustUnlock: one lock command at a time, and what a tap, a timeout, a
-// phone nap and a return to the foreground do to it.
+// AugustUnlock: one door's one lock command at a time, and what a tap, a
+// timeout, a phone nap and a return to the foreground do to it.
 //
-// The app (AugustUnlock/AugustUnlock/ContentView.swift: `run`,
-// `performToggle`, `timeOutCommand`, the scenePhase handler) sends one
-// lock/unlock at a time. On the phone (2026-11-01) it sat in "Unlocking…"
+// The app (AugustUnlock/AugustUnlock/DoorController.swift, one per door) sends
+// one lock/unlock at a time per door. On the phone (2026-11-01) it sat in "Unlocking…"
 // for good after the phone slept, and "Change Lock" was dead meanwhile.
 // This model asks: with the 30 s deadline, the wall-clock check on resume
 // and live Change Lock, can a command still hold the screen, can a return
@@ -42,6 +41,9 @@ module august_unlock_command {
   // A tap after a failed or timed-out command repeats it (TRIAL 2026-11-07);
   // before, the door shown unknown made every such tap unlock.
   const retryRule: bool
+  // A return or a pick sends an unlock (every instance before tapToUnlock).
+  // Off, only a tap sends: the "Change Lock" action below is then Sign Out.
+  const unlockOnOpen: bool
 
   type Op = Idle | Unlocking | Locking | Done
   type Retry = NoRetry | RetryUnlock | RetryLock
@@ -70,7 +72,8 @@ module august_unlock_command {
     surpriseMoves: int,       // the lock ran a command the phone had given up on
     autoUnlockAfterAway: int, // a return to the app unlocked after an away timeout
     changeLockRefused: int,   // Change Lock was wanted and disabled
-    unlockAfterFailedLock: int // a tap right after a failed lock unlocked
+    unlockAfterFailedLock: int, // a tap right after a failed lock unlocked
+    sentWithoutTap: int       // a command went out with no tap
   }
 
   var st: State
@@ -85,7 +88,8 @@ module august_unlock_command {
     op: Idle, transport: NoTransport, door: Unknown, app: Foreground,
     asleep: false, now: 0, started: 0, lastTap: -1,
     awayTimedOut: false, retry: NoRetry, heldAtAugust: 0,
-    surpriseMoves: 0, autoUnlockAfterAway: 0, changeLockRefused: 0, unlockAfterFailedLock: 0
+    surpriseMoves: 0, autoUnlockAfterAway: 0, changeLockRefused: 0, unlockAfterFailedLock: 0,
+    sentWithoutTap: 0
   }
 
   pure def inProgress(s: State): bool = s.op == Unlocking or s.op == Locking
@@ -173,25 +177,35 @@ module august_unlock_command {
   }
 
   // The scenePhase `.active` branch after a real background: a command past
-  // its deadline fails now; an away timeout clears instead of unlocking;
-  // an idle app unlocks (opening the app is the confirmation).
+  // its deadline fails now. With unlockOnOpen an away timeout clears instead
+  // of unlocking and an idle app unlocks. Without it a return sends nothing:
+  // an idle door with no retry becomes unknown, so the next tap unlocks.
   action toForeground = all {
     st.app == Background, not(st.asleep),
     val back = st.with("app", Foreground)
     st' = if (expired(back)) timeOut(back).with("awayTimedOut", false)
-          else if (awayFlag and back.awayTimedOut) back.with("awayTimedOut", false)
           else if (inProgress(back)) back
-          else send(back.with("retry", NoRetry), true).with("autoUnlockAfterAway",
-                 if (back.awayTimedOut) back.autoUnlockAfterAway + 1 else back.autoUnlockAfterAway)
+          else if (not(unlockOnOpen))
+            if (back.retry == NoRetry) back.with("door", Unknown).with("op", Idle) else back
+          else if (awayFlag and back.awayTimedOut) back.with("awayTimedOut", false)
+          else send(back.with("retry", NoRetry), true)
+                 .with("sentWithoutTap", back.sentWithoutTap + 1)
+                 .with("autoUnlockAfterAway",
+                   if (back.awayTimedOut) back.autoUnlockAfterAway + 1 else back.autoUnlockAfterAway)
   }
 
   // "Change Lock": cancels the command (a cloud one stays with August),
   // then the picker's choice unlocks. Disabled during a command before.
+  // Without unlockOnOpen it is Sign Out: the same cancel, and nothing is sent.
   action changeLock = all {
     st.app == Foreground, not(st.asleep),
     st' = if (inProgress(st) and not(changeLockLive))
             st.with("changeLockRefused", st.changeLockRefused + 1)
+          else if (not(unlockOnOpen))
+            st.with("op", Idle).with("door", Unknown).with("retry", NoRetry).with("transport", NoTransport)
+              .with("heldAtAugust", if (st.transport == Cloud and inProgress(st)) st.heldAtAugust + 1 else st.heldAtAugust)
           else send(st.with("door", Unknown).with("retry", NoRetry), true)
+                 .with("sentWithoutTap", st.sentWithoutTap + 1)
   }
 
   action step = any {
@@ -220,30 +234,38 @@ module august_unlock_command {
   // A tap right after a failed or timed-out lock never unlocks: with the
   // door unknown it used to (seen on the phone, TRIAL 2026-11-07).
   val noUnlockAfterFailedLock: bool = st.unlockAfterFailedLock == 0
+
+  // Only a tap sends a command (Amit, 2026-11-08).
+  val onlyATapSends: bool = st.sentWithoutTap == 0
 }
 
 // The app before 2026-11-01 (#57): no deadline, Change Lock disabled during a command.
 module beforeDeadline {
-  import august_unlock_command(hasDeadline = false, changeLockLive = false, awayFlag = false, wakeFiresDeadline = false, retryRule = false).*
+  import august_unlock_command(hasDeadline = false, changeLockLive = false, awayFlag = false, wakeFiresDeadline = false, retryRule = false, unlockOnOpen = true).*
 }
 
 // #57 as first pushed (d7e1580): the deadline without the away flag.
 module deadlineOnly {
-  import august_unlock_command(hasDeadline = true, changeLockLive = true, awayFlag = false, wakeFiresDeadline = true, retryRule = false).*
+  import august_unlock_command(hasDeadline = true, changeLockLive = true, awayFlag = false, wakeFiresDeadline = true, retryRule = false, unlockOnOpen = true).*
 }
 
 // The app after #57 (458f08d), before the retry rule.
 module withDeadline {
-  import august_unlock_command(hasDeadline = true, changeLockLive = true, awayFlag = true, wakeFiresDeadline = true, retryRule = false).*
+  import august_unlock_command(hasDeadline = true, changeLockLive = true, awayFlag = true, wakeFiresDeadline = true, retryRule = false, unlockOnOpen = true).*
 }
 
-// The app now: a tap after a failure repeats the failed command (#77).
+// A tap after a failure repeats the failed command (#77).
 module withRetry {
-  import august_unlock_command(hasDeadline = true, changeLockLive = true, awayFlag = true, wakeFiresDeadline = true, retryRule = true).*
+  import august_unlock_command(hasDeadline = true, changeLockLive = true, awayFlag = true, wakeFiresDeadline = true, retryRule = true, unlockOnOpen = true).*
 }
 
 // The same app if A2 is false: only the wall-clock check on resume ends a
 // command that stalled through a nap.
 module resumeOnly {
-  import august_unlock_command(hasDeadline = true, changeLockLive = true, awayFlag = true, wakeFiresDeadline = false, retryRule = true).*
+  import august_unlock_command(hasDeadline = true, changeLockLive = true, awayFlag = true, wakeFiresDeadline = false, retryRule = true, unlockOnOpen = true).*
+}
+
+// The app now: two doors on screen, opening sends nothing, only a tap sends.
+module tapToUnlock {
+  import august_unlock_command(hasDeadline = true, changeLockLive = true, awayFlag = false, wakeFiresDeadline = true, retryRule = true, unlockOnOpen = false).*
 }

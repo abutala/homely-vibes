@@ -27,13 +27,23 @@ nonisolated enum LockState: Equatable {
         case .unknown: "State unknown"
         }
     }
+
+    /// A lock command's reply as a widget result: "Locked" only on the state
+    /// the lock reported.
+    var lockOutcome: DoorState.Outcome {
+        switch self {
+        case .locked: .ok
+        case .unlocked: .failed
+        case .unknown: .noReply
+        }
+    }
 }
 
-/// The app's one command at a time, as a pure value: the Quint model
-/// `formal/august_unlock_command.qnt` in Swift. `ContentView` feeds it the
-/// events (a tap, an open, a resume, a reply, the deadline) and runs the
-/// effect it returns; nothing here touches the network, a clock or the UI,
-/// so the tests and the model can drive it the same way.
+/// One door's one command at a time, as a pure value: the Quint model
+/// `formal/august_unlock_command.qnt` in Swift. `DoorController` feeds it the
+/// events (a tap, a resume, a reply, the deadline) and runs the effect it
+/// returns; nothing here touches the network, a clock or the UI, so the tests
+/// and the model can drive it the same way. Only a tap sends a command.
 struct CommandMachine: Equatable {
     enum Op: Equatable {
         case idle
@@ -65,9 +75,6 @@ struct CommandMachine: Equatable {
     private(set) var door: LockState = .unknown
     private(set) var startedAt: Date?
     private(set) var lastTapAt: Date = .distantPast
-    /// A timeout fired while the app was away; the next return must not
-    /// unlock by itself (a stale unlock could undo a lock the user tapped).
-    private(set) var timedOutWhileAway = false
     /// The direction of the command that failed or timed out: the next tap
     /// repeats it. With the door unknown, a tap after a failed lock would
     /// otherwise unlock (TRIAL 2026-11-07, seen on the phone).
@@ -91,14 +98,6 @@ struct CommandMachine: Equatable {
     }
 
     // MARK: - Events
-
-    /// Opening the app — cold launch or finishing setup — unlocks at once;
-    /// opening the app is the confirmation. No status fetch first.
-    mutating func open(at now: Date) -> Effect {
-        door = .unknown
-        retry = nil
-        return send(unlocking: true, at: now)
-    }
 
     /// The button: lock if shown unlocked, else unlock; the opposite of a
     /// command in flight; after a failure, the failed command again. Over
@@ -133,25 +132,23 @@ struct CommandMachine: Equatable {
     }
 
     /// Back to the foreground after a real background: a command past its
-    /// deadline (the phone slept, and its timers with it) fails now; a
-    /// timeout that fired while away clears instead of unlocking; an idle
-    /// app unlocks; a command still running is left to report.
+    /// deadline (the phone slept, and its timers with it) fails now; a command
+    /// still running or late is left to report; a retry is kept, so a failed
+    /// lock is never tapped into an unlock. Otherwise the door may have moved
+    /// while the app was away, so it is unknown and the next tap unlocks.
+    /// A return never sends a command.
     mutating func resume(at now: Date) -> Effect {
-        if isExpired(at: now) {
-            return timeOut(away: false, at: now)
-        }
-        if timedOutWhileAway {
-            timedOutWhileAway = false
-            return .none
-        }
-        if isOperating { return .none }
-        return send(unlocking: true, at: now)
+        if isExpired(at: now) { return timeOut(at: now) }
+        guard !isOperating, !isLate, retry == nil else { return .none }
+        door = .unknown
+        op = .idle
+        return .none
     }
 
-    /// The deadline task: `away` is whether the app was in the background.
-    mutating func deadlineFired(away: Bool, at now: Date) -> Effect {
+    /// The deadline task.
+    mutating func deadlineFired(at now: Date) -> Effect {
         guard isOperating else { return .none }
-        return timeOut(away: away, at: now)
+        return timeOut(at: now)
     }
 
     /// The command's reply after `seconds`. A late one (past the deadline)
@@ -195,10 +192,9 @@ struct CommandMachine: Equatable {
         }
     }
 
-    /// Change Lock or Sign Out: drop the command, a late one included,
-    /// without a result. The lines about the old lock go with it; the
-    /// picker says the previous command may still complete.
-    mutating func cancelForChange(at now: Date) -> Effect {
+    /// Sign Out: drop the command, a late one included, without a result.
+    /// The lines about the door go with it.
+    mutating func cancelForSignOut(at now: Date) -> Effect {
         door = .unknown
         retry = nil
         mayStillMoveUntil = nil
@@ -210,9 +206,8 @@ struct CommandMachine: Equatable {
         return .cancel
     }
 
-    /// iOS took the background time back: the command is dropped, and the
-    /// next open unlocks again. A written Bluetooth command may have moved
-    /// the door, so it is unknown.
+    /// iOS took the background time back: the command is dropped. A written
+    /// Bluetooth command may have moved the door, so it is unknown.
     mutating func keepAliveExpired(at now: Date) {
         isLate = false
         guard isOperating else { return }
@@ -226,7 +221,6 @@ struct CommandMachine: Equatable {
     private mutating func send(unlocking: Bool, at now: Date) -> Effect {
         op = .inProgress(unlocking: unlocking)
         startedAt = now
-        timedOutWhileAway = false
         cloudReached = false
         isLate = false
         lateNote = nil
@@ -238,10 +232,9 @@ struct CommandMachine: Equatable {
         if cloudReached { mayStillMoveUntil = now.addingTimeInterval(Self.mayStillMoveWindow) }
     }
 
-    private mutating func timeOut(away: Bool, at now: Date) -> Effect {
+    private mutating func timeOut(at now: Date) -> Effect {
         if case .inProgress(let unlocking) = op { retry = unlocking }
         door = .unknown
-        timedOutWhileAway = away
         guard cloudReached else {
             op = .failure(CommandDeadline.timedOutMessage)
             return .cancel

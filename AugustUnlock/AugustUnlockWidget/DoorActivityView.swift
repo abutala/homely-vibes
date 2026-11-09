@@ -77,6 +77,8 @@ struct DoorStageIcon: View {
         case .bluetooth: ("dot.radiowaves.left.and.right", .blue)
         case .cloud: ("cloud.fill", .gray)
         case .unlocked: ("lock.open.fill", .green)
+        case .locking: ("lock.fill", .secondary)
+        case .locked: ("lock.fill", .green)
         case .failed: ("xmark.circle.fill", .red)
         case .noReply: ("questionmark.circle.fill", .orange)
         }

@@ -49,6 +49,32 @@ struct OpenDoorIntent: LiveActivityIntent {
     }
 }
 
+/// The widget's center button: lock both doors, under the same rules as
+/// `OpenDoorIntent`. The name shares no word with either module name, for the
+/// same reason.
+struct SecureDoorsIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "Lock Both"
+    static let isDiscoverable = false
+    static let authenticationPolicy = IntentAuthenticationPolicy.requiresAuthentication
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
+
+    /// The locks the widget shows, by position, so a tap locks the doors on
+    /// its buttons whatever lock list the app holds.
+    @Parameter(title: "Locks")
+    var lockIDs: [String]
+
+    init() {}
+
+    init(lockIDs: [String]) {
+        self.lockIDs = lockIDs
+    }
+
+    func perform() async throws -> some IntentResult {
+        await DoorTap.lockBoth(lockIDs: lockIDs)
+        return .result()
+    }
+}
+
 enum DoorTap {
     /// The first line of every tap is written from whatever process runs
     /// it, before anything can fail: a tap with no line in either log never
@@ -62,6 +88,17 @@ enum DoorTap {
             let state = await MainActor.run { UIApplication.shared.applicationState.rawValue }
             AppLog.note("widget intent position=\(position) in the app, state \(state)")
             await AppDoorAction.unlock(position: position, lockID: lockID, name: name)
+        #endif
+    }
+
+    static func lockBoth(lockIDs: [String]) async {
+        #if WIDGET_EXTENSION
+            WidgetLog.note("lock both ran in the extension; nothing sent")
+            WidgetCenter.shared.reloadTimelines(ofKind: "Doors")
+        #else
+            let state = await MainActor.run { UIApplication.shared.applicationState.rawValue }
+            AppLog.note("widget lock both intent in the app, state \(state)")
+            await AppDoorAction.lockBoth(lockIDs: lockIDs)
         #endif
     }
 }
