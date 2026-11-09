@@ -189,6 +189,8 @@ class AugustConfig:
     password: str
     phone: str
     token_file: str
+    # The title on the AugustUnlock screen, built in by its build_ipa.sh.
+    screen_title: str = "Doors"
 
 
 @dataclass

@@ -176,7 +176,7 @@ struct ContentView: View {
 
     private var doorsScreen: some View {
         VStack(spacing: 0) {
-            Text("The gates of Eden")
+            Text(Self.screenTitle)
                 .font(.largeTitle.bold())
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.top, 8)
@@ -209,6 +209,13 @@ struct ContentView: View {
 }
 
 private extension ContentView {
+    /// `august.screen_title` in config, set by `scripts/build_ipa.sh`
+    /// (`SCREEN_TITLE` into Info.plist); an Xcode build has none.
+    static var screenTitle: String {
+        let title = Bundle.main.object(forInfoDictionaryKey: "ScreenTitle") as? String ?? ""
+        return title.isEmpty ? "Doors" : title
+    }
+
     /// The cards take the free space, up to a size that still reads as a card
     /// on an account with one lock.
     var doorCards: some View {

@@ -13,6 +13,9 @@ DERIVED="$REPO_ROOT/build/sideload"
 OUT_DIR="$REPO_ROOT/build"
 OUT_IPA="$OUT_DIR/AugustUnlock.ipa"
 
+# The screen's title: `august.screen_title`, usually set in config/local.yaml.
+SCREEN_TITLE="$(cd "$REPO_ROOT" && uv run python -c 'from lib.config import get_config; print(get_config().august.screen_title)')"
+
 rm -rf "$DERIVED" "$OUT_DIR/Payload" "$OUT_IPA"
 mkdir -p "$DERIVED" "$OUT_DIR"
 
@@ -28,6 +31,7 @@ xcodebuild \
   CODE_SIGNING_REQUIRED=NO \
   DEVELOPMENT_TEAM="" \
   PROVISIONING_PROFILE_SPECIFIER="" \
+  SCREEN_TITLE="$SCREEN_TITLE" \
   BUILD_STAMP="$(date '+%Y-%m-%d %H:%M') $(git -C "$REPO_ROOT" rev-parse --short HEAD)" \
   build 2>&1 | tee /tmp/augustunlock_build.log | tail -5
 

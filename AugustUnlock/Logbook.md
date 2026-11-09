@@ -1166,6 +1166,8 @@ nothing unlocked on open, and the first tap on either door unlocking.
   update) fetches the list instead of asking for a new sign-in.
 - The new intent is `SecureDoorsIntent`: a name with no word from the module
   names (2026-11-01).
+- **The screen's title is a config key.** The owner's title is on the security
+  scan's denylist, so `config/local.yaml` holds it and `build_ipa.sh` builds it in.
 - **A whole card is one button.** VoiceOver and the UI tests read a door's status
   from the button's value.
 - **No `.glassEffect` in the widget.** Apple documents none inside widget content,

@@ -2,9 +2,11 @@
 
 Gotchas, incidents and error reference: [Logbook.md](Logbook.md).
 
-An iOS app, titled "The gates of Eden" on its screen, with a Liquid Glass card
+An iOS app with a Liquid Glass card
 per August door, one below the other: a status circle, with the door's name and
-status to the right. A tap anywhere on a card is that door's button. Opening the app sends nothing. The first tap
+status to the right. A tap anywhere on a card is that door's button. The screen's
+title is `august.screen_title` in config, which `scripts/build_ipa.sh` builds in
+("Doors" when unset). Opening the app sends nothing. The first tap
 on a door unlocks it; the next tap locks it. A tap
 while it is still unlocking cancels the unlock and locks instead (and the other
 way round while locking). No home server, no VPN. Near the door the app talks to the lock over Bluetooth, as the

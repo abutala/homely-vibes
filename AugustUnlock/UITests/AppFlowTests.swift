@@ -33,7 +33,7 @@ final class AppFlowTests: XCTestCase {
     func testBothDoorsStackWithTheirTextToTheRight() {
         launch(reply: 1)
         XCTAssertTrue(front.waitForExistence(timeout: 5), app.debugDescription)
-        let title = app.staticTexts["The gates of Eden"]
+        let title = app.staticTexts["Doors"]
         XCTAssertTrue(title.exists, app.debugDescription)
         XCTAssertLessThanOrEqual(title.frame.maxY, front.frame.minY, "the title is above the doors")
         XCTAssertGreaterThanOrEqual(app.buttons["Sign Out"].frame.minY, garage.frame.maxY, "Sign Out is below the doors")
