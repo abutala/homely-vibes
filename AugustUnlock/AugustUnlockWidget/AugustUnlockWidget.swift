@@ -110,7 +110,7 @@ struct DoorsView: View {
     let entry: DoorsEntry
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 8) {
             HStack(spacing: 0) {
                 door(0)
                 lockBoth
@@ -141,7 +141,7 @@ struct DoorsView: View {
         return Toggle(isOn: entry.marks[position] == .running, intent: intent) {
             caption(name, entry.marks[position], running: "Unlocking\u{2026}", ok: "Unlocked")
         }
-        .toggleStyle(DoorToggleStyle(icon: "lock.open.fill", running: "Unlocking\u{2026}"))
+        .toggleStyle(DoorToggleStyle(icon: "lock.open.fill", running: "Unlocking\u{2026}", mark: entry.marks[position], primary: false))
         .accessibilityLabel(name)
         .frame(maxWidth: .infinity)
     }
@@ -151,7 +151,7 @@ struct DoorsView: View {
         return Toggle(isOn: mark == .running, intent: SecureDoorsIntent(lockIDs: entry.locks)) {
             caption(Self.lockBothName, mark, running: "Locking\u{2026}", ok: "Locked")
         }
-        .toggleStyle(DoorToggleStyle(icon: "lock.fill", running: "Locking\u{2026}"))
+        .toggleStyle(DoorToggleStyle(icon: "lock.fill", running: "Locking\u{2026}", mark: mark, primary: true))
         .accessibilityLabel(Self.lockBothName)
         .frame(maxWidth: .infinity)
     }
@@ -169,11 +169,20 @@ struct DoorsView: View {
         case .failed: ("Failed", .red)
         case .noReply: ("No reply", .secondary)
         }
-        return Text(text).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(color)
+        return DoorCaption(text: text, color: color)
     }
 }
 
-/// A widget button as a toggle: its icon, and under it the label, or the
+struct DoorCaption: View {
+    let text: String
+    let color: Color
+
+    var body: some View {
+        Text(text).font(.caption.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(color)
+    }
+}
+
+/// A widget button as a toggle: its circle, and under it the label, or the
 /// running text while the toggle is on (the tap's optimistic state). The
 /// body fills its column and takes the tap anywhere on it: with only the icon
 /// and the caption live, three quarters of a half opened the app
@@ -181,17 +190,68 @@ struct DoorsView: View {
 struct DoorToggleStyle: ToggleStyle {
     let icon: String
     let running: String
+    let mark: DoorState.Mark
+    let primary: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         VStack(spacing: 6) {
-            Image(systemName: icon).font(.system(size: 34)).padding(8)
+            MarkCircle(icon: icon, mark: configuration.isOn ? .running : mark, primary: primary)
             if configuration.isOn {
-                Text(running).font(.caption).bold().lineLimit(1).minimumScaleFactor(0.7).foregroundStyle(.secondary)
+                DoorCaption(text: running, color: .secondary)
             } else {
                 configuration.label
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
+    }
+}
+
+/// The screen's status circle at widget scale: a tinted gradient with a
+/// highlight stroke. Lock Both is bigger and tinted at rest, as the widget's
+/// main action; a door at rest has no color, so nothing implies lock state.
+/// No `.glassEffect`: Apple documents none inside widget content, and the
+/// system already renders the container as glass in clear mode.
+struct MarkCircle: View {
+    let icon: String
+    let mark: DoorState.Mark
+    let primary: Bool
+
+    private static let bigSide: CGFloat = 58
+
+    var body: some View {
+        let side: CGFloat = primary ? Self.bigSide : 50
+        ZStack {
+            Circle()
+                .fill(fill.gradient)
+                .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 1))
+            Image(systemName: symbol)
+                .font(.system(size: primary ? 26 : 22, weight: .semibold))
+                .foregroundStyle(tinted ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        }
+        .frame(width: side, height: side)
+        // Every column keeps the big circle's height, so the captions line up.
+        .frame(height: Self.bigSide)
+        .widgetAccentable(tinted)
+    }
+
+    private var tinted: Bool { primary || mark != .none }
+
+    private var fill: Color {
+        switch mark {
+        case .none: primary ? .accentColor : Color(.systemFill)
+        case .running, .noReply: Color(.systemGray)
+        case .ok: .green
+        case .failed: .red
+        }
+    }
+
+    private var symbol: String {
+        switch mark {
+        case .none, .running: icon
+        case .ok: "checkmark"
+        case .failed: "exclamationmark.triangle.fill"
+        case .noReply: "questionmark"
+        }
     }
 }

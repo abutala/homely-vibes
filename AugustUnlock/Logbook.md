@@ -1166,4 +1166,9 @@ nothing unlocked on open, and the first tap on either door unlocking.
   update) fetches the list instead of asking for a new sign-in.
 - The new intent is `SecureDoorsIntent`: a name with no word from the module
   names (2026-11-01).
-
+- **A whole card is one button, so its text is not on the accessibility tree.**
+  The status is the button's value, and the UI tests read it there.
+- **No `.glassEffect` in the widget.** Apple documents none inside widget content,
+  and the system renders the container as glass in clear mode. The widget repeats
+  the screen's tinted circle instead, and the toggle rules of 2026-11-02 and
+  2026-11-05 stand.

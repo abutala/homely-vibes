@@ -23,22 +23,23 @@ final class AppFlowTests: XCTestCase {
     private let unlocked = "Unlocked \u{2014} tap to lock"
     private let unlocking = "Unlocking\u{2026} tap to lock"
 
-    private func status(_ text: String) -> XCUIElement { app.staticTexts[text] }
-    private func statuses(_ text: String) -> XCUIElementQuery { app.staticTexts.matching(identifier: text) }
-    private func sent(_ count: Int) -> XCUIElement {
-        app.staticTexts.containing(NSPredicate(format: "label CONTAINS '\(count) sent'")).firstMatch
-    }
+    /// A whole card is one button, so its status is the button's value.
+    private func statuses(_ text: String) -> XCUIElementQuery { app.buttons.matching(NSPredicate(format: "value CONTAINS %@", text)) }
+    private func status(_ text: String) -> XCUIElement { statuses(text).firstMatch }
+    private func sent(_ count: Int) -> XCUIElement { status("\(count) sent") }
     private var front: XCUIElement { app.buttons["Front Door"] }
     private var garage: XCUIElement { app.buttons["Garage Entrance"] }
 
     func testBothDoorsStackWithTheirTextToTheRight() {
         launch(reply: 1)
         XCTAssertTrue(front.waitForExistence(timeout: 5), app.debugDescription)
+        let title = app.staticTexts["The gates of Eden"]
+        XCTAssertTrue(title.exists, app.debugDescription)
+        XCTAssertLessThanOrEqual(title.frame.maxY, front.frame.minY, "the title is above the doors")
+        XCTAssertGreaterThanOrEqual(app.buttons["Sign Out"].frame.minY, garage.frame.maxY, "Sign Out is below the doors")
         XCTAssertTrue(garage.exists, app.debugDescription)
         XCTAssertGreaterThanOrEqual(garage.frame.minY, front.frame.maxY, "one below the other")
         XCTAssertEqual(garage.frame.minX, front.frame.minX, accuracy: 1)
-        XCTAssertGreaterThanOrEqual(status("Front Door").frame.minX, front.frame.maxX, "the text is right of the button")
-        XCTAssertGreaterThanOrEqual(status("Garage Entrance").frame.minX, garage.frame.maxX, "the text is right of the button")
     }
 
     func testOpeningSendsNothing() {
@@ -142,18 +143,18 @@ final class AppFlowTests: XCTestCase {
         front.tap()
         XCTAssertTrue(status(unlocking).waitForExistence(timeout: 3))
         app.buttons["Sign Out"].tap()
-        XCTAssertTrue(status("Sign in to August").waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Sign in to August"].waitForExistence(timeout: 3), app.debugDescription)
     }
 
     func testSigningInShowsTheDoorsAndSendsNothing() {
         app = XCUIApplication()
         app.launchEnvironment = ["AUGUST_FAKE": "1", "AUGUST_FAKE_REPLY_SECONDS": "1", "AUGUST_FAKE_ONE_LOCK_FAILS": "0"]
         app.launch()
-        XCTAssertTrue(status("Sign in to August").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Sign in to August"].waitForExistence(timeout: 3))
         XCUIDevice.shared.press(.home)
         sleep(2)
         app.activate()
-        XCTAssertTrue(status("Sign in to August").waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Sign in to August"].waitForExistence(timeout: 3))
         app.textFields["Email"].tap()
         app.textFields["Email"].typeText("test@example.com")
         app.secureTextFields["Password"].tap()

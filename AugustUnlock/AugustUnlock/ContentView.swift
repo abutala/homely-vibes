@@ -33,6 +33,9 @@ struct ContentView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            if phase == .ready { DoorsBackground() }
+        }
         // The build's date, time and commit, set by `scripts/build_ipa.sh`
         // (`BUILD_STAMP` into Info.plist); an Xcode build has none.
         .overlay(alignment: .bottom) {
@@ -172,8 +175,22 @@ struct ContentView: View {
     // MARK: - Doors
 
     private var doorsScreen: some View {
-        VStack(spacing: 32) {
-            ForEach(model.doors) { DoorRow(door: $0) }
+        VStack(spacing: 0) {
+            Text("The gates of Eden")
+                .font(.largeTitle.bold())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 8)
+                .padding(.bottom, 18)
+                .accessibilityAddTraits(.isHeader)
+            // The cards take the free space, up to a size that still reads as
+            // a card on an account with one lock.
+            VStack(spacing: 16) {
+                ForEach(model.doors) { door in
+                    DoorRow(door: door).frame(minHeight: 140, maxHeight: 280)
+                }
+            }
+            .layoutPriority(1)
+            Spacer(minLength: 24)
             // Live during a command (asked for, 2026-11-01): the commands are
             // cancelled; a request August already holds may still move a door.
             Button("Sign Out") {
@@ -184,8 +201,11 @@ struct ContentView: View {
                 code = ""
                 phase = .needsLogin
             }
-            .font(.footnote)
+            .buttonStyle(.glass)
+            .font(.subheadline)
             .foregroundStyle(.secondary)
+            // Clear of the build stamp.
+            .padding(.bottom, 24)
         }
     }
 }
