@@ -7,7 +7,8 @@ import SwiftUI
 /// the client has a gate per lock.
 @Observable
 final class DoorController: Identifiable {
-    let lock: AugustLock
+    /// The name may change with a refreshed list; the ID never does.
+    var lock: AugustLock
     var id: String { lock.id }
 
     private(set) var machine = CommandMachine()
@@ -189,10 +190,15 @@ final class DoorsModel {
     /// `.active -> .inactive -> .active` and never touches `.background`.
     @ObservationIgnored private var wasBackgrounded = false
 
-    /// A door keeps its row, and its command, across a refreshed list.
+    /// A door keeps its row, and its command, across a refreshed list, even
+    /// when it was renamed.
     func show(_ locks: [AugustLock]) {
         doors = locks.map { lock in
-            doors.first { $0.lock == lock } ?? DoorController(lock: lock) { [weak self] in self?.exitIfExpired() }
+            guard let door = doors.first(where: { $0.id == lock.id }) else {
+                return DoorController(lock: lock) { [weak self] in self?.exitIfExpired() }
+            }
+            door.lock = lock
+            return door
         }
     }
 

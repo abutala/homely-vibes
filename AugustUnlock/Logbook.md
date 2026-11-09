@@ -1138,9 +1138,16 @@ nothing unlocked on open, and the first tap on either door unlocking.
   cut-off unlock was harmless. With Lock Both it is not.** An unlock that ended
   "No reply" stays with August (the ghost of 2026-11-03), and it can land after a
   later lock: an open door under "Locked". `DoorState.unanswered` keeps each
-  door's unanswered unlock for 60 s (the screen's window), and Lock Both reads
-  "No reply" over it. A held lock moves the door the same way, so it stops
-  nothing. Not covered: an unlock the app's screen dropped.
+  door's unconfirmed unlock for 60 s (the screen's window), and Lock Both reads
+  "No reply" over it. A failed one counts too: a cloud request that ended in a
+  network error may still have gone out. A held lock moves the door the same way,
+  so it stops nothing. Not covered: an unlock the app's screen dropped.
+- **One door can reopen during Lock Both.** A fast door locks, an unlock tap on it
+  succeeds, the slow door locks: an open door under "Locked" (pre-flight review).
+  An unlock tap started since Lock Both's tap keeps the center from "Locked".
+- **A sign-out can race the launch's list fetch.** A late reply would write the
+  list back, and a session with a list skips the code form; a re-login after a
+  401 could write the token back. Both now check they are still signed in.
 - **A reply is not a lock.** The cloud reply carries the lock's state, which may
   be unknown or even unlocked, so "Locked" needs `state == .locked`
   (`LockState.lockOutcome`). An unlock tap has always counted any reply.

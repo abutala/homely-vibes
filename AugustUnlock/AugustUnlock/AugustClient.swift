@@ -187,6 +187,8 @@ final class AugustClient {
         else {
             throw AugustError.notAuthenticated
         }
+        // Signed out while the request ran (a re-login after a 401): no token.
+        guard KeychainStore.get("august_email") != nil else { throw AugustError.notAuthenticated }
         KeychainStore.set(accessToken, forKey: "august_access_token")
 
         // vPassword/vInstallId are JSON booleans (confirmed against captured
@@ -217,6 +219,8 @@ final class AugustClient {
         let locks = raw.sorted { $0.key < $1.key }.compactMap { id, fields in
             (fields["LockName"] as? String).map { AugustLock(id: id, name: $0) }
         }
+        // Signed out while the fetch ran: keep no list and read no keys.
+        guard hasSession else { throw AugustError.notAuthenticated }
         if let data = try? JSONEncoder().encode(locks) { KeychainStore.setData(data, forKey: Self.locksKey) }
         locks.forEach { refreshBluetoothKeyOnce(lockID: $0.id) }
         return locks

@@ -20,8 +20,11 @@ struct DoorState: Codable, Equatable {
     var running: [String: Date] = [:]
     /// The last result per position, keyed by the position's text (JSON).
     var results: [String: Result] = [:]
-    /// When a door's unlock tap ended with no reply: August may still run it.
+    /// When a door's unlock tap ended without a confirmed reply: August may
+    /// still run it, even after an error, since the request may have gone out.
     var unanswered: [String: Date] = [:]
+    /// When each door's last unlock tap started.
+    var unlockStarted: [String: Date] = [:]
 
     /// The widget's center button, after the two doors.
     static let lockBothPosition = 2
@@ -53,6 +56,7 @@ struct DoorState: Codable, Equatable {
         if let started = running[String(position)], now < started + Self.runningLimit { return false }
         running[String(position)] = now
         results[String(position)] = nil
+        if position != Self.lockBothPosition { unlockStarted[String(position)] = now }
         return true
     }
 
@@ -63,21 +67,23 @@ struct DoorState: Codable, Equatable {
         if let current = running[String(position)], current != startedAt { return }
         running[String(position)] = nil
         results[String(position)] = Result(outcome: outcome, at: now)
-        if outcome == .noReply, position != Self.lockBothPosition { unanswered[String(position)] = now }
+        if outcome != .ok, position != Self.lockBothPosition { unanswered[String(position)] = now }
     }
 
     /// Lock Both's replies, one per door by position, written together when
     /// the tap ends so a fast door's mark is still held when the widget draws
     /// (it redraws only after the tap). A locked door drops any old mark; a
-    /// door that did not lock shows why; a door running its own tap is left
-    /// to report. Returns the center's result: "Locked" only if every door
-    /// locked and no unanswered unlock can still land after it.
-    mutating func recordLocks(_ outcomes: [Outcome], at now: Date) -> Outcome {
+    /// door that did not lock shows why; a door tapped since `startedAt` keeps
+    /// its own mark, and so does one running its own tap. Returns the center's
+    /// result: "Locked" only if every door locked, none was tapped to unlock
+    /// meanwhile, and no unanswered unlock can still land after it.
+    mutating func recordLocks(_ outcomes: [Outcome], startedAt: Date, at now: Date) -> Outcome {
         let settled = outcomes.enumerated().map { position, outcome -> Outcome in
             let key = String(position)
             let held = unanswered[key].map { now < $0 + Self.unansweredWindow } ?? false
-            let settled: Outcome = outcome == .ok && held ? .noReply : outcome
-            if running[key] == nil { results[key] = settled == .ok ? nil : Result(outcome: settled, at: now) }
+            let tapped = unlockStarted[key].map { $0 >= startedAt } ?? false
+            let settled: Outcome = outcome == .ok && (held || tapped) ? .noReply : outcome
+            if running[key] == nil, !tapped { results[key] = settled == .ok ? nil : Result(outcome: settled, at: now) }
             return settled
         }
         if settled.isEmpty || settled.contains(.failed) { return .failed }

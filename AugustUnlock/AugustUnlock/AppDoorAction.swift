@@ -46,6 +46,7 @@ enum AppDoorAction {
     /// gates keep a door's commands in order, so a lock tapped over a running
     /// unlock runs after it. The center reads "Locked" only if both confirm.
     static func lockBoth(lockIDs: [String], client: any DoorCommands = August.shared) async {
+        let tapped = Date()
         await runTap(position: DoorState.lockBothPosition, door: "Both Doors", first: .locking, final: DoorStage.finalForLock) { deadline, onStage in
             let outcomes = await withTaskGroup(of: (Int, DoorState.Outcome).self) { group in
                 for (position, lockID) in lockIDs.enumerated() {
@@ -57,7 +58,7 @@ enum AppDoorAction {
                 for await (position, outcome) in group { outcomes[position] = outcome }
                 return outcomes
             }
-            return DoorStateStore.update { $0.recordLocks(outcomes, at: Date()) }
+            return DoorStateStore.update { $0.recordLocks(outcomes, startedAt: tapped, at: Date()) }
         }
     }
 

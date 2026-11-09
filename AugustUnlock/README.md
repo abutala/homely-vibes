@@ -94,7 +94,7 @@ door. A second tap on a door still unlocking does nothing, though its cue
 may flicker until the result. Each tap runs in the app's own process in
 the background (the app never comes forward), so it takes the same path as
 the app's button: Bluetooth when the lock has a loaded key (~1–3 s), the
-cloud otherwise or when Bluetooth fails (the screen allows it 1–25 s; a
+cloud otherwise or when Bluetooth fails (the screen allows it 12–30 s; a
 widget tap, what is left of its 28 s). The sign-in line under
 the doors, when shown, is a link that opens the app. A whole tap has 28 s: iOS ends a background intent at about
 30 s, and a tap ended that way shows nothing. Bluetooth gets 6 s to set
@@ -108,8 +108,10 @@ sign-in; opening the app renews it.
 **Lock Both** sends lock to both doors at once, under one tap's 28 s. It reads
 "Locking…", then "Locked" only when both doors report locked. Otherwise it
 reads "Failed" or "No reply", and the door that did not lock says the same, so
-you can see which one. "No reply" also shows when a door's unlock tap got no
-reply in the last 60 s, because August may still run that unlock after the lock.
+you can see which one. "No reply" also shows when a door's unlock tap ended
+without a confirmed reply in the last 60 s, because August may still run that
+unlock after the lock, and when a door was tapped to unlock during Lock Both,
+because it may be open again.
 A lock tapped while a door's unlock runs waits for it, so the lock lands last.
 The garage's Wi-Fi bridge can take ~60 s, past the 28 s: it then reads "No
 reply" while August may still lock it.
@@ -208,7 +210,7 @@ turned off for the app in Settings change nothing else.
 
 ## Deadline and recovery
 
-Every lock/unlock has 30 s to answer. Past that the circle goes gray with
+Every lock/unlock has 30 s to answer. Past that the circle goes red with
 "Timed out — tap to retry" when nothing reached August. When the request is
 already with August, the screen says "Sent to August, no reply yet — tap to
 retry" and the request keeps running quietly to 60 s from its start (the
