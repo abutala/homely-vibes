@@ -12,7 +12,6 @@ the implementation is in. Gotchas and findings: [Logbook.md](Logbook.md).
 | [august_unlock_command.qnt](august_unlock_command.qnt) | Can an AugustUnlock command hold the screen after the phone naps, can a return to the app unlock by itself after a timeout, is Change Lock ever refused, and what does a cloud command the phone gave up on do? Does a tap after a failed lock unlock? Does anything but a tap send? In `tapToUnlock` the Change Lock action is Sign Out. Instances: `beforeDeadline` (before #57), `deadlineOnly` (#57's first push), `withDeadline` (#57, before the retry rule), `withRetry` (#77), `resumeOnly` (`withRetry` if a passed deadline does not fire on wake), `tapToUnlock` (the app now: two doors on screen, only a tap sends). |
 | [ghost_order.qnt](ghost_order.qnt) | Can the AugustUnlock screen show a door state the lock is not in, when August still holds a command the phone dropped? Instances: `ghostBefore` (before #77: yes, unwarned), `ghostWarned` (now: only with the "may still move the door" line), each also with August running commands out of order. |
 | [gate.qnt](gate.qnt) | Is AugustUnlock's per-lock command gate ever held without a holder, or left with a cancelled waiter? Instances: `gateShipped`, `gateNoPostCheck` (the post-queue cancel check removed). |
-| [widget_paths.qnt](widget_paths.qnt) | An AugustUnlock widget tap sends its command over Bluetooth and the cloud together. Can Lock Both read "Locked" while August still holds an unlock? Instances: `pathsDraft` (the design before its TRIAL: yes, when the process dies), `pathsOneMark` (one mark per door: yes, a newer tap's reply clears an older unlock), `pathsNoRunning` (a tap with no end ignored: yes, when the process dies before any answer), `pathsShipped` (the code now). |
 | [screenshare_connect.qnt](screenshare_connect.qnt) | Does a ScreenShare tunnel app's launch leave a hung window or a dead tunnel behind, fail on a healthy link, end a working session or a password prompt, take a frozen session for a live one, or reopen what the user cancelled? Instances: `shareMain` (before 2026-11-06), `shareProposed` (first retry design), `shareFinal` (the launcher now). Proved with TLC (`// backend: tlc`). |
 
 ## Setup and run
@@ -50,7 +49,7 @@ so both a regression and a model that stops reproducing its bug fail.
 | `make formal` ([check.sh](check.sh)) | `quint run`, randomized (TLC for a `// backend: tlc` model) | a real counterexample | only "not found": never a proof (TLC: a proof) |
 | `make formal-verify` ([verify.sh](verify.sh)) | `quint verify`, Apalache (TLC for a model with `// backend: tlc`) | a counterexample the checker built | a proof over every execution of the model |
 
-A model with a `// verify: search-only` line (today `ghost_order.qnt`, `gate.qnt` and `widget_paths.qnt`) is
+A model with a `// verify: search-only` line (today `ghost_order.qnt` and `gate.qnt`) is
 skipped by `verify.sh`: only the randomized search covers it until its state space is
 sized for a CI run.
 
@@ -70,8 +69,6 @@ a test per modelled hazard, named for the model property it mirrors:
 | `noStuckCommand`, `noAutoUnlockAfterAwayTimeout`, `changeLockAlwaysPossible`, `noUnlockAfterFailedLock`, `onlyATapSends` | `AugustUnlock/Tests/AugustBLEProtocolTests/CommandMachineTests.swift` (the pure `CommandMachine` each door's `DoorController` drives; a stress run with simulated Bluetooth and cloud, late replies included) |
 | `honestOrWarned` (ghost_order) | `CommandMachineTests`: `testDroppingACloudCommandWarnsForAMinute`, `testChangeLockLeavesTheOldLocksWarningBehindButExpiryWarns`, `testATimeoutAfterTheCloudLetsTheRequestRunAndShowsItsLateReply` |
 | `cancelledWaiterDrops` (gate) | `AugustUnlock/Tests/AugustBLEProtocolTests/CommandGateTests.swift` |
-| `busyHasHolder` (gate), with a widget tap's two paths | `BothPathsTests.testDeadlinesNeverLeakTheGateOrOverlapCommands` |
-| `lockedIsTrue` (widget_paths) | `DoorStateTests`: `testAnUnlockStillOnItsWayStopsLocked`, `testAReplyDoesNotClearAnOlderUnlockStillOnItsWay`, `testAnUnlockTapThatNeverEndedStopsLocked`, `testADeadTapsUnlockOutlivesTheNextTap`; `BothPathsTests.testTheDeadlineAfterABluetoothWinLeavesTheUnlockUnconfirmed`; on the Simulator, `WidgetTapTests.testLockBothIsNotLockedOverAnUnlockStillOnItsWay` |
 | `cleanFailure`, `noLiveSessionKilled`, `promptNeverKilled` and the rest of `screenshare_connect` | `ScreenShare/test_build_app.py` (the probe and stop shell against real local sockets) and `ScreenShare/test_launcher_decide.py` (the launcher's pure `decide` and `classify` handlers under `osascript`) |
 
 The glue in `DoorController` (the deadline task, the background keep-alive, the stage stream) is
@@ -83,4 +80,4 @@ Trace validation (replay real logs against the model) is the next step up.
 
 One `.qnt` per design, written as a parametric module with a `const` per code switch
 under test, plus one instance module per variant. Add a row per (instance, property) to
-`outcomes.txt`. Do not copy household identifiers into a model.
+`check.sh`. Do not copy household identifiers into a model.

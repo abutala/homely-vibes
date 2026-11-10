@@ -107,7 +107,7 @@ struct DoorRow: View {
         case .failure(let message):
             lines = [Line(text: message, font: .footnote, color: .red)]
         }
-        if let warning = door.warning(at: now) { lines.append(Line(text: warning, font: .footnote, color: .orange)) }
+        if let warning = machine.warning(at: now) { lines.append(Line(text: warning, font: .footnote, color: .orange)) }
         if let note = machine.lateNote { lines.append(Line(text: note, font: .footnote, color: .secondary)) }
         return lines
     }

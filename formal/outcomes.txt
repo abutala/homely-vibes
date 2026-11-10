@@ -85,16 +85,6 @@ gateShipped      queueConsistent          holds
 gateShipped      cancelledWaiterDrops     holds
 gateNoPostCheck  cancelledWaiterDrops     violated
 
-# widget_paths.qnt: a widget tap sends Bluetooth and the cloud together. The
-# center's "Locked" must not sit over an unlock August still holds. pathsDraft
-# is the design before its TRIAL (2026-11-09); pathsOneMark keeps one mark per
-# door, which a newer tap's reply clears; pathsNoRunning ignores a tap whose
-# process died before any answer.
-pathsDraft       lockedIsTrue             violated
-pathsOneMark     lockedIsTrue             violated
-pathsNoRunning   lockedIsTrue             violated
-pathsShipped     lockedIsTrue             holds
-
 # screenshare_connect.qnt — one launch of a ScreenShare tunnel app. shareMain is
 # main before 2026-11-06 (it reuses a stale tunnel and leaves a hung window);
 # shareProposed is the first retry design; shareFinal is the design after the TRIAL.

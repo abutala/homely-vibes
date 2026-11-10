@@ -25,29 +25,15 @@ enum AugustError: LocalizedError {
     }
 }
 
-/// The lock's state after a command, and which path carried it. `tail`:
-/// Bluetooth carried it while the cloud copy of the same command was still
-/// on its way (`DoorPaths.both`).
-struct OperationReply: Sendable {
-    enum Path: String, Sendable {
+/// The lock's state after a command, and which path carried it.
+struct OperationReply {
+    enum Path: String {
         case bluetooth = "Bluetooth"
         case cloud
     }
 
     let state: LockState
     let path: Path
-    var tail: CloudTail?
-}
-
-/// August's copy of a command that Bluetooth already carried out. It cannot
-/// be recalled, so it may still reach the lock.
-struct CloudTail: Sendable {
-    let openedAt: Date
-    let confirmation: Task<Bool, Never>
-
-    /// True once August's reply says the door is in the asked state. False
-    /// on any other end: an error, or the tap's deadline.
-    func confirmed() async -> Bool { await confirmation.value }
 }
 
 struct AugustLock: Identifiable, Equatable, Codable {
@@ -282,7 +268,7 @@ final class AugustClient {
 
     /// Re-reads a lock's offline key from GET /locks/{id} in the
     /// background, at most once per launch per lock: at each lock fetch and
-    /// after any command the cloud answered. That
+    /// after any command that had to use the cloud. That
     /// picks up a key the official app loads later, or a rotated one,
     /// without delaying an open.
     private func refreshBluetoothKeyOnce(lockID: String) {
@@ -322,37 +308,35 @@ final class AugustClient {
         return LockState(augustStatus: lockStatus?["status"] as? String)
     }
 
-    /// Any lock on the account. The screen and the widget's taps (in the
-    /// app's process) both come here: the screen with `CommandDeadline`'s
-    /// budgets and `.bluetoothThenCloud` (Bluetooth first when the lock has
-    /// a loaded key), a tap with its own budgets and `.both`
-    /// (`AppDoorAction`, `operateBoth`).
-    /// `deadline` bounds the whole command, the wait at the gate included.
-    /// With `.bluetoothThenCloud`, past it a Bluetooth attempt is given up
-    /// and the cloud leg gets what is left. On either path a cloud request
-    /// cut off after its send fails as `cloudNoReply`.
+    /// Any lock on the account, Bluetooth first when it has a loaded key.
+    /// The screen and the widget's taps (in the app's process) both come
+    /// here: the screen with `CommandDeadline`'s budgets, a tap with its own
+    /// (`AppDoorAction`).
+    /// `deadline` bounds the whole command, the wait at the gate included:
+    /// past it a Bluetooth attempt is given up and the cloud leg gets what is
+    /// left; a cloud request cut off after its send fails as `cloudNoReply`.
     /// `keepLink` false (the widget's taps) ends the Bluetooth link after the
     /// command; the app's own taps keep it a few seconds for the next one.
     func unlock(
-        lockID: String, paths: DoorPaths, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
+        lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
         deadline: ContinuousClock.Instant?, keepLink: Bool, onStage: @escaping @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply {
         // The widget passes an empty ID until it has a lock list.
         guard !lockID.isEmpty else { throw AugustError.noLocks }
         return try await operate(
-            lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked, paths: paths,
+            lockID: lockID, action: "unlock", opcode: AugustBLE.unlockOpcode, success: .unlocked,
             setupBudget: bluetoothSetupBudget, operationBudget: bluetoothOperationBudget, deadline: deadline, keepLink: keepLink,
             onStage: onStage)
     }
 
     /// The same path as `unlock`, the other way.
     func lock(
-        lockID: String, paths: DoorPaths, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
+        lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
         deadline: ContinuousClock.Instant?, keepLink: Bool, onStage: @escaping @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply {
         guard !lockID.isEmpty else { throw AugustError.noLocks }
         return try await operate(
-            lockID: lockID, action: "lock", opcode: AugustBLE.lockOpcode, success: .locked, paths: paths,
+            lockID: lockID, action: "lock", opcode: AugustBLE.lockOpcode, success: .locked,
             setupBudget: bluetoothSetupBudget, operationBudget: bluetoothOperationBudget, deadline: deadline, keepLink: keepLink,
             onStage: onStage)
     }
@@ -378,15 +362,10 @@ final class AugustClient {
     /// cloud retry after a Bluetooth command that did land is harmless. A jam
     /// the lock reports over Bluetooth is final and is not retried.
     private func operate(
-        lockID: String, action: String, opcode: UInt8, success: LockState, paths: DoorPaths,
+        lockID: String, action: String, opcode: UInt8, success: LockState,
         setupBudget: TimeInterval, operationBudget: TimeInterval,
         deadline: ContinuousClock.Instant?, keepLink: Bool, onStage: @escaping @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply {
-        if paths == .both {
-            return try await operateBoth(
-                lockID: lockID, action: action, opcode: opcode, success: success,
-                setupBudget: setupBudget, operationBudget: operationBudget, deadline: deadline, keepLink: keepLink)
-        }
         // The gate is taken and released inside the one task the deadline
         // cancels: a deadline that fires as the gate is handed over would
         // otherwise discard the hand-over and leave the gate held for good
@@ -427,8 +406,8 @@ final class AugustClient {
 
     /// `sent` turns true the moment the cloud request goes out: a deadline
     /// after that is `cloudNoReply`, before it a plain timeout. `onStage`
-    /// hears the path as it is taken, after the gate and the key check (the
-    /// screen's line under "Unlocking…").
+    /// hears the path as it is taken, after the gate and the key check (a
+    /// widget tap's Live Activity).
     private func operateHoldingGate(
         lockID: String, action: String, opcode: UInt8, success: LockState,
         setupBudget: TimeInterval, operationBudget: TimeInterval, deadline: ContinuousClock.Instant?, keepLink: Bool,
@@ -463,30 +442,6 @@ final class AugustClient {
         return OperationReply(state: state, path: .cloud)
     }
 
-    // MARK: - Both paths at once
-
-    /// Bluetooth and the cloud together: this side supplies the two paths,
-    /// `BothCommand` runs them and acts on the answer.
-    private func operateBoth(
-        lockID: String, action: String, opcode: UInt8, success: LockState,
-        setupBudget: TimeInterval, operationBudget: TimeInterval, deadline: ContinuousClock.Instant?, keepLink: Bool
-    ) async throws -> OperationReply {
-        let bluetooth = bluetoothCredentials(for: lockID).map { credentials -> @Sendable () async throws -> String in
-            {
-                try await AugustBLELink.run(
-                    opcode: opcode, credentials: credentials, setupBudget: setupBudget, operationBudget: operationBudget, keepLink: keepLink
-                ).description
-            }
-        }
-        let reply = try await BothCommand.run(
-            lockID: lockID, action: action, gate: gate(for: lockID), success: success, deadline: deadline, bluetooth: bluetooth,
-            cloud: { try await self.cloudOperate(lockID: lockID, action: action, expected: success) },
-            isJam: { ($0 as? AugustBLEProtocolError)?.isMechanical == true },
-            readDoorLater: { self.readDoorLater(lockID: lockID, after: $0) })
-        if reply.path == .cloud { refreshBluetoothKeyOnce(lockID: lockID) }
-        return reply
-    }
-
     /// `operation` under the command's deadline, or as it is when there is none.
     private func bounded<T: Sendable>(by deadline: ContinuousClock.Instant?, _ operation: @escaping @Sendable () async throws -> T) async throws -> T {
         guard let deadline else { return try await operation() }
@@ -502,9 +457,7 @@ final class AugustClient {
         // the command already succeeded, so a failed re-ask is `.unknown`,
         // not an error.
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        let status = json?["status"] as? String
-        Self.note("cloud \(action) lock \(lockID.suffix(4)) reply status=\(status ?? "none")")
-        let reported = LockState(augustStatus: status)
+        let reported = LockState(augustStatus: json?["status"] as? String)
         guard reported == .unknown else { return reported }
         // A read that disagrees with the command may be the state from
         // before it: unknown, not a false "Locked".

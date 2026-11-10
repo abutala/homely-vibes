@@ -58,7 +58,7 @@ protocol Home Assistant uses) to CoreBluetooth. See
 The Bluetooth path works only for a lock that holds an *offline key* for your
 account. August lists it on `GET /locks/{id}` under `OfflineKeys.loaded`; the
 app reads it for every lock on the account when it lists them and again after
-any command the cloud answered, at most once per launch per lock, so every
+any command that used the cloud, at most once per launch per lock, so every
 door can go over Bluetooth. A key that August shows under
 `OfflineKeys.created` is not on the lock yet. To load it (expected, not yet
 verified), stand at the door, turn off WiFi and cellular so the official August
@@ -95,18 +95,13 @@ then the name again. "No reply" means the cloud request went out and the
 tap ran out of time before August answered; August may still open the
 door. A second tap on a door still unlocking does nothing, though its cue
 may flicker until the result. Each tap runs in the app's own process in
-the background (the app never comes forward), through the app's client. A
-widget tap sends its command over Bluetooth (when the lock has a loaded key)
-and through the cloud at the same moment, and the first to move the door
-answers the tap (Amit, 2026-11-09): Bluetooth in ~1–4 s when it connects, the
-cloud in 2–19 s when it does not. When Bluetooth is first, August still holds
-the same command and nothing can recall it: it reaches the lock some seconds
-later. The app waits for August's answer in the background, and the next
-command to that lock from the widget or the screen waits for it too, so the
-two stay in order at the lock. **A bolt turned by hand in those seconds can be
-moved back by the late command** (accepted, Logbook 2026-11-09). The sign-in line under
+the background (the app never comes forward), so it takes the same path as
+the app's button: Bluetooth when the lock has a loaded key (~1–3 s), the
+cloud otherwise or when Bluetooth fails (the screen allows it 12–30 s; a
+widget tap, what is left of its 28 s). The sign-in line under
 the doors, when shown, is a link that opens the app. A whole tap has 28 s: iOS ends a background intent at about
-30 s, and a tap ended that way shows nothing. With both doors tapped, the first door's
+30 s, and a tap ended that way shows nothing. Bluetooth gets 6 s to set
+up, the cloud gets what is left. With both doors tapped, the first door's
 result draws when the second door's tap ends, if its hold has not passed
 by then: WidgetKit redraws the widget only once no tap of its runs. A tap on a locked phone (the Today view
 before Face ID) does nothing at all, by iOS's rule for widget buttons.
@@ -117,20 +112,18 @@ sign-in; opening the app renews it.
 "Locking…", then "Locked" only when both doors report locked. Otherwise it
 reads "Failed" or "No reply", and the door that did not lock says the same, so
 you can see which one. "No reply" also shows when a door's unlock tap ended
-without a confirmed reply in the last 60 s, or never ended at all (its process
-died), or Bluetooth unlocked the door and August has not answered its copy of
-that unlock in the last 60 s, because
-August may still run that unlock after the lock, and when a door was tapped to
-unlock during Lock Both, because it may be open again.
-A lock tapped while a door's unlock runs, or while August's copy of it is
-still out, waits for it, so the lock lands last.
+without a confirmed reply in the last 60 s, because August may still run that
+unlock after the lock, and when a door was tapped to unlock during Lock Both,
+because it may be open again.
+A lock tapped while a door's unlock runs waits for it, so the lock lands last.
 The garage's Wi-Fi bridge can take ~60 s, past the 28 s: it then reads "No
 reply" while August may still lock it.
 
 A tap also shows a **Live Activity** on the Dynamic Island and the Lock
 Screen, because the widget cannot redraw while a tap runs: the door's name (or
-"Both Doors"), a lock icon and a timer from the tap ("Unlocking…", "Locking…"), then the result ("Unlocked 2.1 s",
-"Locked 2.1 s", "Failed", "No reply"). It names no path: both run at once. The Island drops it at the end; the Lock Screen keeps
+"Both Doors"), a lock icon and a timer from the tap ("Unlocking…", "Locking…"), then a radio icon over
+Bluetooth or a cloud over the cloud, then the result ("Unlocked 2.1 s",
+"Locked 2.1 s", "Failed", "No reply"). The Island drops it at the end; the Lock Screen keeps
 the result for about twelve seconds, as the widget does. With both doors
 tapped, a tap that starts while the other runs gets none (two at once
 empty the Island early).
@@ -168,38 +161,20 @@ turned off for the app in Settings change nothing else.
   with the time, runs the engine's outputs and arms its timers. The
   screen's command has 12 s to reach a session (a connect took 9.4 s
   while the Wi-Fi bridge held the lock; `CommandDeadline` keeps the sum
-  inside the 30 s deadline) and 6 s from there for the result. On any failure but a
+  inside the 30 s deadline) and 6 s from there for the result; a widget
+  tap has 6 s and 12 s. On any failure but a
   jam the lock reports — no lock in range, Bluetooth off or not allowed, a
-  lost link, a rejected key, a timeout — the screen's command uses the cloud instead
+  lost link, a rejected key, a timeout — the app uses the cloud instead
   (unlock and lock are idempotent, so a double send is harmless). A
-  reported jam is shown, not retried. A widget tap's Bluetooth command may
-  take the whole tap to connect and has 12 s from the session, because its
-  cloud command is already out. A status frame the lock sends unasked is
-  logged (`lock pushed <hex>`): it is the only record of what the motor did. Later commands connect straight to the
+  reported jam is shown, not retried. Later commands connect straight to the
   peripheral remembered from the last connection, while the scan runs.
 - `DoorLiveActivity.swift` (app) and `AugustUnlockWidget/DoorActivityView.swift`
   — a widget tap's Live Activity. `OpenDoorIntent` and `SecureDoorsIntent` are
   `LiveActivityIntent`s, so a tap may start one in the background; `AppDoorAction` starts it after
   the repeat-tap check, ends any older one first, and ends it with the result.
-  It shows the first stage and the result, nothing between: a widget tap has
-  no path to report. (For the screen's command the client reports its path,
-  `DoorStage`, from `operateHoldingGate`, after the command gate and the key
-  check.)
-- `ParallelPaths.swift`, `BothPaths.swift`, `BothCommand.swift`, `OpenTails.swift` — a widget tap's
-  two paths. `ParallelPaths` is the decision as a pure value: which path
-  answers the tap, and when the command is over. A cloud reply wins only when
-  it says the door is in the asked state; a jam over Bluetooth is a success
-  only if August then says the door moved. `BothPaths` runs it with the two
-  paths as closures: one task takes the lock's gate, runs both paths and,
-  after a Bluetooth win, the wait for August, then leaves the gate; the
-  tap's deadline cancels that one task. `BothCommand` is what the app does
-  with the answer, shared by `AugustClient` and `FakeAugust`. `OpenTails`
-  holds, per lock, the cloud commands that may still land: one still out
-  after a Bluetooth win, until August confirms it, and one a tap gave up on,
-  for a minute. The screen shows "An earlier request may still move the
-  door" over such a lock, and the 5-minute exit waits while a wait for August
-  runs. Modelled in
-  [formal/widget_paths.qnt](../formal/widget_paths.qnt).
+  The client reports its path (`DoorStage`) from `operateHoldingGate`, after
+  the command gate and the key check; the stages go through one stream to
+  one task, so updates land in order and none lands after the end.
 - `KeychainStore.swift` — thin wrapper over `SecItem*` for on-device storage
   of the August email/password, install ID, access token, the lock list, the
   offline key, slot and serial of every lock on the account
@@ -214,10 +189,8 @@ turned off for the app in Settings change nothing else.
 - `AugustService.swift` — the protocols the app talks to (`August.shared`):
   `AugustClient` on a device, or `FakeAugust` when the launch environment sets
   `AUGUST_FAKE=1` or a launch left that marker (`TestHooks`). The fake is scripted by `AUGUST_FAKE_SIGNED_IN`,
-  `AUGUST_FAKE_REPLY_SECONDS`, `AUGUST_FAKE_PATH`, `AUGUST_FAKE_FAIL`,
-  `AUGUST_FAKE_ONE_LOCK_FAILS` and `AUGUST_FAKE_TAIL_OPEN` (Bluetooth answers a
-  widget tap and August never answers its copy; a widget tap runs through
-  `BothCommand` with a timed fake for each path), and
+  `AUGUST_FAKE_REPLY_SECONDS`, `AUGUST_FAKE_PATH`, `AUGUST_FAKE_FAIL` and
+  `AUGUST_FAKE_ONE_LOCK_FAILS`, and
   counts the commands it got (the timing caption shows "N sent").
 - `ContentView.swift` — sign-in form → one-time verification code entry → the
   door list, drawn at once from the cached lock list while a fresh one loads.
@@ -265,14 +238,7 @@ request too. A second tap on a door within 0.75 s is the same tap and sends
 nothing.
 
 Each lock has its own command gate, so a tap on one door never waits for
-the other door's command. A tap on a door does wait for a widget tap's cloud
-command to that door that is still out (up to that tap's 28 s), and the orange
-line shows over the door for a minute unless August confirms it.
-
-Every widget tap adds a "… remotely" line to August's activity feed, under
-the name August gives this app's key, and sends the garage's Wi-Fi bridge to
-the lock, which can slow another person's unlock from the official app for
-some seconds.
+the other door's command.
 
 ## Measuring lag
 
@@ -280,7 +246,7 @@ The screen shows how long the last lock/unlock took ("Last unlock: 1.2 s"),
 after an icon for the path that carried it: a blue Bluetooth rune, or a grey
 cloud. Every timing line (each cloud request, each Bluetooth attempt with
 its stages, each widget tap) is also in the app's own file,
-`Library/Caches/app.log` (last 600 lines), which the phone keeps. A widget
+`Library/Caches/app.log` (last 200 lines), which the phone keeps. A widget
 tap writes `widget intent position=N` first, from the app's process; a tap
 on the widget's body writes `opened by the widget body`; a tap with
 neither line never reached the widget (a locked phone):
@@ -309,22 +275,12 @@ the remembered peripheral connected without a scan):
 - `BLE lock -> ok in 3179 ms (found -, connected 1293, session 1740, written 1998, done 3179)`
 - `BLE unlock failed in 3004 ms: Bluetooth setup timed out while searching for the lock; using the cloud`
 - `PUT /remoteoperate/<id>/unlock -> 200 in 4612 ms`
-- `cloud unlock lock 2077 reply status=unlocked` (what August says the lock reported)
-
-A widget tap's path lines start with `both`, and its `widget … position=` line
-names the path that answered. Count `via Bluetooth` against `via cloud` on the `widget … position=`
-lines to see how often Bluetooth is first:
-
-- `both unlock lock 2077: cloud sent, Bluetooth started`
-- `both unlock lock 2077: Bluetooth ok in 2104 ms (found -, connected 467, session 759, written 1021, done 2104)`
-- `widget unlock position=1 ok via Bluetooth in 2.137188833 seconds; August's copy still out`
-- `both unlock lock 2077: cloud replied Unlocked in 7160 ms`
 
 ## Tests
 
 The app quits itself after 5 minutes in the background (`BackgroundExitPolicy.swift`).
 
-The Bluetooth protocol and engine, the exit policy, the command machine, the command gate, a widget tap's two paths (the decision, and its runner against timed fakes with deadlines), the widget's door names, door state and Live Activity stages have unit
+The Bluetooth protocol and engine, the exit policy, the command machine, the command gate, the widget's door names, door state and Live Activity stages have unit
 tests; the protocol's run against bytes produced by yalexs-ble's own code (`scripts/gen_ble_vectors.py` prints them: `uv run --script
 AugustUnlock/scripts/gen_ble_vectors.py`). They run on the Mac, not in CI:
 
@@ -334,7 +290,7 @@ cd AugustUnlock && swift test 2>&1 | tee /tmp/augustunlock-swift-test.log
 
 The widget has UI tests on the Simulator (`UITests/WidgetTapTests.swift`):
 they add the Doors widget through SpringBoard's gallery and check the three
-buttons, Lock Both (progress, result, a failed door named, and "No reply" over an unlock August has not answered) and the sign-in caption, then taps a button with the app quit and
+buttons, Lock Both (progress, result, and a failed door named) and the sign-in caption, then taps a button with the app quit and
 checks that the tapped door reads "Unlocking…" at once and alone (the tap
 is slowed 5 s with `AUGUST_SLOW_WIDGET_TAP=1` on the app's launch, a marker
 the tap's background launch reads), then its result, holds it and clears
@@ -362,8 +318,8 @@ xcodebuild test -project AugustUnlock/AugustUnlock.xcodeproj -scheme AugustUnloc
 
 `Package.swift` exists only for these tests: it builds the pure files alone
 (`AugustBLEProtocol.swift`, `AugustBLEEngine.swift`, `BackgroundExitPolicy.swift`,
-`CommandDeadline.swift`, `CommandMachine.swift`, `CommandGate.swift`, `ParallelPaths.swift`, `BothPaths.swift` (not `BothCommand.swift`, which needs UIKit), `OpenTails.swift`, `AugustBLETiming.swift`,
-`AugustUnlockWidget/DoorNames.swift`, `Shared/DoorState.swift`, `Shared/DoorStage.swift`, `Shared/Deadline.swift`). The command machine's properties, and the widget's "Locked" over a cloud command still out, are also pinned by
+`CommandDeadline.swift`, `CommandMachine.swift`, `CommandGate.swift`, `AugustBLETiming.swift`,
+`AugustUnlockWidget/DoorNames.swift`, `Shared/DoorState.swift`, `Shared/DoorStage.swift`, `Shared/Deadline.swift`). The command machine's properties are also pinned by
 `make formal` (see [formal/README.md](../formal/README.md)). The app builds from `AugustUnlock.xcodeproj`.
 
 The same properties run through the real screens on the Simulator against

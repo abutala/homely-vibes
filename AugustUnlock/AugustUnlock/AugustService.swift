@@ -15,27 +15,17 @@ protocol AugustService: AnyObject {
     func signOut()
 }
 
-/// How a command reaches the lock.
-enum DoorPaths: Sendable {
-    /// Bluetooth for its setup budget, then the cloud: the screen's taps,
-    /// where a tap can reverse a command in flight.
-    case bluetoothThenCloud
-    /// Bluetooth and the cloud at the same moment; the first to move the
-    /// door answers (`ParallelPaths`): the widget's taps (Amit, 2026-11-09).
-    case both
-}
-
 /// One door's command by lock ID, under the caller's budgets. The real client
 /// or `FakeAugust`, passed in as a parameter so the Simulator's tests can run
 /// a tap end to end. `onStage` hears `.bluetooth` or `.cloud` as the path is
-/// taken; with `.both` there is no path to report.
+/// taken.
 protocol DoorCommands: AnyObject {
     func unlock(
-        lockID: String, paths: DoorPaths, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
+        lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
         deadline: ContinuousClock.Instant?, keepLink: Bool, onStage: @escaping @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply
     func lock(
-        lockID: String, paths: DoorPaths, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
+        lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
         deadline: ContinuousClock.Instant?, keepLink: Bool, onStage: @escaping @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply
 }
@@ -48,10 +38,10 @@ extension DoorCommands {
         let operation = CommandDeadline.screenBluetoothOperation
         if unlocking {
             return try await unlock(
-                lockID: lockID, paths: .bluetoothThenCloud, bluetoothSetupBudget: setup, bluetoothOperationBudget: operation, deadline: nil, keepLink: true, onStage: onStage)
+                lockID: lockID, bluetoothSetupBudget: setup, bluetoothOperationBudget: operation, deadline: nil, keepLink: true, onStage: onStage)
         }
         return try await lock(
-            lockID: lockID, paths: .bluetoothThenCloud, bluetoothSetupBudget: setup, bluetoothOperationBudget: operation, deadline: nil, keepLink: true, onStage: onStage)
+            lockID: lockID, bluetoothSetupBudget: setup, bluetoothOperationBudget: operation, deadline: nil, keepLink: true, onStage: onStage)
     }
 }
 
@@ -73,13 +63,8 @@ enum August {
 /// - `AUGUST_FAKE_PATH=bluetooth|cloud`: the path a reply reports (default
 ///   bluetooth).
 /// - `AUGUST_FAKE_FAIL=1`: every command fails with "no reply".
-/// Markers, so a widget tap's background launch reads them too (`TestHooks`):
+/// A marker, so a widget tap's background launch reads it too (`TestHooks`):
 /// - `AUGUST_FAKE_ONE_LOCK_FAILS=1`: every second lock command fails.
-/// - `AUGUST_FAKE_TAIL_OPEN=1`: August never answers a command sent on both
-///   paths, so Bluetooth answers it and August's copy stays out.
-/// A command on both paths (a widget tap) goes through `BothCommand`, as the
-/// real client's does: Bluetooth answers after the reply seconds, August half
-/// a second later. `AUGUST_FAKE_PATH=cloud` gives the lock no Bluetooth key.
 /// Every command is counted in `commandsSent`, so a test can read it back
 /// through the timing caption ("via …, 3 sent").
 final class FakeAugust: AugustService, DoorCommands {
@@ -114,56 +99,32 @@ final class FakeAugust: AugustService, DoorCommands {
 
     /// The same scripted reply, whatever the door.
     func unlock(
-        lockID: String, paths: DoorPaths, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
+        lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
         deadline: ContinuousClock.Instant?, keepLink: Bool, onStage: @escaping @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply {
-        if paths == .both { return try await operateBoth(lockID: lockID, success: .unlocked, deadline: deadline) }
         onStage(scriptedPath)
         return try await operate(success: .unlocked)
     }
 
     func lock(
-        lockID: String, paths: DoorPaths, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
+        lockID: String, bluetoothSetupBudget: TimeInterval, bluetoothOperationBudget: TimeInterval,
         deadline: ContinuousClock.Instant?, keepLink: Bool, onStage: @escaping @Sendable (DoorStage) -> Void
     ) async throws -> OperationReply {
+        onStage(scriptedPath)
         locksSent += 1
         let fails = TestHooks.oneLockFails && locksSent % 2 == 0
-        let reply: OperationReply
-        if paths == .both {
-            reply = try await operateBoth(lockID: lockID, success: .locked, deadline: deadline)
-        } else {
-            onStage(scriptedPath)
-            reply = try await operate(success: .locked)
-        }
+        let reply = try await operate(success: .locked)
         if fails { throw AugustError.server(0, "lock failed") }
         return reply
     }
 
-    private var replySeconds: Double { Double(env["AUGUST_FAKE_REPLY_SECONDS"] ?? "1") ?? 1 }
-    private var failing: Bool { env["AUGUST_FAKE_FAIL"] == "1" }
-
     private func operate(success: LockState) async throws -> OperationReply {
         commandsSent += 1
-        try await Task.sleep(for: .seconds(replySeconds))
+        let seconds = Double(env["AUGUST_FAKE_REPLY_SECONDS"] ?? "1") ?? 1
+        try await Task.sleep(for: .seconds(seconds))
         try Task.checkCancellation()
-        if failing { throw AugustError.server(0, "no reply") }
+        if env["AUGUST_FAKE_FAIL"] == "1" { throw AugustError.server(0, "no reply") }
         let path: OperationReply.Path = env["AUGUST_FAKE_PATH"] == "cloud" ? .cloud : .bluetooth
         return OperationReply(state: success, path: path)
-    }
-
-    /// The fake has no lock identity, so each command gets its own gate.
-    private func operateBoth(lockID: String, success: LockState, deadline: ContinuousClock.Instant?) async throws -> OperationReply {
-        commandsSent += 1
-        let (seconds, failing, tailOpen) = (replySeconds, failing, TestHooks.tailOpen)
-        let path: @Sendable (Double) async throws -> Void = { wait in
-            try await Task.sleep(for: .seconds(wait))
-            if failing { throw AugustError.server(0, "no reply") }
-        }
-        let bluetooth: (@Sendable () async throws -> String)? = env["AUGUST_FAKE_PATH"] == "cloud" ? nil : { @Sendable in try await path(seconds); return "fake" }
-        return try await BothCommand.run(
-            lockID: lockID, action: success == .unlocked ? "unlock" : "lock", gate: CommandGate(), success: success, deadline: deadline,
-            bluetooth: bluetooth,
-            cloud: { try await path(tailOpen ? 3600 : seconds + 0.5); return success },
-            isJam: { _ in false }, readDoorLater: { _ in })
     }
 }
