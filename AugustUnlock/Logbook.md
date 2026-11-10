@@ -1174,3 +1174,83 @@ nothing unlocked on open, and the first tap on either door unlocking.
   and the system renders the container as glass in clear mode. The widget repeats
   the screen's tinted circle instead, and the toggle rules of 2026-11-02 and
   2026-11-05 stand.
+
+## 2026-11-09 — The widget waits 12 s for Bluetooth; both paths at once was tried and taken out
+
+Amit: the widget's garage unlock failed once, and the app works. The phone's
+`app.log` had the tap (Nov 8, 17:09 PST): the Bluetooth connect missed its 6 s
+(`setup timed out while connecting; scan saw the lock: no`), the cloud command
+then took 18.8 s, and the door opened at 25.3 s. Since Nov 6, four of eleven
+widget connects missed the 6 s and seven took 0.4–4.6 s (the garage's five,
+0.4–2.2 s). The screen gives Bluetooth 12 s, which is why the app looks better.
+
+**What shipped.** A widget tap uses the screen's Bluetooth budgets (12 s to a
+session, 6 s from there), and the cloud only as the fallback, for unlock and
+for lock (Amit, 2026-11-09). This replaces the widget's 6 s and 12 s of
+2026-11-03. A setup miss leaves the cloud 16 s of the tap's 28 s, where it
+had 22 s: a cloud command as slow as that 18.8 s one now ends "No reply",
+though the door may still move. The 28 s cannot grow: iOS ends a background
+intent at about 30 s.
+
+**What was tried first and taken out the same evening.** Amit chose to send
+Bluetooth and the cloud together from the tap, the first to move the door
+answering; a scoped TRIAL shaped it (memory,
+`deviation_labs/homely_vibes_parallel_paths_trial_2026-11-09.md`) and it went
+onto the phone. One session of four taps showed two things:
+
+- **A cloud lock from this app makes the front lock beep 12 times.** With
+  both paths, every Lock Both sends one. Amit's words: "one door still beeped
+  12 times"; the front door, beeps from its speaker, on the lock only, never
+  on the unlock; a remote lock from the official August app "makes a single
+  beep, not 12"; the app's screen, which locks over Bluetooth, is quiet. The
+  old build did it too, on the one Lock Both that fell back to the cloud
+  (Nov 9, 18:19 PST). The app sent one request each time, and August's feed
+  shows one `remote_lock`; the lock path has no loop.
+- **The two paths fight for the lock's one Bluetooth link.** The garage's
+  connect took 9.0 s (0.4–2.2 s before). The cloud opened the door first, the
+  Bluetooth command then answered "ok" in 158 ms without moving anything, and
+  the log said "via Bluetooth". The risk was named before the build
+  (Logbook 2026-11-03: the bridge holds the lock for a cloud command) and
+  Amit chose to learn it from use.
+
+**Why 12 beeps is still open.** A second TRIAL (memory,
+`deviation_labs/homely_vibes_twelve_beeps_trial_2026-11-09.md`) refuted "the
+lock's normal sound for a cloud lock" (that is one beep) and ruled out a
+duplicate command, a lock sent to a locked door, the garage, the motor and
+background Bluetooth. Two differences from the official app's quiet remote
+lock are left: this app's request (`PUT /remoteoperate/{lock}/lock`, the
+synchronous form, as yalexs' sync call; the official app's is not known), and
+the cloud unlock that came 3–9 s before the lock both times. Not tested. A
+widget lock that falls back to the cloud will still beep 12 times.
+
+**Kept from the both-paths work:**
+
+- **An unlock tap with no end counts as an unlock that may still land.** A
+  process that dies during a tap writes no result, and its cloud unlock may
+  be out; Lock Both read "Locked" over it. `DoorState.running` for that door
+  now stops "Locked" for 60 s from the tap's start, and the next tap moves it
+  to `unanswered` (found by the pre-push review of the both-paths build).
+- **The log says what the lock said.** Nothing recorded what a lock did, so
+  "12 of what?" had no answer for an evening. Now: every frame the lock sends
+  that is not about the waiting command (`lock pushed <hex>`; byte 4 `02` is
+  the lock's state, byte 8 its value: `03` unlocked, `04` locking, `05`
+  locked), an answer to a command that is not waiting on this link,
+  August's reply to a cloud command (its status, its numbers, the names of
+  its other fields), and `no motion` on a Bluetooth answer that came in under
+  half a second (the lock was probably in that state already: 97–178 ms in
+  the phone's log for such answers, against 1.0–2.1 s for a real motion). The file keeps 600
+  lines. The frames are seen only while a link is up, and a widget tap's
+  link closes at its result.
+
+**A command for the state the lock is already in does not move the motor**
+(garage, one sample: the 158 ms answer above, no `locking`/`unlocking` frame).
+No front-door sample.
+
+**August's activity feed is the second witness** for "what did the lock do":
+`GET /houses/{id}/activities` with the cached token of `August/` lists every
+remote command with its time and source. Bluetooth commands from this app do
+not appear there; the official app's do.
+
+**On process.** I wrote Amit's "Heard the lock" into a commit message as "the
+motor ran about 12 times". He had not said motor; it was the speaker. A
+report goes into the record in the reporter's words.

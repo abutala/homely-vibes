@@ -66,6 +66,9 @@ nonisolated final class AugustBLEEngine {
         case disconnect
         case schedule(Timer, Double)
         case complete(Token, Outcome)
+        /// A line for the log: a frame from the lock that is not about the
+        /// waiting command.
+        case note(String)
     }
 
     private enum LinkState: Equatable {
@@ -334,21 +337,28 @@ nonisolated final class AugustBLEEngine {
 
     /// Every plain frame goes through the decryptor: the lock's chain moves
     /// per frame it sends, pushes included. A bad frame is dropped, as
-    /// yalexs does; the operation deadline is the backstop.
+    /// yalexs does; the operation deadline is the backstop. A frame that is
+    /// not about the waiting command (a status push, or with no command
+    /// waiting, any frame) is logged: nothing else records what the lock did.
     private func plainFrame(_ bytes: [UInt8], at now: Double) -> [Output] {
         guard let channel else { return [] }
         let opcode = queue.first?.opcode ?? 0
-        guard let reply = try? channel.receive(bytes, for: opcode), !queue.isEmpty, queue[0].written else { return [] }
+        guard let reply = try? channel.receive(bytes, for: opcode) else { return [] }
+        let waiting = !queue.isEmpty && queue[0].written
         switch reply {
-        case .ack:
+        case .other(let block):
+            return [.note("lock pushed " + block.map { String(format: "%02x", $0) }.joined())]
+        case .ack where waiting:
             queue[0].acknowledged = true
             return []
-        case .result(let code):
+        case .result(let code) where waiting:
             lastResultAt = now
             queue[0].timing.done = ms(now, since: queue[0].startedAt ?? now)
             return complete(code == 0 ? .ok(queue[0].timing) : .operationFailed(code), at: now)
-        case .other:
-            return []
+        case .ack:
+            return [.note("lock acknowledged a command that is not waiting here")]
+        case .result(let code):
+            return [.note(String(format: "lock answered a command that is not waiting here: result 0x%02x", code))]
         }
     }
 

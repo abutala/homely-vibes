@@ -100,8 +100,11 @@ the app's button: Bluetooth when the lock has a loaded key (~1–3 s), the
 cloud otherwise or when Bluetooth fails (the screen allows it 12–30 s; a
 widget tap, what is left of its 28 s). The sign-in line under
 the doors, when shown, is a link that opens the app. A whole tap has 28 s: iOS ends a background intent at about
-30 s, and a tap ended that way shows nothing. Bluetooth gets 6 s to set
-up, the cloud gets what is left. With both doors tapped, the first door's
+30 s, and a tap ended that way shows nothing. Bluetooth gets 12 s to set
+up and 6 s from there, as on the screen; the cloud is the fallback only and
+gets what is left (16 s after a setup miss). The two Lock Both taps that
+sent the front door a cloud lock each made that lock beep 12 times
+([Logbook](Logbook.md), 2026-11-09). With both doors tapped, the first door's
 result draws when the second door's tap ends, if its hold has not passed
 by then: WidgetKit redraws the widget only once no tap of its runs. A tap on a locked phone (the Today view
 before Face ID) does nothing at all, by iOS's rule for widget buttons.
@@ -112,7 +115,8 @@ sign-in; opening the app renews it.
 "Locking…", then "Locked" only when both doors report locked. Otherwise it
 reads "Failed" or "No reply", and the door that did not lock says the same, so
 you can see which one. "No reply" also shows when a door's unlock tap ended
-without a confirmed reply in the last 60 s, because August may still run that
+without a confirmed reply in the last 60 s, or never ended at all (its process
+died), because August may still run that
 unlock after the lock, and when a door was tapped to unlock during Lock Both,
 because it may be open again.
 A lock tapped while a door's unlock runs waits for it, so the lock lands last.
@@ -162,7 +166,7 @@ turned off for the app in Settings change nothing else.
   screen's command has 12 s to reach a session (a connect took 9.4 s
   while the Wi-Fi bridge held the lock; `CommandDeadline` keeps the sum
   inside the 30 s deadline) and 6 s from there for the result; a widget
-  tap has 6 s and 12 s. On any failure but a
+  tap has the same two budgets inside its 28 s. On any failure but a
   jam the lock reports — no lock in range, Bluetooth off or not allowed, a
   lost link, a rejected key, a timeout — the app uses the cloud instead
   (unlock and lock are idempotent, so a double send is harmless). A
@@ -246,7 +250,7 @@ The screen shows how long the last lock/unlock took ("Last unlock: 1.2 s"),
 after an icon for the path that carried it: a blue Bluetooth rune, or a grey
 cloud. Every timing line (each cloud request, each Bluetooth attempt with
 its stages, each widget tap) is also in the app's own file,
-`Library/Caches/app.log` (last 200 lines), which the phone keeps. A widget
+`Library/Caches/app.log` (last 600 lines), which the phone keeps. A widget
 tap writes `widget intent position=N` first, from the app's process; a tap
 on the widget's body writes `opened by the widget body`; a tap with
 neither line never reached the widget (a locked phone):
@@ -275,6 +279,11 @@ the remembered peripheral connected without a scan):
 - `BLE lock -> ok in 3179 ms (found -, connected 1293, session 1740, written 1998, done 3179)`
 - `BLE unlock failed in 3004 ms: Bluetooth setup timed out while searching for the lock; using the cloud`
 - `PUT /remoteoperate/<id>/unlock -> 200 in 4612 ms`
+- `cloud lock lock <last 4 of the lock ID> reply status=kAugLockState_Locked …`: August's reply to a cloud command: its status, its numbers, and the names of its other fields
+- `BLE link <lock's Bluetooth name>: lock pushed bb02003d020000000400000000000000 at 3094 ms`: a status frame the lock sent unasked. In yalexs-ble's layout byte 4 `02` is the lock's state and byte 8 is its value: `03` unlocked, `04` locking, `05` locked
+- `… (found -, connected 8970, session 9321, written 9582, done 9740; no motion: the lock was probably in that state already)`: the lock answered in under half a second, so another path probably moved it first
+
+The lock's frames are seen only while a Bluetooth link is up, and a widget tap's link closes at its result.
 
 ## Tests
 

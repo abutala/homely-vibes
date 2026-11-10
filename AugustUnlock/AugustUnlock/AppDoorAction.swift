@@ -10,13 +10,14 @@ import os
 /// lock and unlock are idempotent. The app's screen is not involved: a
 /// background launch creates no scene (Logbook 2026-11-02).
 enum AppDoorAction {
-    /// The widget's Bluetooth budgets: a background process gets slower
-    /// Bluetooth from iOS, so setup gets 6 s; the whole tap is bounded by
-    /// `DoorState.tapLimit` (iOS ends a background intent at about 30 s),
-    /// so a setup miss costs the cloud leg 6 s, a failure after the session
-    /// up to 18 s. (The screen waits longer: `CommandDeadline`.)
-    static let bluetoothSetupBudget: TimeInterval = 6
-    static let bluetoothOperationBudget: TimeInterval = 12
+    /// A widget tap has the screen's Bluetooth budgets (`CommandDeadline`):
+    /// 12 s to reach a session, 6 s from there. With 6 s to set up, four
+    /// widget connects in eleven missed and went to the cloud, which is slow
+    /// (8–25 s) and made the front lock beep 12 times on a lock (Logbook
+    /// 2026-11-09). The cloud is the fallback only (Amit, 2026-11-09). The
+    /// whole tap is bounded by `DoorState.tapLimit` (iOS ends a background
+    /// intent at about 30 s), so a setup miss leaves the cloud 16 s, a
+    /// failure after the session 10 s (`CommandDeadlineTests` pins both).
 
     /// Widget taps running in this process: the screen's 5-minute exit
     /// waits for them, as it does for its own commands.
@@ -32,7 +33,7 @@ enum AppDoorAction {
             let start = ContinuousClock.now
             do {
                 let reply = try await client.unlock(
-                    lockID: lockID, bluetoothSetupBudget: bluetoothSetupBudget, bluetoothOperationBudget: bluetoothOperationBudget,
+                    lockID: lockID, bluetoothSetupBudget: CommandDeadline.bluetoothSetup, bluetoothOperationBudget: CommandDeadline.bluetoothOperation,
                     deadline: deadline, keepLink: false, onStage: onStage)
                 AppLog.note("widget unlock position=\(position) ok via \(reply.path.rawValue) in \(start.duration(to: .now))")
                 return .ok
@@ -68,7 +69,7 @@ enum AppDoorAction {
         let start = ContinuousClock.now
         do {
             let reply = try await client.lock(
-                lockID: lockID, bluetoothSetupBudget: bluetoothSetupBudget, bluetoothOperationBudget: bluetoothOperationBudget,
+                lockID: lockID, bluetoothSetupBudget: CommandDeadline.bluetoothSetup, bluetoothOperationBudget: CommandDeadline.bluetoothOperation,
                 deadline: deadline, keepLink: false, onStage: onStage)
             AppLog.note("widget lock position=\(position) \(reply.state.label) via \(reply.path.rawValue) in \(start.duration(to: .now))")
             return reply.state.lockOutcome
@@ -122,6 +123,6 @@ enum AppDoorAction {
     private static let log = Logger(subsystem: "AugustUnlock", category: "widget")
 }
 
-/// `Library/Caches/app.log` in the app's container, last 200 lines: every
+/// `Library/Caches/app.log` in the app's container, last 600 lines: every
 /// timing line `os_log` keeps only in a buffer the phone soon overwrites.
-let AppLog = LineLog(file: "app.log", keep: 200, category: "timing")
+let AppLog = LineLog(file: "app.log", keep: 600, category: "timing")

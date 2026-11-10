@@ -124,12 +124,38 @@ final class AugustBLEEngineTests: XCTestCase {
         XCTAssertEqual(out, [.schedule(.operation(2), 12), .write(write, unlock1)], "the first command's wire was never sent, so this is the chain's first frame")
     }
 
+    /// The garage on 2026-11-10T04:58:07Z: the cloud had unlocked it, and
+    /// the Bluetooth unlock answered "ok" in 158 ms without moving anything.
+    func testAnAnswerTooFastToHaveMovedSaysSo() {
+        XCTAssertTrue(AugustBLETiming(written: 9582, done: 9740).movedNothing)
+        XCTAssertTrue(AugustBLETiming(written: 9582, done: 9740).description.hasSuffix("no motion: the lock was probably in that state already"))
+        XCTAssertFalse(AugustBLETiming(written: 6742, done: 8798).movedNothing, "a real lock motion")
+        XCTAssertFalse(AugustBLETiming(written: 2996, done: 4145).movedNothing)
+        XCTAssertFalse(AugustBLETiming().movedNothing)
+    }
+
+    /// An answer about the next command's opcode before that command is
+    /// written (another channel's command, or a cancelled one's late
+    /// answer) is logged and changes nothing: the command still waits.
+    func testAnAnswerBeforeTheWriteIsLoggedNotTaken() {
+        openLink()
+        writeFirstCommand()
+        _ = send(.frame(read, ack1), after: 0.05)
+        _ = send(.frame(read, op1), after: 0.05)
+        // The vectors' chain has the push between the two commands.
+        _ = send(.frame(read, push), after: 0.05)
+        let queued = send(command(2, AugustBLE.lockOpcode), after: 0.1)
+        XCTAssertFalse(queued.contains { if case .write = $0 { return true } else { return false } }, "inside the gap after a result: not written yet")
+        XCTAssertEqual(send(.frame(read, ack2), after: 0.05), [.note("lock acknowledged a command that is not waiting here")])
+        XCTAssertEqual(send(.frame(read, op2), after: 0.05), [.note("lock answered a command that is not waiting here: result 0x00")])
+    }
+
     func testAPushBetweenCommandsKeepsTheChainInStep() {
         openLink()
         writeFirstCommand()
         _ = send(.frame(read, ack1), after: 0.05)
         _ = send(.frame(read, op1), after: 0.05)
-        XCTAssertEqual(send(.frame(read, push), after: 1), [], "a status push is decrypted and ignored")
+        XCTAssertEqual(send(.frame(read, push), after: 1), [.note("lock pushed bb2f0016000000000000000000000000")], "a status push is decrypted and logged, nothing more")
         let out = send(command(2, AugustBLE.lockOpcode), after: 0.5)
         XCTAssertEqual(out, [.schedule(.operation(2), 12), .write(write, lock2)])
         _ = send(.frame(read, ack2), after: 0.05)

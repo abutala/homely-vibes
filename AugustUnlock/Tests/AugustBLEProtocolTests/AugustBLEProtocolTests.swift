@@ -94,7 +94,9 @@ final class AugustBLEProtocolTests: XCTestCase {
 
     func testPlainChannelReportsOtherOpcodeAsOther() throws {
         let channel = AugustBLEPlainChannel(sessionKey: sessionKey)
-        XCTAssertEqual(try channel.receive(bytes("5801cbb04dfe6ed1bcf20e1fb278b2040200"), for: AugustBLE.lockOpcode), .other)
+        guard case .other(let head) = try channel.receive(bytes("5801cbb04dfe6ed1bcf20e1fb278b2040200"), for: AugustBLE.lockOpcode) else { return XCTFail() }
+        XCTAssertEqual(head.count, AugustBLE.pushHeadLength)
+        XCTAssertEqual(head[1], AugustBLE.unlockOpcode, "the frame's own opcode, not the pending one")
     }
 
     func testPlainChannelRefusesShortFrameWithoutPoisoningTheChain() throws {
