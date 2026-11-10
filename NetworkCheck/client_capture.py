@@ -52,6 +52,7 @@ MIN_SECS, MAX_SECS = 30, 1800
 SPOOF_INTERVAL = 0.1
 FIX_REPEATS = 5
 ETH_P_IP = 0x0800
+FRESH_CAP = 10_000
 Fresh = set[tuple[bytes, int, int]]
 
 
@@ -103,7 +104,8 @@ def reset_reply(
 
     A SYN marks its connection fresh, and a fresh connection is never reset, so the
     reconnect goes through. An RST is never answered. The seq is the client's own ack
-    number, the one value a stack must accept (RFC 5961)."""
+    number, the one value a stack must accept (RFC 5961). Past FRESH_CAP connections a
+    SYN no longer counts, so a device that floods SYNs cannot use up memory."""
     found = _routed_tcp(frame, client_mac, own_mac, own_ip)
     if found is None:
         return None
@@ -111,7 +113,8 @@ def reset_reply(
     sport, dport, seq, ack = struct.unpack("!HHII", tcp[:12])
     flags, key = tcp[13], (ip[16:20], sport, dport)
     if flags & FLAG_SYN:
-        fresh.add(key)
+        if len(fresh) < FRESH_CAP:
+            fresh.add(key)
         return None
     if flags & FLAG_RST or key in fresh:
         return None
@@ -139,7 +142,7 @@ def _routed_tcp(
     if ip[0] >> 4 != 4 or ihl < 20 or ip[9] != TCP or fragment or ip[16:20] == own_ip:
         return None
     tcp = ip[ihl : struct.unpack("!H", ip[2:4])[0]]
-    if len(tcp) < 20 or len(tcp) < (tcp[12] >> 4) * 4:
+    if len(tcp) < 20 or not 20 <= (tcp[12] >> 4) * 4 <= len(tcp):
         return None
     return ip[:ihl], tcp
 
@@ -260,7 +263,8 @@ def _redirect(
     say: Callable[[str], None],
 ) -> None:
     """Repeat the redirect until `secs` pass. With `answer`, read the client's frames between
-    repeats and send the reset it returns for each."""
+    repeats and send the reset it returns for each. Each connection is reported once."""
+    told: set[bytes] = set()
     end = host.now() + secs
     while host.now() < end:
         host.send(iface, spoof)
@@ -269,8 +273,12 @@ def _redirect(
             continue
         for frame in host.listen(iface, SPOOF_INTERVAL):
             reply = answer(frame)
-            if reply is not None:
-                host.send(iface, reply)
+            if reply is None:
+                continue
+            host.send(iface, reply)
+            connection = reply[26:30] + reply[34:38]
+            if connection not in told:
+                told.add(connection)
                 port = struct.unpack("!H", reply[34:36])[0]
                 say(f"reset {socket.inet_ntoa(reply[26:30])}:{port}")
 

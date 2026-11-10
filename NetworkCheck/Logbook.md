@@ -424,8 +424,8 @@ port, sent no Tuya broadcast and announced no mDNS name. Only its traffic could 
   account ID names no vendor alone; compare it with a known device's capture.
 - **A device that stays connected names nothing.** That board reconnected every 12 s, so the
   first run caught its endpoint. A healthy device keeps one connection for hours. A power cycle
-  is the slow fix, and with a redirect every 2 s the device can ask DNS through the real gateway
-  before the redirect lands (an estimate, not measured). So the redirect now repeats every 0.1 s,
+  is the slow fix, and with a redirect only every 2 s, a rebooted device can ask DNS through the
+  real gateway before the first redirect lands (an estimate, not measured). So the redirect now repeats every 0.1 s,
   and `--reset` ends the old connections with a TCP reset instead. The reset's sequence number is
   the client's own last ack, the one value RFC 5961 makes a stack accept. Not yet tried on a
   device.

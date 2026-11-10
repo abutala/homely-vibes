@@ -8,6 +8,7 @@ import pytest
 
 from NetworkCheck.client_capture import (
     FIX_REPEATS,
+    FRESH_CAP,
     SPOOF_INTERVAL,
     Refused,
     arp_lookup,
@@ -216,11 +217,31 @@ class TestReset:
         assert struct.unpack("!II", tcp[4:12]) == (0, acked)
         assert tcp[13] == RST | ACK
 
-    def test_a_syn_keeps_its_connection_open(self) -> None:
+    def test_a_syn_keeps_only_its_own_connection_open(self) -> None:
         fresh: set[tuple[bytes, int, int]] = set()
         assert answer(tcp_frame(flags=SYN, payload=b""), fresh) is None
         assert answer(tcp_frame(), fresh) is None
         assert answer(tcp_frame(sport=40001), fresh) is not None
+        assert answer(tcp_frame(dst_ip="198.51.100.8"), fresh) is not None
+
+    def test_a_syn_flood_does_not_grow_memory_past_the_cap(self) -> None:
+        fresh = {(b"\x00" * 4, n, 0) for n in range(FRESH_CAP)}
+        assert answer(tcp_frame(flags=SYN, payload=b""), fresh) is None
+        assert len(fresh) == FRESH_CAP
+        assert answer(tcp_frame(), fresh) is not None
+
+    def test_the_hosts_own_reset_is_never_answered(self) -> None:
+        """AF_PACKET also sees what this host sends: no reset loop."""
+        reply = answer(tcp_frame())
+        assert reply is not None
+        assert answer(reply) is None
+
+    def test_ip_options_and_ethernet_padding_are_read(self) -> None:
+        plain = tcp_frame()
+        ip = bytes([0x46]) + plain[15:16] + struct.pack("!H", 24 + 30) + plain[18:34]
+        with_options = plain[:14] + ip + b"\x01\x01\x01\x01" + plain[34:]
+        assert answer(with_options) == answer(plain)
+        assert answer(plain + b"\x00" * 8) == answer(plain)
 
     @pytest.mark.parametrize(
         "frame",
@@ -233,6 +254,8 @@ class TestReset:
             tcp_frame(frag=0x2000),
             tcp_frame(frag=5),
             tcp_frame()[:40],
+            tcp_frame()[:46] + bytes([0x40]) + tcp_frame()[47:],
+            tcp_frame()[:46] + bytes([0xF0]) + tcp_frame()[47:],
             arp_reply(CLIENT_MAC, CLIENT, HOST_MAC, GATEWAY),
         ],
         ids=[
@@ -244,6 +267,8 @@ class TestReset:
             "first fragment",
             "later fragment",
             "cut short",
+            "TCP header under 20 bytes",
+            "TCP header past the segment",
             "ARP",
         ],
     )

@@ -383,12 +383,14 @@ nothing, unless the host's ARP table shows that IP at that MAC.
 A device names its server only when it connects, and a device that is already connected may
 not connect again for hours. Power-cycle it after the capture starts, or pass `--reset`: the
 host then answers each packet of a connection the device opened before the capture with a TCP
-reset, as if from the server, and prints a `reset` line for each. A connection that starts during
-the capture is never reset, and neither is one to the host itself, such as your SSH session.
+reset, as if from the server, and prints one `reset` line per connection. A connection that starts
+during the capture is never reset, and neither is one to the host's LAN address, such as your SSH
+session. The redirect repeats every 0.1 s, with or without `--reset`.
+`--reset` is not yet tried on a device.
 
 The host forwards the device's traffic, so the device stays connected, but that traffic passes
-through the host for that time. The capture holds only that device's packets; it belongs to the
-`tcpdump` user, so delete it with `sudo rm` when done.
+through the host for that time. The capture holds only that device's packets. On Debian,
+tcpdump writes it as the `tcpdump` user, so delete it with `sudo rm` when done.
 
 ### Alert priorities
 
