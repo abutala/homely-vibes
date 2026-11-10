@@ -4,6 +4,14 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ---
 
+## A phone on the Deco list drops off for an hour or two — give the node its own threshold (2026-11-10)
+
+A phone watched as a `deco` node left the Deco client list for two or three hourly polls many
+times (it sleeps, or it leaves the house), and each time sent an emergency page. Real outages of
+the same phone lasted five polls or more. `down_polls_for_alert` on the node sets how many
+failed polls in a row count as down; unset, the monitor's default of two applies. Do not raise
+the default: every other node would page later too.
+
 ## Isolated IoT devices — one Deco read per poll, and "unknown" is not "down" (2026-11-09)
 
 The Deco app can isolate a device: it keeps its internet path and loses the LAN. An isolated

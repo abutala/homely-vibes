@@ -94,6 +94,12 @@ class NodeConfig:
     host: str | None = None
     # Deco-probed nodes are found by this MAC on the Deco client list
     mac: str | None = None
+    # Failed polls in a row before the heartbeat alerts; unset uses the monitor's default
+    down_polls_for_alert: int | None = None
+
+    def __post_init__(self) -> None:
+        if self.down_polls_for_alert is not None and self.down_polls_for_alert < 1:
+            raise ValueError(f"down_polls_for_alert must be 1 or more: {self.down_polls_for_alert}")
 
 
 @dataclass
