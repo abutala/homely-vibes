@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 ETH_IPV4 = b"\x08\x00"
 TCP, UDP = 6, 17
-FLAG_FIN, FLAG_SYN, FLAG_RST = 0x01, 0x02, 0x04
+FLAG_FIN, FLAG_SYN, FLAG_RST, FLAG_ACK = 0x01, 0x02, 0x04, 0x10
 PCAP_LE = (b"\xd4\xc3\xb2\xa1", b"\x4d\x3c\xb2\xa1")
 PCAP_BE = (b"\xa1\xb2\xc3\xd4", b"\xa1\xb2\x3c\x4d")
 NANOSECOND_MAGIC = (b"\x4d\x3c\xb2\xa1", b"\xa1\xb2\x3c\x4d")
