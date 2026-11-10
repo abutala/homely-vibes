@@ -38,6 +38,12 @@ final class DoorController: Identifiable {
 
     var commandInFlight: Bool { machine.isOperating || machine.isLate }
 
+    /// The orange line under the door: a request this screen dropped, or a
+    /// widget tap's cloud command still on its way to this lock (`OpenTails`).
+    func warning(at now: Date) -> String? {
+        machine.warning(at: now) ?? (OpenTails.shared.mayStillMove(lock.id, at: now) ? CommandMachine.mayStillMoveWarning : nil)
+    }
+
     /// The button: the machine decides (the first tap unlocks; then lock,
     /// unlock, the opposite of a command in flight, or nothing for a double
     /// tap).
@@ -246,9 +252,11 @@ final class DoorsModel {
         if exitPolicy.shouldExit(at: Date(), operationInFlight: commandInFlight) { exit(0) }
     }
 
-    /// A door's command, or a widget tap running in this process: the exit
-    /// waits for either (a tap killed by the exit would leave its door marked
-    /// running with no result). After a tap defers it, the next return to the
-    /// foreground exits.
-    private var commandInFlight: Bool { doors.contains(where: \.commandInFlight) || AppDoorAction.inFlight > 0 }
+    /// A door's command, a widget tap running in this process, or a tap's
+    /// cloud command still out: the exit waits for each (a tap killed by the
+    /// exit would leave its door marked running with no result). After a tap
+    /// defers it, the next return to the foreground exits.
+    private var commandInFlight: Bool {
+        doors.contains(where: \.commandInFlight) || AppDoorAction.inFlight > 0 || OpenTails.shared.running > 0
+    }
 }

@@ -68,7 +68,7 @@ struct CommandMachine: Equatable {
     /// A cloud request the phone dropped may still run at August; a bridged
     /// lock can take ~60 s. Shown that long after the drop.
     static let mayStillMoveWarning = "An earlier request may still move the door"
-    static let mayStillMoveWindow: TimeInterval = 60
+    nonisolated static let mayStillMoveWindow: TimeInterval = 60
 
     private(set) var op: Op = .idle
     /// What August last reported, never what was requested.

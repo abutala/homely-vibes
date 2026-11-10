@@ -1,10 +1,10 @@
 import Foundation
 
-/// Where a widget tap is, for its Live Activity (`DoorLiveActivity`). The
-/// client reports `bluetooth` or `cloud` when it takes that path, after the
-/// command gate and the key check, so a door that waits for the other
-/// door's command still reads `unlocking` or `locking`. The tap ends on the
-/// stage of its outcome.
+/// Where a command is. A widget tap's Live Activity (`DoorLiveActivity`)
+/// shows `unlocking` or `locking`, then the stage of its outcome: both paths
+/// run at once, so there is none to name. The screen's command also reports
+/// `bluetooth` or `cloud` when it takes that path, after the command gate
+/// and the key check, for the line under "Unlocking…" (`pathNote`).
 nonisolated enum DoorStage: String, Codable, Hashable, Sendable, CaseIterable {
     case unlocking, bluetooth, cloud, unlocked, failed, noReply, locking, locked
 

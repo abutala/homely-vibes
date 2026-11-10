@@ -198,6 +198,70 @@ final class DoorStateTests: XCTestCase {
         XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: t0 + 1, at: t0 + 1), .ok, "a held lock moves the door the same way")
     }
 
+    /// Bluetooth unlocked the door and the cloud copy of the unlock is still
+    /// on its way (both paths start together, 2026-11-09): it can land after
+    /// the lock, so the center must not say "Locked" over it.
+    func testAnUnlockStillOnItsWayStopsLocked() {
+        var state = DoorState()
+        _ = state.start(0, at: t0)
+        state.finish(0, startedAt: t0, outcome: .ok, at: t0 + 2)
+        state.tailOpened(0, at: t0 + 2)
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: t0 + 5, at: t0 + 8), .noReply)
+        XCTAssertEqual(state.marks(count: 2, at: t0 + 8), [.noReply, .none])
+        let after = t0 + 2 + DoorState.unansweredWindow
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: after, at: after), .ok, "the window is over")
+    }
+
+    func testAugustsReplyLetsLockedShow() {
+        var state = DoorState()
+        state.tailOpened(0, at: t0)
+        state.tailConfirmed(0, openedAt: t0)
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: t0 + 5, at: t0 + 8), .ok)
+    }
+
+    /// A process that died with the cloud copy out never reports it. The
+    /// next tap's reply must not clear the older one's window.
+    func testAReplyDoesNotClearAnOlderUnlockStillOnItsWay() {
+        var state = DoorState()
+        state.tailOpened(0, at: t0)
+        state.tailOpened(0, at: t0 + 10)
+        state.tailConfirmed(0, openedAt: t0 + 10)
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: t0 + 20, at: t0 + 20), .noReply)
+        let after = t0 + DoorState.unansweredWindow
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: after, at: after), .ok, "the older one's window is over")
+    }
+
+    func testAnOlderTapsReplyDoesNotClearANewerOne() {
+        var state = DoorState()
+        state.tailOpened(0, at: t0)
+        state.tailOpened(0, at: t0 + 10)
+        state.tailConfirmed(0, openedAt: t0)
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: t0 + 20, at: t0 + 20), .noReply)
+    }
+
+    /// The cloud unlock goes out when the tap starts. A process that dies
+    /// before any answer writes no result: the tap's own start is the only
+    /// trace, and that unlock can still land (`pathsNoRunning` in the model).
+    func testAnUnlockTapThatNeverEndedStopsLocked() {
+        var state = DoorState()
+        _ = state.start(0, at: t0)
+        let later = t0 + DoorState.runningLimit + 5
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: later, at: later), .noReply)
+        let after = t0 + DoorState.unansweredWindow
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: after, at: after), .ok, "the window is over")
+    }
+
+    func testADeadTapsUnlockOutlivesTheNextTap() {
+        var state = DoorState()
+        _ = state.start(0, at: t0)
+        let next = t0 + DoorState.runningLimit + 1
+        XCTAssertTrue(state.start(0, at: next))
+        state.finish(0, startedAt: next, outcome: .ok, at: next + 2)
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: next + 4, at: next + 4), .noReply, "the dead tap's unlock may still land")
+        let after = t0 + DoorState.unansweredWindow
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: after, at: after), .ok)
+    }
+
     func testTheWindowMatchesTheScreens() {
         XCTAssertEqual(DoorState.unansweredWindow, CommandMachine.mayStillMoveWindow)
     }
@@ -212,6 +276,7 @@ final class DoorStateTests: XCTestCase {
         var state = DoorState()
         _ = state.start(0, at: t0)
         state.finish(1, startedAt: t0, outcome: .failed, at: t0)
+        state.tailOpened(0, at: t0 + 1)
         let data = try JSONEncoder().encode(state)
         XCTAssertEqual(try JSONDecoder().decode(DoorState.self, from: data), state)
     }

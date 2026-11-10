@@ -1,11 +1,11 @@
 import Foundation
 
-struct DoorTimeout: LocalizedError {
+nonisolated struct DoorTimeout: LocalizedError {
     var errorDescription: String? { "Timed out" }
 }
 
 /// Seconds left until `deadline`, never below zero.
-func secondsLeft(until deadline: ContinuousClock.Instant) -> TimeInterval {
+nonisolated func secondsLeft(until deadline: ContinuousClock.Instant) -> TimeInterval {
     let left = ContinuousClock.now.duration(to: deadline)
     return max(0, Double(left.components.seconds) + Double(left.components.attoseconds) / 1e18)
 }
@@ -14,7 +14,7 @@ func secondsLeft(until deadline: ContinuousClock.Instant) -> TimeInterval {
 /// process's time budget. The slow side is cancelled; `URLSession` and the
 /// Bluetooth operation honour that, though a request August already holds
 /// still runs.
-func withDeadline<T: Sendable>(
+nonisolated func withDeadline<T: Sendable>(
     seconds: TimeInterval, _ operation: @escaping @Sendable () async throws -> T
 ) async throws -> T {
     try await withThrowingTaskGroup(of: T.self) { group in

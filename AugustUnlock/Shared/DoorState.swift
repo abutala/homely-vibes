@@ -25,6 +25,11 @@ struct DoorState: Codable, Equatable {
     var unanswered: [String: Date] = [:]
     /// When each door's last unlock tap started.
     var unlockStarted: [String: Date] = [:]
+    /// When Bluetooth unlocked a door while the cloud copy of the unlock was
+    /// still on its way (both go out together, 2026-11-09). Written before
+    /// the tap returns and removed only by August's reply, so a process that
+    /// dies in between leaves it.
+    var tails: [String: Date] = [:]
 
     /// The widget's center button, after the two doors.
     static let lockBothPosition = 2
@@ -51,9 +56,13 @@ struct DoorState: Codable, Equatable {
     }
 
     /// Starts the tap unless one is already running on that door: a repeat
-    /// tap would only queue a duplicate command.
+    /// tap would only queue a duplicate command. An older unlock tap still
+    /// marked running never ended (its process died with the cloud unlock
+    /// out): it keeps its own window as an unanswered unlock.
     mutating func start(_ position: Int, at now: Date) -> Bool {
-        if let started = running[String(position)], now < started + Self.runningLimit { return false }
+        let key = String(position)
+        if let started = running[key], now < started + Self.runningLimit { return false }
+        if let dead = running[key], position != Self.lockBothPosition { unanswered[key] = max(dead, unanswered[key] ?? dead) }
         running[String(position)] = now
         results[String(position)] = nil
         if position != Self.lockBothPosition { unlockStarted[String(position)] = now }
@@ -70,6 +79,28 @@ struct DoorState: Codable, Equatable {
         if outcome != .ok, position != Self.lockBothPosition { unanswered[String(position)] = now }
     }
 
+    /// Bluetooth unlocked the door; August still holds the same unlock. An
+    /// older one still here was never answered (its process died): it keeps
+    /// its own window as an unanswered unlock.
+    mutating func tailOpened(_ position: Int, at now: Date) {
+        let key = String(position)
+        if let old = tails[key] { unanswered[key] = max(old, unanswered[key] ?? old) }
+        tails[key] = now
+    }
+
+    /// August answered the unlock that `tailOpened` recorded at `openedAt`.
+    mutating func tailConfirmed(_ position: Int, openedAt: Date) {
+        if tails[String(position)] == openedAt { tails[String(position)] = nil }
+    }
+
+    /// An unlock for this door may still reach the lock: one that ended
+    /// without a confirmed reply, one August has not answered after a
+    /// Bluetooth win, or a tap with no end at all (the cloud unlock goes out
+    /// when the tap starts, and a process that dies writes nothing).
+    private func unlockMayStillLand(_ key: String, at now: Date) -> Bool {
+        [unanswered[key], tails[key], running[key]].contains { sent in sent.map { now < $0 + Self.unansweredWindow } ?? false }
+    }
+
     /// Lock Both's replies, one per door by position, written together when
     /// the tap ends so a fast door's mark is still held when the widget draws
     /// (it redraws only after the tap). A locked door drops any old mark; a
@@ -80,7 +111,7 @@ struct DoorState: Codable, Equatable {
     mutating func recordLocks(_ outcomes: [Outcome], startedAt: Date, at now: Date) -> Outcome {
         let settled = outcomes.enumerated().map { position, outcome -> Outcome in
             let key = String(position)
-            let held = unanswered[key].map { now < $0 + Self.unansweredWindow } ?? false
+            let held = unlockMayStillLand(key, at: now)
             let tapped = unlockStarted[key].map { $0 >= startedAt } ?? false
             let settled: Outcome = outcome == .ok && (held || tapped) ? .noReply : outcome
             if running[key] == nil, !tapped { results[key] = settled == .ok ? nil : Result(outcome: settled, at: now) }

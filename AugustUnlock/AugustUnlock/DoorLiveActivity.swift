@@ -3,24 +3,15 @@ import Foundation
 
 /// One widget tap's Live Activity on the Dynamic Island and the Lock Screen,
 /// run from the app's process in the background (a `LiveActivityIntent` may
-/// start one there; measured on the phone, Logbook 2026-11-07). Stages go
-/// through one stream to one task, so updates land in order and none lands
-/// after the end. Nothing here can fail the unlock: a refused start is
-/// logged and the tap runs without an activity.
+/// start one there; measured on the phone, Logbook 2026-11-07). It shows
+/// the tap's first stage, then its result: a tap runs both paths at once, so
+/// there is no stage between. Nothing here can fail the unlock: a refused
+/// start is logged and the tap runs without an activity.
 final class DoorLiveActivity: Sendable {
     private let activity: Activity<DoorUnlockAttributes>
-    private let stages: AsyncStream<DoorStage>.Continuation
-    private let updates: Task<Void, Never>
 
     private init(activity: Activity<DoorUnlockAttributes>) {
         self.activity = activity
-        let (stream, stages) = AsyncStream.makeStream(of: DoorStage.self)
-        self.stages = stages
-        updates = Task {
-            for await stage in stream {
-                await activity.update(Self.content(stage, seconds: nil, for: activity.attributes))
-            }
-        }
     }
 
     /// Ends any activity an earlier tap left (a process that died mid-tap, or
@@ -53,13 +44,9 @@ final class DoorLiveActivity: Sendable {
         }
     }
 
-    nonisolated func show(_ stage: DoorStage) { stages.yield(stage) }
-
     /// The tap's result. The Island drops an ended activity; the Lock Screen
     /// keeps it for `DoorState.hold`, as the widget keeps its result.
     func end(_ stage: DoorStage, seconds: Double) async {
-        stages.finish()
-        await updates.value
         await activity.end(
             Self.content(stage, seconds: seconds, for: activity.attributes),
             dismissalPolicy: .after(Date().addingTimeInterval(DoorState.hold)))

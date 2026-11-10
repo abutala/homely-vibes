@@ -21,7 +21,7 @@ final class WidgetTapTests: XCTestCase {
     /// Starts with the app quit, the common case on the phone (5 minutes in
     /// the background), so a tap launches it in the background.
     private func addWidgetWithTheAppQuit(_ env: [String: String]) throws {
-        app.launchEnvironment = ["AUGUST_FAKE": "1", "AUGUST_FAKE_ONE_LOCK_FAILS": "0"].merging(env) { $1 }
+        app.launchEnvironment = ["AUGUST_FAKE": "1", "AUGUST_FAKE_ONE_LOCK_FAILS": "0", "AUGUST_FAKE_TAIL_OPEN": "0"].merging(env) { $1 }
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         XCUIDevice.shared.press(.home)
@@ -95,6 +95,20 @@ final class WidgetTapTests: XCTestCase {
         let both = expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: springboard.switches.containing(.staticText, identifier: "Failed"))
         wait(for: [both], timeout: 15)
         XCTAssertTrue(springboard.switches["Lock Both"].staticTexts["Failed"].exists, springboard.debugDescription)
+    }
+
+    /// Bluetooth unlocked a door and August never answered its copy of the
+    /// unlock (both go out together): that unlock can still land, so Lock
+    /// Both must not read "Locked" (`lockedIsTrue` in
+    /// `formal/widget_paths.qnt`).
+    func testLockBothIsNotLockedOverAnUnlockStillOnItsWay() throws {
+        try addWidgetWithTheAppQuit(["AUGUST_SLOW_WIDGET_TAP": "0", "AUGUST_FAKE_TAIL_OPEN": "1"])
+        springboard.switches["Door 1"].tap()
+        XCTAssertTrue(springboard.staticTexts["Unlocked"].waitForExistence(timeout: 15), springboard.debugDescription)
+        let center = springboard.switches["Lock Both"]
+        center.tap()
+        XCTAssertTrue(center.staticTexts["No reply"].waitForExistence(timeout: 15), springboard.debugDescription)
+        XCTAssertFalse(center.staticTexts["Locked"].exists, "an unlock may still land")
     }
 
     /// Long-press the Home Screen → Edit → Add Widget → search → add.

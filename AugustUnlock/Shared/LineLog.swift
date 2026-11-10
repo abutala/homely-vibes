@@ -7,7 +7,7 @@ import os
 /// come from several tasks at once; each read-append-write is one step.
 /// The same line goes to the system log at `.notice`, which persists where
 /// `.info` does not (Logbook 2026-10-18).
-final class LineLog: Sendable {
+nonisolated final class LineLog: Sendable {
     private let url: URL
     private let keep: Int
     private let logger: Logger

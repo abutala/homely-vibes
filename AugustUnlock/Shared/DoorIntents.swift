@@ -14,9 +14,9 @@ import WidgetKit
 /// The intent type goes in the widget extension target AND the app target
 /// (Apple). `supportedModes` with
 /// `.foreground(.dynamic)` makes the system run it in the app's process, in
-/// the background (measured, Logbook 2026-11-02): the app's Bluetooth-first
-/// client serves the tap, and the app never comes forward because nothing
-/// here asks to continue in the foreground. The name shares no word with
+/// the background (measured, Logbook 2026-11-02): the app's client serves
+/// the tap, over Bluetooth and the cloud together, and the app never comes
+/// forward because nothing here asks to continue in the foreground. The name shares no word with
 /// either module name: the metadata tool compresses repeated words into a
 /// mangled form the runtime could not resolve (Logbook, 2026-11-01).
 struct OpenDoorIntent: LiveActivityIntent {
