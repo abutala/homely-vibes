@@ -67,9 +67,9 @@ temperature. Prompts for a sudo password only if the remote requires one
 - **`SomfyMyLinkNode`**: Ping, then a JSON-RPC `mylink.status.info` round-trip on TCP 44100 (`port` overrides it) when `auth_token` is set
 - **`ArpNode`**: Presence via ARP cache — for WiFi devices that drop ICMP under power-save (e.g. iPhones)
 - **`SshNode`**: Reads the sshd banner from `host:port` (default `ip:22`) — for a host with no LAN path, reached through the router's WAN port forward. No ping first. Needs no SSH key
-- **`DecoNode`**: Presence by `mac` on the Deco client list, on the main, guest or IoT network — for a host ping cannot reach. No ping first. Logs in with the `network_check.uplink_watchdog` Deco credentials, under the same lock as the NetworkCheck scripts. An iPhone needs its Private Wi-Fi Address set to Fixed
+- **`DecoNode`**: Presence by `mac` on the Deco client list, on the main, guest or IoT network — for a host ping cannot reach. No ping first. Logs in with the `network_check.uplink_watchdog` Deco credentials, under the same lock as the NetworkCheck scripts. All deco nodes share one login per poll. An iPhone needs its Private Wi-Fi Address set to Fixed
 
-Use `deco` only for a node that does not answer ping; a node that does keeps a ping-based type.
+Use `deco` only for a node that does not answer ping, such as a device isolated in the Deco app; a node that does keeps a ping-based type. If the Deco client list cannot be read, a deco node is unknown for that poll, not down; the third unknown poll in a row counts as a failed probe.
 
 TCP-probed nodes (`SomfyMyLinkNode`, `SshNode`) open their connection through `GenericNode._open_tcp`: it connects to `host` when set, else `ip`, on `port` when set, else the class default, with one 4 s timeout. A new TCP probe type is one subclass that calls it and judges the reply, plus a `NodeType` value and an entry in `_NODE_CLASS_BY_TYPE`.
 

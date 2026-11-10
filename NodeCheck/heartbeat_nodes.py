@@ -8,9 +8,11 @@ from lib.logger import SystemLogger
 from lib.MyPushover import Pushover
 from NodeCheck.nodes import (
     ArpNode,
+    CycleCachedRead,
     DecoNode,
     FoscamNode,
     GenericNode,
+    ProbeUnavailable,
     SomfyMyLinkNode,
     SshNode,
     WindowsNode,
@@ -32,6 +34,10 @@ _NODE_CLASS_BY_TYPE: dict[NodeType, type[GenericNode]] = {
 # before a real outage triggers a page.
 _MIN_CONSECUTIVE_DOWN_FOR_ALERT = 2
 
+# A probe that could not run (ProbeUnavailable) is not a failure. From this many in a row it
+# counts as one, so a probe that stays blind pages in the end.
+_MAX_CONSECUTIVE_UNKNOWN = 3
+
 logger = SystemLogger.get_logger(__name__)
 
 
@@ -41,11 +47,13 @@ class HeartbeatMonitor:
         self.specific_nodes = {node.lower() for node in specific_nodes} if specific_nodes else None
         self.pushover = Pushover(cfg.pushover.user, cfg.pushover.tokens["NodeCheck"])
 
+        self.deco_clients = CycleCachedRead()
         self.monitored_nodes = self._create_nodes_list()
 
         self.last_down_nodes: Set[str] = set()
         self.last_notification_time: float | None = None
         self.consecutive_down: Dict[str, int] = {}
+        self.consecutive_unknown: Dict[str, int] = {}
 
     def _create_nodes_list(self) -> List[GenericNode]:
         """Create nodes for all node types and filter based on specific_nodes parameter"""
@@ -54,7 +62,10 @@ class HeartbeatMonitor:
 
         for name, config in cfg.node_check.node_configs.items():
             node_cls = _NODE_CLASS_BY_TYPE.get(config.node_type, GenericNode)
-            nodes.append(node_cls(name, config))
+            if node_cls is DecoNode:
+                nodes.append(DecoNode(name, config, list_clients=self.deco_clients))
+            else:
+                nodes.append(node_cls(name, config))
 
         if self.specific_nodes:
             available_node_names = {node.name.lower() for node in nodes}
@@ -84,13 +95,26 @@ class HeartbeatMonitor:
         A node must fail `_MIN_CONSECUTIVE_DOWN_FOR_ALERT` consecutive probes
         before appearing in the returned set. A single successful probe resets
         the streak. This applies uniformly to every NodeType.
+
+        A probe that could not run neither adds to the streak nor resets it, until it has
+        failed to run `_MAX_CONSECUTIVE_UNKNOWN` times in a row.
         """
         confirmed_down: Set[str] = set()
+        self.deco_clients.reset()
 
         for node in self.monitored_nodes:
             logger.debug(f"Checking {node.name} ({node.config.ip})...")
             try:
                 healthy = node.heartbeat()
+                self.consecutive_unknown[node.name] = 0
+            except ProbeUnavailable as e:
+                unknown = self.consecutive_unknown.get(node.name, 0) + 1
+                self.consecutive_unknown[node.name] = unknown
+                if unknown < _MAX_CONSECUTIVE_UNKNOWN:
+                    logger.warning(f"Node {node.name} state unknown ({unknown=}): {e}")
+                    continue
+                logger.error(f"Node {node.name} unknown for {unknown} polls, counting as down: {e}")
+                healthy = False
             except Exception as e:
                 logger.error(f"Error checking node {node.name}: {e}")
                 healthy = False

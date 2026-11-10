@@ -292,6 +292,34 @@ def read_deco_clients() -> list[dict[str, Any]]:
         return DecoClient(wd.deco_host, wd.deco_username, wd.deco_password).list_clients()
 
 
+_DECO_READ_ERRORS = (DecoAPIError, DecoAuthError, OSError)
+
+
+class ProbeUnavailable(Exception):
+    """The probe could not run, so the node's state is unknown. Not evidence that it is down."""
+
+
+class CycleCachedRead:
+    """One Deco read per heartbeat cycle, shared by every deco node. A failed read is kept too."""
+
+    def __init__(self, read: Callable[[], list[dict[str, Any]]] = read_deco_clients):
+        self._read = read
+        self._outcome: list[dict[str, Any]] | Exception | None = None
+
+    def reset(self) -> None:
+        self._outcome = None
+
+    def __call__(self) -> list[dict[str, Any]]:
+        if self._outcome is None:
+            try:
+                self._outcome = self._read()
+            except _DECO_READ_ERRORS as e:
+                self._outcome = e
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        return self._outcome
+
+
 def _normalize_mac(mac: str) -> str:
     return mac.upper().replace(":", "-")
 
@@ -313,13 +341,16 @@ class DecoNode(GenericNode):
         self._list_clients = list_clients
 
     def heartbeat(self) -> bool:
-        """No ping first: the Deco sees the client where the prod host cannot."""
+        """No ping first: the Deco sees the client where the prod host cannot.
+
+        Raises ProbeUnavailable when the list cannot be read: that says nothing about this node.
+        """
         if not self.config.mac:
             return self._probe_failed("deco node has no mac configured")
         try:
             clients = self._list_clients()
-        except (DecoAPIError, DecoAuthError, OSError) as e:
-            return self._probe_failed(f"Deco client list unreadable: {e!r}")
+        except _DECO_READ_ERRORS as e:
+            raise ProbeUnavailable(f"Deco client list unreadable: {e!r}") from e
         want = _normalize_mac(self.config.mac)
         client = next((c for c in clients if _normalize_mac(str(c.get("mac") or "")) == want), None)
         if client is None:

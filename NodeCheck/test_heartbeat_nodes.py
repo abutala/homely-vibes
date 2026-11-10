@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Tests for HeartbeatMonitor flap-suppression logic."""
 
-from typing import List, cast
+from typing import Any, List, cast
 from unittest.mock import MagicMock
 
 import pytest
 
-from NodeCheck.heartbeat_nodes import HeartbeatMonitor
-from NodeCheck.nodes import GenericNode
+from NodeCheck.heartbeat_nodes import _MAX_CONSECUTIVE_UNKNOWN, HeartbeatMonitor
+from NodeCheck.nodes import CycleCachedRead, GenericNode, ProbeUnavailable
 
 
-def _fake_node(name: str, healthy_sequence: List[bool]) -> MagicMock:
+def _fake_node(name: str, healthy_sequence: List[bool | Exception]) -> MagicMock:
     """Build a mock node whose heartbeat() returns the given sequence in order."""
     node = MagicMock()
     node.name = name
@@ -28,6 +28,8 @@ def _monitor(nodes: List[MagicMock]) -> HeartbeatMonitor:
     monitor.last_down_nodes = set()
     monitor.last_notification_time = None
     monitor.consecutive_down = {}
+    monitor.consecutive_unknown = {}
+    monitor.deco_clients = CycleCachedRead(lambda: [])
     return monitor
 
 
@@ -78,6 +80,60 @@ class TestFlapSuppression:
         assert monitor.check_monitored_nodes() == {"Phone"}
         assert monitor.consecutive_down["Server"] == 0
         assert monitor.consecutive_down["Phone"] == 2
+
+
+class TestUnknownProbe:
+    def test_unknown_probe_is_not_a_failure(self) -> None:
+        """A probe that could not run leaves the down streak alone."""
+        node = _fake_node("Sensor", [False, ProbeUnavailable("list unreadable"), False])
+        monitor = _monitor([node])
+
+        assert monitor.check_monitored_nodes() == set()  # streak=1
+        assert monitor.check_monitored_nodes() == set()  # unknown: streak stays 1
+        assert monitor.consecutive_down["Sensor"] == 1
+        assert monitor.check_monitored_nodes() == {"Sensor"}  # streak=2
+
+    def test_unknown_probes_never_page_while_under_the_limit(self) -> None:
+        node = _fake_node("Sensor", [ProbeUnavailable("x")] * (_MAX_CONSECUTIVE_UNKNOWN - 1))
+        monitor = _monitor([node])
+
+        for _ in range(_MAX_CONSECUTIVE_UNKNOWN - 1):
+            assert monitor.check_monitored_nodes() == set()
+        assert monitor.consecutive_down.get("Sensor", 0) == 0
+
+    def test_unknown_for_too_long_counts_as_down(self) -> None:
+        """A probe that stays blind must page in the end, not hide the node for ever."""
+        cycles = _MAX_CONSECUTIVE_UNKNOWN + 1
+        node = _fake_node("Sensor", [ProbeUnavailable("x")] * cycles)
+        monitor = _monitor([node])
+
+        results = [monitor.check_monitored_nodes() for _ in range(cycles)]
+        assert results[:-1] == [set()] * (cycles - 1)
+        assert results[-1] == {"Sensor"}
+
+    def test_a_working_probe_resets_the_unknown_streak(self) -> None:
+        node = _fake_node("Sensor", [ProbeUnavailable("x"), True])
+        monitor = _monitor([node])
+
+        monitor.check_monitored_nodes()
+        monitor.check_monitored_nodes()
+        assert monitor.consecutive_unknown["Sensor"] == 0
+
+    def test_each_cycle_starts_a_fresh_deco_read(self) -> None:
+        calls: List[int] = []
+
+        def read() -> List[dict[str, Any]]:
+            calls.append(1)
+            return []
+
+        monitor = _monitor([])
+        monitor.deco_clients = CycleCachedRead(read)
+
+        for _ in range(2):
+            monitor.deco_clients()
+            monitor.check_monitored_nodes()
+            monitor.deco_clients()
+        assert len(calls) == 3  # one before the first cycle, then one per cycle
 
 
 if __name__ == "__main__":
