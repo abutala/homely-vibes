@@ -10,7 +10,7 @@ from lib import NetHelpers
 from lib.config import NodeConfig, get_config
 from lib.logger import SystemLogger
 from NetworkCheck.common import deco_admin_lock
-from NetworkCheck.deco_client import DecoAPIError, DecoAuthError, DecoClient
+from NetworkCheck.deco_client import DecoAPIError, DecoClient
 
 logger = SystemLogger.get_logger(__name__)
 
@@ -292,9 +292,6 @@ def read_deco_clients() -> list[dict[str, Any]]:
         return DecoClient(wd.deco_host, wd.deco_username, wd.deco_password).list_clients()
 
 
-_DECO_READ_ERRORS = (DecoAPIError, DecoAuthError, OSError)
-
-
 class ProbeUnavailable(Exception):
     """The probe could not run, so the node's state is unknown. Not evidence that it is down."""
 
@@ -313,11 +310,18 @@ class CycleCachedRead:
         if self._outcome is None:
             try:
                 self._outcome = self._read()
-            except _DECO_READ_ERRORS as e:
+            except Exception as e:
                 self._outcome = e
         if isinstance(self._outcome, Exception):
             raise self._outcome
         return self._outcome
+
+
+def _checked(clients: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A list the Deco cannot mean. The prod host is a client, so the true list is never empty."""
+    if not clients or not all(isinstance(c, dict) for c in clients):
+        raise DecoAPIError(f"implausible client list: {str(clients)[:80]!r}")
+    return clients
 
 
 def _normalize_mac(mac: str) -> str:
@@ -347,9 +351,10 @@ class DecoNode(GenericNode):
         """
         if not self.config.mac:
             return self._probe_failed("deco node has no mac configured")
+        # Any error: an unexpected one must not count as an outage of every deco node.
         try:
-            clients = self._list_clients()
-        except _DECO_READ_ERRORS as e:
+            clients = _checked(self._list_clients())
+        except Exception as e:
             raise ProbeUnavailable(f"Deco client list unreadable: {e!r}") from e
         want = _normalize_mac(self.config.mac)
         client = next((c for c in clients if _normalize_mac(str(c.get("mac") or "")) == want), None)

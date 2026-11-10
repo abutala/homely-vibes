@@ -22,7 +22,14 @@ With several deco nodes, the first design had two faults (found by reading, befo
   the whole set. Now `DecoNode` raises `ProbeUnavailable`, and the monitor leaves the down
   streak as it is, so a node already confirmed down stays down. From the third unknown poll
   in a row each one counts as a failed probe, so a Deco that stays unreadable pages on the
-  fourth poll.
+  fourth poll. A deco node that is really down, with unknown polls between the readable ones,
+  pages by the sixth poll at worst.
+- **Unknown covers any error and any implausible list.** An error type the Deco client does
+  not wrap, an empty list and a list of the wrong shape all read as unknown. The prod host is
+  a Deco client itself, so a true list is never empty.
+- **The page does not name the cause.** After four unreadable polls it says the deco nodes are
+  down; the cause is in the log. With its wireless-client floor set, the uplink watchdog
+  reads the same list every 10 min and alerts with the cause first.
 
 What the Deco probe does not prove: `online` means the device is associated to the Wi-Fi. A
 device with a hung application reads as up. A node that needs a deeper check (an API call, an

@@ -56,6 +56,8 @@ def test_absent_client_means_down() -> None:
         DecoAuthError("bad password"),
         LockTimeoutError("busy"),
         OSError("unreachable"),
+        TypeError("'NoneType' object is not iterable"),
+        ValueError("bad key"),
     ],
 )
 def test_unreadable_client_list_is_unknown_not_down(error: Exception) -> None:
@@ -64,6 +66,13 @@ def test_unreadable_client_list_is_unknown_not_down(error: Exception) -> None:
     with pytest.raises(ProbeUnavailable):
         node.heartbeat()
     assert node.is_online is True
+
+
+@pytest.mark.parametrize("clients", [[], ["mac", "online"]])
+def test_empty_or_malformed_client_list_is_unknown_not_down(clients: list[Any]) -> None:
+    """The prod host is a client itself, so an empty list is a bad read, not an outage."""
+    with pytest.raises(ProbeUnavailable):
+        _node(clients).heartbeat()
 
 
 def test_missing_mac_fails_the_probe_without_reading_the_deco() -> None:
@@ -104,6 +113,19 @@ class TestCycleCachedRead:
         cached = CycleCachedRead(read)
         for _ in range(3):
             with pytest.raises(DecoAPIError):
+                cached()
+        assert len(calls) == 1
+
+    def test_an_unexpected_error_is_kept_too(self) -> None:
+        calls: list[int] = []
+
+        def read() -> list[dict[str, Any]]:
+            calls.append(1)
+            raise TypeError("'NoneType' object is not iterable")
+
+        cached = CycleCachedRead(read)
+        for _ in range(3):
+            with pytest.raises(TypeError):
                 cached()
         assert len(calls) == 1
 
