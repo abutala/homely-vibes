@@ -422,13 +422,21 @@ port, sent no Tuya broadcast and announced no mDNS name. Only its traffic could 
   hard-coded public DNS server instead of the Deco, and a new TLS session every 12 s that ended
   after about 2 s, which looks like a device whose cloud login fails. An endpoint named after an
   account ID names no vendor alone; compare it with a known device's capture.
+- **The traffic did not name it; a power test did.** The board turned out to be the second
+  Wi-Fi client of a kitchen appliance: unplugging the appliance took both of its MACs off the
+  Deco, and both came back on plug-in. One appliance can be two Wi-Fi clients, so a client that
+  matches no known device may still belong to one. Try a power test on likely appliances early.
 - **A device that stays connected names nothing.** That board reconnected every 12 s, so the
   first run caught its endpoint. A healthy device keeps one connection for hours. A power cycle
   is the slow fix, and with a redirect only every 2 s, a rebooted device can ask DNS through the
   real gateway before the first redirect lands (an estimate, not measured). So the redirect now repeats every 0.1 s,
   and `--reset` ends the old connections with a TCP reset instead. The reset's sequence number is
   the client's own last ack, the one value RFC 5961 makes a stack accept. Not yet tried on a
-  device.
+  device: on 2026-11-09 an AirTitan fan (3 min) and an Amazon Basics plug (5 min) sent no IP
+  packet through the host at all, so nothing was reset. Either they were idle, or they ignore an
+  unsolicited ARP reply and kept the real gateway. Not yet told apart.
+- **Cost on the Pi 4B host:** under 1% CPU and about 20 MB for the capture, load under 0.3,
+  with the redirect every 0.1 s.
 - **A 600-byte snapshot cut the TLS certificate** after its first 520 bytes, so the full
   fingerprint was lost. Frames are now kept up to 2000 bytes, more than a full Ethernet frame.
 
