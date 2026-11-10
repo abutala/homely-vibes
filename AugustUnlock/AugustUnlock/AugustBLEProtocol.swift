@@ -20,6 +20,8 @@ nonisolated enum AugustBLE {
     static let lockOpcode: UInt8 = 0x0B
     /// Result code of an op-response; 0x00 is success.
     static let resultByte = 0x0F
+    /// The encrypted block of a frame: all a status push carries.
+    static let pushHeadLength = 16
 
     /// Plain-channel checksum, stored at byte 3: makes the byte sum zero.
     static func simpleChecksum(_ frame: [UInt8]) -> UInt8 {
@@ -206,8 +208,10 @@ nonisolated final class AugustBLEPlainChannel {
     enum Reply: Equatable {
         case ack
         case result(UInt8)
-        /// A valid frame that is not about the pending operation (a status push).
-        case other
+        /// A valid frame that is not about the pending operation (a status
+        /// push), with its decrypted block: the lock's or the door's new
+        /// state is in it (yalexs-ble `_internal_state_callback`).
+        case other([UInt8])
     }
 
     private let encrypt: AugustFrameCipher
@@ -233,7 +237,7 @@ nonisolated final class AugustBLEPlainChannel {
         guard AugustBLE.isValidPlainReply(frame) else {
             throw AugustBLEProtocolError.badFrame("checksum or flag in \(hex(frame))")
         }
-        guard frame[1] == opcode else { return .other }
+        guard frame[1] == opcode else { return .other(Array(frame.prefix(AugustBLE.pushHeadLength))) }
         return frame[0] == 0xAA ? .ack : .result(frame[AugustBLE.resultByte])
     }
 }

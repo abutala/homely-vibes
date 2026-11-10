@@ -184,6 +184,8 @@ nonisolated final class AugustBLELink: NSObject, CBCentralManagerDelegate, CBPer
                 // The peripheral stays current until the radio reports the
                 // disconnect, so that report reaches the engine.
                 if let peripheral { central?.cancelPeripheralConnection(peripheral) }
+            case .note(let line):
+                note(line)
             case .schedule(let timer, let seconds):
                 Self.queue.asyncAfter(deadline: .now() + seconds) { [weak self] in
                     guard let self else { return }

@@ -129,7 +129,7 @@ final class AugustBLEEngineTests: XCTestCase {
         writeFirstCommand()
         _ = send(.frame(read, ack1), after: 0.05)
         _ = send(.frame(read, op1), after: 0.05)
-        XCTAssertEqual(send(.frame(read, push), after: 1), [], "a status push is decrypted and ignored")
+        XCTAssertEqual(send(.frame(read, push), after: 1), [.note("lock pushed bb2f0016000000000000000000000000")], "a status push is decrypted and logged, nothing more")
         let out = send(command(2, AugustBLE.lockOpcode), after: 0.5)
         XCTAssertEqual(out, [.schedule(.operation(2), 12), .write(write, lock2)])
         _ = send(.frame(read, ack2), after: 0.05)
