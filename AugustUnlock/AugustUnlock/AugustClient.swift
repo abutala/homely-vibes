@@ -310,8 +310,8 @@ final class AugustClient {
 
     /// Any lock on the account, Bluetooth first when it has a loaded key.
     /// The screen and the widget's taps (in the app's process) both come
-    /// here: the screen with `CommandDeadline`'s budgets, a tap with its own
-    /// (`AppDoorAction`).
+    /// here, both with `CommandDeadline`'s Bluetooth budgets; a tap also
+    /// under its own deadline (`AppDoorAction`, `DoorState.tapLimit`).
     /// `deadline` bounds the whole command, the wait at the gate included:
     /// past it a Bluetooth attempt is given up and the cloud leg gets what is
     /// left; a cloud request cut off after its send fails as `cloudNoReply`.
@@ -457,12 +457,27 @@ final class AugustClient {
         // the command already succeeded, so a failed re-ask is `.unknown`,
         // not an error.
         let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        // What the lock did on a cloud command is seen nowhere else (Logbook
+        // 2026-11-09): the reply's status, its numbers, and the names of its
+        // other fields. No other values, which may be IDs.
+        Self.note("cloud \(action) lock \(lockID.suffix(4)) reply \(Self.replySummary(json))")
         let reported = LockState(augustStatus: json?["status"] as? String)
         guard reported == .unknown else { return reported }
         // A read that disagrees with the command may be the state from
         // before it: unknown, not a false "Locked".
         let read = (try? await lockState(lockID: lockID)) ?? .unknown
         return read == expected ? read : .unknown
+    }
+
+    /// A reply to a cloud command, for the log: `status` and every number or
+    /// flag with its value, every other field by name only.
+    static func replySummary(_ json: [String: Any]?) -> String {
+        guard let json else { return "unreadable" }
+        return json.keys.sorted().map { key in
+            if key == "status", let status = json[key] as? String { return "status=\(status)" }
+            if let number = json[key] as? NSNumber { return "\(key)=\(number)" }
+            return key
+        }.joined(separator: " ")
     }
 
     // MARK: - HTTP plumbing

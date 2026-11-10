@@ -198,6 +198,36 @@ final class DoorStateTests: XCTestCase {
         XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: t0 + 1, at: t0 + 1), .ok, "a held lock moves the door the same way")
     }
 
+    /// A process that dies during an unlock tap writes no result: the
+    /// tap's own start is the only trace, and its cloud unlock may still
+    /// land after a lock (pre-push review, 2026-11-09).
+    func testAnUnlockTapThatNeverEndedStopsLocked() {
+        var state = DoorState()
+        _ = state.start(0, at: t0)
+        let later = t0 + DoorState.runningLimit + 5
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: later, at: later), .noReply)
+        let after = t0 + DoorState.unansweredWindow
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: after, at: after), .ok, "the window is over")
+    }
+
+    func testAnUnlockStillRunningFromBeforeLockBothStopsLocked() {
+        var state = DoorState()
+        _ = state.start(0, at: t0)
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: t0 + 2, at: t0 + 5), .noReply)
+        XCTAssertEqual(state.marks(count: 2, at: t0 + 5), [.running, .none], "the door keeps its own mark")
+    }
+
+    func testADeadTapsUnlockOutlivesTheNextTap() {
+        var state = DoorState()
+        _ = state.start(0, at: t0)
+        let next = t0 + DoorState.runningLimit + 1
+        XCTAssertTrue(state.start(0, at: next))
+        state.finish(0, startedAt: next, outcome: .ok, at: next + 2)
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: next + 4, at: next + 4), .noReply, "the dead tap's unlock may still land")
+        let after = t0 + DoorState.unansweredWindow
+        XCTAssertEqual(state.recordLocks([.ok, .ok], startedAt: after, at: after), .ok)
+    }
+
     func testTheWindowMatchesTheScreens() {
         XCTAssertEqual(DoorState.unansweredWindow, CommandMachine.mayStillMoveWindow)
     }

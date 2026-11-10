@@ -355,8 +355,10 @@ nonisolated final class AugustBLEEngine {
             lastResultAt = now
             queue[0].timing.done = ms(now, since: queue[0].startedAt ?? now)
             return complete(code == 0 ? .ok(queue[0].timing) : .operationFailed(code), at: now)
-        case .ack, .result:
-            return []
+        case .ack:
+            return [.note("lock acknowledged a command that is not waiting here")]
+        case .result(let code):
+            return [.note(String(format: "lock answered a command that is not waiting here: result 0x%02x", code))]
         }
     }
 

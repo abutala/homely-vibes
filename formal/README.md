@@ -80,4 +80,4 @@ Trace validation (replay real logs against the model) is the next step up.
 
 One `.qnt` per design, written as a parametric module with a `const` per code switch
 under test, plus one instance module per variant. Add a row per (instance, property) to
-`check.sh`. Do not copy household identifiers into a model.
+`outcomes.txt`. Do not copy household identifiers into a model.

@@ -51,9 +51,13 @@ struct DoorState: Codable, Equatable {
     }
 
     /// Starts the tap unless one is already running on that door: a repeat
-    /// tap would only queue a duplicate command.
+    /// tap would only queue a duplicate command. An older unlock tap still
+    /// marked running never ended (its process died, maybe with a cloud
+    /// unlock out): it keeps its own window as an unanswered unlock.
     mutating func start(_ position: Int, at now: Date) -> Bool {
-        if let started = running[String(position)], now < started + Self.runningLimit { return false }
+        let key = String(position)
+        if let started = running[key], now < started + Self.runningLimit { return false }
+        if let dead = running[key], position != Self.lockBothPosition { unanswered[key] = max(dead, unanswered[key] ?? dead) }
         running[String(position)] = now
         results[String(position)] = nil
         if position != Self.lockBothPosition { unlockStarted[String(position)] = now }
@@ -70,6 +74,13 @@ struct DoorState: Codable, Equatable {
         if outcome != .ok, position != Self.lockBothPosition { unanswered[String(position)] = now }
     }
 
+    /// An unlock for this door may still reach the lock: one that ended
+    /// without a confirmed reply, or a tap with no end at all (a process
+    /// that dies writes no result, and its cloud unlock may be out).
+    private func unlockMayStillLand(_ key: String, at now: Date) -> Bool {
+        [unanswered[key], running[key]].contains { sent in sent.map { now < $0 + Self.unansweredWindow } ?? false }
+    }
+
     /// Lock Both's replies, one per door by position, written together when
     /// the tap ends so a fast door's mark is still held when the widget draws
     /// (it redraws only after the tap). A locked door drops any old mark; a
@@ -80,7 +91,7 @@ struct DoorState: Codable, Equatable {
     mutating func recordLocks(_ outcomes: [Outcome], startedAt: Date, at now: Date) -> Outcome {
         let settled = outcomes.enumerated().map { position, outcome -> Outcome in
             let key = String(position)
-            let held = unanswered[key].map { now < $0 + Self.unansweredWindow } ?? false
+            let held = unlockMayStillLand(key, at: now)
             let tapped = unlockStarted[key].map { $0 >= startedAt } ?? false
             let settled: Outcome = outcome == .ok && (held || tapped) ? .noReply : outcome
             if running[key] == nil, !tapped { results[key] = settled == .ok ? nil : Result(outcome: settled, at: now) }

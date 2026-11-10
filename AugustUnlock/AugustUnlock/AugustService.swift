@@ -34,8 +34,8 @@ extension DoorCommands {
     /// The screen's command: its Bluetooth budgets, no client deadline (the
     /// screen runs its own), and a link kept for the next tap.
     func screenCommand(unlocking: Bool, lockID: String, onStage: @escaping @Sendable (DoorStage) -> Void) async throws -> OperationReply {
-        let setup = CommandDeadline.screenBluetoothSetup
-        let operation = CommandDeadline.screenBluetoothOperation
+        let setup = CommandDeadline.bluetoothSetup
+        let operation = CommandDeadline.bluetoothOperation
         if unlocking {
             return try await unlock(
                 lockID: lockID, bluetoothSetupBudget: setup, bluetoothOperationBudget: operation, deadline: nil, keepLink: true, onStage: onStage)

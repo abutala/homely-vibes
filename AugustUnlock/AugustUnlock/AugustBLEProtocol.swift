@@ -20,7 +20,8 @@ nonisolated enum AugustBLE {
     static let lockOpcode: UInt8 = 0x0B
     /// Result code of an op-response; 0x00 is success.
     static let resultByte = 0x0F
-    /// The encrypted block of a frame: all a status push carries.
+    /// A frame's 16-byte block (it travels encrypted; the last two bytes of
+    /// a frame are plain): all a status push carries.
     static let pushHeadLength = 16
 
     /// Plain-channel checksum, stored at byte 3: makes the byte sum zero.

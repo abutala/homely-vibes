@@ -18,17 +18,18 @@ struct CommandDeadline {
     /// cloud request's own timeout is URLSession's 60 s.
     static let lateLimit: TimeInterval = 60
 
-    /// The screen's Bluetooth budgets, inside `limit`. The person is at the
+    /// The Bluetooth budgets of every command, the screen's and a widget
+    /// tap's (`AppDoorAction`, inside its 28 s), inside `limit`. The person is at the
     /// door, and a connect took 9.4 s on 2026-11-03 while the Wi-Fi bridge
     /// held the lock after a cloud command; a 6 s budget sent that tap to
     /// the cloud, which sent the bridge back to the lock. The operation
     /// budget is short because the work after the session has taken 1.4 s
     /// at most. `cloudWindowAfterBluetooth` is what the cloud keeps when the
     /// session was reached and the command then failed; a setup miss leaves
-    /// it `limit - screenBluetoothSetup`. The test pins both.
-    static let screenBluetoothSetup: TimeInterval = 12
-    static let screenBluetoothOperation: TimeInterval = 6
-    static var cloudWindowAfterBluetooth: TimeInterval { limit - screenBluetoothSetup - screenBluetoothOperation }
+    /// it `limit - bluetoothSetup`. The test pins both.
+    static let bluetoothSetup: TimeInterval = 12
+    static let bluetoothOperation: TimeInterval = 6
+    static var cloudWindowAfterBluetooth: TimeInterval { limit - bluetoothSetup - bluetoothOperation }
 
     let startedAt: Date
     let limit: TimeInterval
