@@ -392,7 +392,7 @@ Labelling every client by hand showed what identifies a device, in the order wor
   Alexa show, while the app shows no MAC. Resolve it to an IP, then the Deco gives the MAC.
 - **Tuya devices broadcast on UDP 6666/6667** about every 20 seconds, with their `gwId`. Newer
   firmware encrypts it under a public key derived from a fixed seed. A wired host hears them
-  even from the IoT network, where client isolation stops ARP and ping.
+  even from the IoT network.
 - **Some cloud IDs embed the MAC.** Older Tuya `gwId`s, Meross UUIDs and Magic Home IDs end
   in it. Newer Tuya IDs do not.
 - **A sibling MAC is evidence, not proof.** An August lock's Bluetooth MAC from the API was
@@ -404,11 +404,31 @@ Two Deco behaviours caught us while doing it: `sync` reports only what it rename
 so `renamed=3` for four labels meant one device was offline, not a success. And a device on
 the blocklist appears to show in the app's offline list, so clearing that list brings it back.
 
+### Capturing a client's traffic (2026-11-09)
+
+An unknown Espressif board had no open TCP port in 1-65535, closed every common UDP discovery
+port, sent no Tuya broadcast and announced no mDNS name. Only its traffic could name it, and
+`client_capture.py` exists for that. What the first run showed:
+
+- **A one-way ARP redirect is enough.** Only the client is told the gateway is at the wired
+  host. The gateway keeps its true ARP entry, so replies go straight to the client and TCP still
+  works. The capture shows only what the client sends, which is all that identifies it.
+- **Redirects must be off on both `all` and the interface.** The kernel ORs the two
+  `send_redirects` values; with either one on, it sends the client an ICMP redirect back to
+  the real gateway and the capture goes empty.
+- **Each forwarded frame is recorded twice** on the capturing host, in and out, with a lower
+  TTL the second time. Count only frames whose Ethernet source is the client.
+- **What came out:** a cloud MQTT endpoint in the DNS questions and the TLS server name, a
+  hard-coded public DNS server instead of the Deco, and a new TLS session every 12 s that ended
+  after about 2 s, which looks like a device whose cloud login fails. An endpoint named after an
+  account ID names no vendor alone; compare it with a known device's capture.
+
 ## Landmines
 
-- **IoT/Guest SSID client isolation is real and measured.** Any plug on that
-  SSID is unreachable from the wired monitoring host — not slow, not filtered,
-  *ARP does not resolve*. Verify reachability before trusting any plug path.
+- **IoT SSID reachability from the wired host varies.** An earlier measurement found a plug on
+  the IoT or Guest SSID unreachable from the wired monitoring host — not slow, not filtered,
+  *ARP did not resolve*. On 2026-11-09 two IoT clients answered ARP and ping from the same host.
+  Verify reachability per device before trusting any plug path.
 - **The Deco's request-signing RSA key is only 512-bit** (the password key is
   1024-bit). The sign text spans multiple PKCS#1 blocks, and TP-Link
   concatenates the hex of each block rather than encrypting once. Get the

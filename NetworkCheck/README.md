@@ -355,6 +355,29 @@ One blank label or malformed MAC renames nothing at all, and logs the error each
 A phone or laptop with a private
 (rotating) Wi-Fi address keeps its label only while the device keeps that address.
 
+### Capturing a client's traffic (`client_capture.py`)
+
+For a device that the steps above cannot name: no open ports, no broadcast, no mDNS. It
+records where the device connects for a few minutes, then prints its DNS questions, TLS server
+names, peers and connection pattern. How it works and what a first run found:
+[Logbook.md](Logbook.md).
+
+```bash
+# On the wired Linux host, from the repo root. You type the sudo password.
+sudo .venv/bin/python -B -m NetworkCheck.client_capture capture 192.0.2.10 AA-BB-CC-DD-EE-01 --secs 600 2>&1 | tee /tmp/client_capture.log
+
+# Read a capture again, anywhere: no root needed
+uv run python -m NetworkCheck.client_capture summary /tmp/client_capture.pcap AA-BB-CC-DD-EE-01
+```
+
+It tells only that client that the gateway is at this host, turns on forwarding with ICMP
+redirects off, allows the client in the `FORWARD` chain, and runs `tcpdump`. Every change is
+undone on any exit, Ctrl-C included, and each undo step is reported. It refuses, changing
+nothing, unless the host's ARP table shows that IP at that MAC.
+
+The host forwards the device's traffic, so the device stays connected, but that traffic passes
+through the host for that time. The capture holds only that device's packets; delete it when done.
+
 ### Alert priorities
 
 - **P1** — blocked nothing because of a refusal (cap, empty IoT network, a
