@@ -422,10 +422,10 @@ port, sent no Tuya broadcast and announced no mDNS name. Only its traffic could 
   hard-coded public DNS server instead of the Deco, and a new TLS session every 12 s that ended
   after about 2 s, which looks like a device whose cloud login fails. An endpoint named after an
   account ID names no vendor alone; compare it with a known device's capture.
-- **The traffic did not name it; a power test did.** The board turned out to be the second
-  Wi-Fi client of a kitchen appliance: unplugging the appliance took both of its MACs off the
-  Deco, and both came back on plug-in. One appliance can be two Wi-Fi clients, so a client that
-  matches no known device may still belong to one. Try a power test on likely appliances early.
+- **The traffic did not name it; a power test did.** The board was a kitchen appliance whose
+  recorded MAC was wrong: the house records held a different MAC for it. A client that
+  matches no recorded MAC may still be a known appliance, so try a power test on likely
+  appliances early.
 - **A device that stays connected names nothing.** That board reconnected every 12 s, so the
   first run caught its endpoint. A healthy device keeps one connection for hours. A power cycle
   is the slow fix, and with a redirect only every 2 s, a rebooted device can ask DNS through the
