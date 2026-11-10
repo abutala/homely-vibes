@@ -366,6 +366,9 @@ names, peers and connection pattern. How it works and what a first run found:
 # On the wired Linux host, from the repo root. You type the sudo password.
 sudo .venv/bin/python -B -m NetworkCheck.client_capture capture 192.0.2.10 AA-BB-CC-DD-EE-01 --secs 600 2>&1 | tee -i /tmp/client_capture.log
 
+# Same, and make the device reconnect now, with no power cycle
+sudo .venv/bin/python -B -m NetworkCheck.client_capture capture 192.0.2.10 AA-BB-CC-DD-EE-01 --secs 180 --reset 2>&1 | tee -i /tmp/client_capture.log
+
 # Read a capture again, anywhere: no root needed
 uv run python -m NetworkCheck.client_capture summary /tmp/client_capture.pcap AA-BB-CC-DD-EE-01
 ```
@@ -377,8 +380,15 @@ undone on Ctrl-C, SIGTERM, a dropped SSH session or an error, and each undo step
 lands in. SIGKILL or a power cut undoes nothing. It refuses, changing
 nothing, unless the host's ARP table shows that IP at that MAC.
 
+A device names its server only when it connects, and a device that is already connected may
+not connect again for hours. Power-cycle it after the capture starts, or pass `--reset`: the
+host then answers each packet of a connection the device opened before the capture with a TCP
+reset, as if from the server, and prints a `reset` line for each. A connection that starts during
+the capture is never reset, and neither is one to the host itself, such as your SSH session.
+
 The host forwards the device's traffic, so the device stays connected, but that traffic passes
-through the host for that time. The capture holds only that device's packets; delete it when done.
+through the host for that time. The capture holds only that device's packets; it belongs to the
+`tcpdump` user, so delete it with `sudo rm` when done.
 
 ### Alert priorities
 
