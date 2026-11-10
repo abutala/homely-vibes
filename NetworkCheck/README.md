@@ -364,7 +364,7 @@ names, peers and connection pattern. How it works and what a first run found:
 
 ```bash
 # On the wired Linux host, from the repo root. You type the sudo password.
-sudo .venv/bin/python -B -m NetworkCheck.client_capture capture 192.0.2.10 AA-BB-CC-DD-EE-01 --secs 600 2>&1 | tee /tmp/client_capture.log
+sudo .venv/bin/python -B -m NetworkCheck.client_capture capture 192.0.2.10 AA-BB-CC-DD-EE-01 --secs 600 2>&1 | tee -i /tmp/client_capture.log
 
 # Read a capture again, anywhere: no root needed
 uv run python -m NetworkCheck.client_capture summary /tmp/client_capture.pcap AA-BB-CC-DD-EE-01
@@ -372,7 +372,9 @@ uv run python -m NetworkCheck.client_capture summary /tmp/client_capture.pcap AA
 
 It tells only that client that the gateway is at this host, turns on forwarding with ICMP
 redirects off, allows the client in the `FORWARD` chain, and runs `tcpdump`. Every change is
-undone on any exit, Ctrl-C included, and each undo step is reported. It refuses, changing
+undone on Ctrl-C, SIGTERM, a dropped SSH session or an error, and each undo step is reported;
+`tee -i` keeps the log through a Ctrl-C. A second Ctrl-C during the undo skips only the step it
+lands in. SIGKILL or a power cut undoes nothing. It refuses, changing
 nothing, unless the host's ARP table shows that IP at that MAC.
 
 The host forwards the device's traffic, so the device stays connected, but that traffic passes

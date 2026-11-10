@@ -138,6 +138,16 @@ class TestSummarize:
         assert first.payload == len(client_hello("mqtt.example.com"))
         assert second.start == 12.0
 
+    def test_skips_frames_too_short_to_read(self) -> None:
+        good = ipv4(CLIENT_IP, PEER_IP, 6, tcp(5000, 8883, 0x02))
+        short_tcp = ipv4(CLIENT_IP, PEER_IP, 6, tcp(5001, 8883, 0x02)[:6])
+        data = pcap(
+            [sent(0.0, good[:9]), sent(1.0, good[:17]), sent(2.0, short_tcp), sent(3.0, good)]
+        )
+        result = summarize(data, CLIENT_MAC)
+        assert (result.packets, result.skipped, len(result.connections)) == (1, 3, 1)
+        assert "skipped 3 packets too short to read" in report(result, resolve=False)
+
     def test_a_reused_source_port_with_a_new_syn_is_a_new_connection(self) -> None:
         syn = ipv4(CLIENT_IP, PEER_IP, 6, tcp(5000, 443, 0x02))
         result = summarize(pcap([sent(0.0, syn), sent(30.0, syn)]), CLIENT_MAC)

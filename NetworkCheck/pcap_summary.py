@@ -41,10 +41,14 @@ class Summary:
     sni: set[str] = field(default_factory=set)
     peers: Counter[tuple[str, str, int]] = field(default_factory=Counter)
     connections: list[Connection] = field(default_factory=list)
+    skipped: int = 0
 
 
 def mac_bytes(mac: str) -> bytes:
-    raw = bytes.fromhex(mac.replace(":", "").replace("-", ""))
+    try:
+        raw = bytes.fromhex(mac.replace(":", "").replace("-", ""))
+    except ValueError:
+        raw = b""
     if len(raw) != 6:
         raise ValueError(f"Not a MAC address: {mac!r}")
     return raw
@@ -127,24 +131,35 @@ def summarize(data: bytes, client_mac: str) -> Summary:
     for ts, frame in frames(data):
         if frame[6:12] != src or frame[12:14] != ETH_IPV4:
             continue
-        ip = frame[14:]
-        ihl, proto = (ip[0] & 0x0F) * 4, ip[9]
-        total = struct.unpack("!H", ip[2:4])[0]
-        peer = socket.inet_ntoa(ip[16:20])
-        l4 = ip[ihl:total]
-        out.packets += 1
-        out.first = ts if out.first is None else out.first
-        out.last = ts
-        if proto not in (TCP, UDP) or len(l4) < 4:
-            out.peers[(peer, str(proto), 0)] += 1
-            continue
-        sport, dport = struct.unpack("!HH", l4[:4])
-        out.peers[(peer, "tcp" if proto == TCP else "udp", dport)] += 1
-        if proto == UDP and dport == 53:
-            out.dns.update(dns_questions(l4[8:]))
-        if proto == TCP:
-            _track(open_conns, out, ts, peer, sport, l4)
+        try:
+            _read(out, open_conns, ts, frame[14:])
+        except (IndexError, struct.error, OSError):
+            out.skipped += 1
     return out
+
+
+def _read(
+    out: Summary, open_conns: dict[tuple[str, int], Connection], ts: float, ip: bytes
+) -> None:
+    """Add one IPv4 packet. Raises, changing nothing, on a header too short to read."""
+    ihl, proto = (ip[0] & 0x0F) * 4, ip[9]
+    total = struct.unpack("!H", ip[2:4])[0]
+    peer = socket.inet_ntoa(ip[16:20])
+    l4 = ip[ihl:total]
+    if proto == TCP and len(l4) < 20:
+        raise IndexError("short TCP header")
+    out.packets += 1
+    out.first = ts if out.first is None else out.first
+    out.last = ts
+    if proto not in (TCP, UDP) or len(l4) < 4:
+        out.peers[(peer, str(proto), 0)] += 1
+        return
+    sport, dport = struct.unpack("!HH", l4[:4])
+    out.peers[(peer, "tcp" if proto == TCP else "udp", dport)] += 1
+    if proto == UDP and dport == 53:
+        out.dns.update(dns_questions(l4[8:]))
+    if proto == TCP:
+        _track(open_conns, out, ts, peer, sport, l4)
 
 
 def _track(
@@ -174,6 +189,8 @@ def report(summary: Summary, resolve: bool = True) -> list[str]:
     """Lines for a person to read. `resolve` adds reverse DNS for each peer."""
     span = 0.0 if summary.first is None or summary.last is None else summary.last - summary.first
     lines = [f"packets from client: {summary.packets} over {span:.0f}s"]
+    if summary.skipped:
+        lines.append(f"skipped {summary.skipped} packets too short to read")
     lines.append(
         "DNS questions: " + (", ".join(f"{n} x{c}" for n, c in summary.dns.most_common()) or "none")
     )

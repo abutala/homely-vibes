@@ -17,8 +17,9 @@ This system monitors web browsing activity by analyzing Chrome browser history a
 
 ### Network Setup
 - **Static IP**: assign the monitored device a static lease on the main LAN
-- **Network**: ensure the device is on the main network, not the isolated
-  guest/IoT network — guest client isolation blocks the SSH path below
+- **Network**: ensure the device is on the main network, not the guest network — guest
+  client isolation blocks the SSH path below. Reachability on the IoT network varies by
+  device, so verify it first
 - **Required Packages**: brew, eternal terminal, sqlite3
 
 ### System Architecture

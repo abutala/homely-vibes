@@ -12,8 +12,9 @@ bytecode written, so nothing root-owned is left behind in the checkout:
     sudo .venv/bin/python -B -m NetworkCheck.client_capture capture <ip> <mac> --secs 600
     python -m NetworkCheck.client_capture summary <pcap> <mac>
 
-Every change is undone on any exit, Ctrl-C included: the client's ARP entry, the
-forwarding sysctls and the firewall rules.
+Every change is undone on Ctrl-C, SIGTERM, SIGHUP (a dropped SSH session) or an error:
+the client's ARP entry, the forwarding sysctls and the firewall rules. A second Ctrl-C
+during the undo skips only the step it lands in. SIGKILL or a power cut undoes nothing.
 """
 
 import argparse
@@ -103,6 +104,10 @@ def capture(
     """Redirect, record and restore. Returns the restore steps that failed (none, normally)."""
     if not MIN_SECS <= secs <= MAX_SECS:
         raise Refused(f"--secs must be {MIN_SECS}-{MAX_SECS}")
+    try:
+        mac_bytes(client_mac)
+    except ValueError as err:
+        raise Refused(str(err)) from err
     iface, gateway = host.route()
     if client_ip == gateway:
         raise Refused("the client is the gateway")
@@ -155,13 +160,14 @@ def _repeat(host: Host, iface: str, frame: bytes) -> None:
 def _undo_all(
     steps: Iterable[tuple[str, Callable[[], None]]], say: Callable[[str], None]
 ) -> list[str]:
-    """Run every undo step even when one fails, and name the ones that failed."""
+    """Run every undo step even when one fails or a second Ctrl-C lands in it, and name the
+    ones that failed."""
     failed = []
     for name, step in steps:
         try:
             step()
             say(f"restored {name}")
-        except Exception as err:
+        except (Exception, KeyboardInterrupt) as err:
             failed.append(name)
             say(f"FAILED to restore {name}: {err}")
     return failed
@@ -204,8 +210,13 @@ class LinuxHost:
 
         def stop() -> None:
             dump.terminate()
-            dump.wait(timeout=10)
-            os.chmod(out, 0o644)
+            try:
+                dump.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                dump.kill()
+                dump.wait()
+            if os.path.exists(out):
+                os.chmod(out, 0o644)
 
         return stop
 
@@ -226,6 +237,21 @@ def _interrupt(*_: object) -> NoReturn:
     raise KeyboardInterrupt
 
 
+def _say(message: str) -> None:
+    """Print now; a dead terminal (a dropped SSH session) must not stop the undo."""
+    try:
+        print(message, flush=True)
+    except OSError:
+        pass
+
+
+def _summary_lines(pcap: str, mac: str) -> list[str]:
+    try:
+        return report(summarize(Path(pcap).read_bytes(), mac))
+    except (OSError, ValueError) as err:
+        return [f"cannot summarise {pcap}: {err}"]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -240,21 +266,22 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "summary":
-        print("\n".join(report(summarize(Path(args.pcap).read_bytes(), args.mac))))
+        print("\n".join(_summary_lines(args.pcap, args.mac)))
         return 0
     if os.geteuid() != 0:
         print("capture needs root: run it with sudo", file=sys.stderr)
         return 2
     signal.signal(signal.SIGTERM, _interrupt)
+    signal.signal(signal.SIGHUP, _interrupt)
     try:
-        failed = capture(LinuxHost(), args.ip, args.mac, args.secs, args.out, print)
+        failed = capture(LinuxHost(), args.ip, args.mac, args.secs, args.out, _say)
     except Refused as err:
         print(f"refused, nothing changed: {err}", file=sys.stderr)
         return 2
     if failed:
         print("restore incomplete: " + ", ".join(failed), file=sys.stderr)
         return 1
-    print("\n".join(report(summarize(Path(args.out).read_bytes(), args.mac))))
+    _say("\n".join(_summary_lines(args.out, args.mac)))
     return 0
 
 

@@ -55,6 +55,8 @@ class FakeHost:
     def forward_rule(self, add: bool, ip: str) -> None:
         if self.fail == "rule" and not add:
             raise OSError("iptables gone")
+        if self.fail == "rule-interrupt" and not add:
+            raise KeyboardInterrupt
         self.rules = self.rules + [ip] if add else [r for r in self.rules if r != ip]
 
     def start_dump(self, iface: str, ip: str, out: str) -> Callable[[], None]:
@@ -159,6 +161,12 @@ class TestCapture:
         assert host.sysctls == ORIGINAL
         assert not host.dumping
 
+    def test_a_second_ctrl_c_during_undo_skips_only_that_step(self) -> None:
+        host = FakeHost(fail="rule-interrupt")
+        assert run(host) == ["firewall rules"]
+        assert host.sysctls == ORIGINAL
+        assert not host.dumping
+
     def test_a_failed_start_undoes_what_was_done(self) -> None:
         host = FakeHost(fail="dump")
         with pytest.raises(OSError):
@@ -175,6 +183,7 @@ class TestCapture:
             ({CLIENT: CLIENT_MAC}, CLIENT_MAC, 60, "gateway"),
             (None, HOST_MAC, 60, "this host"),
             (None, CLIENT_MAC, 5, "--secs"),
+            (None, "not-a-mac", 60, "Not a MAC"),
         ],
     )
     def test_refuses_before_changing_anything(
