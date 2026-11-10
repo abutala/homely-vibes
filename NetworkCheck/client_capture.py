@@ -372,7 +372,7 @@ class LinuxHost:
             self._recv = socket.socket(
                 getattr(socket, _AF_PACKET), socket.SOCK_RAW, socket.htons(ETH_P_IP)
             )
-            self._recv.bind((iface, 0))
+            self._recv.bind((iface, ETH_P_IP))
         got = []
         end = time.monotonic() + secs
         while (left := end - time.monotonic()) > 0 and select.select([self._recv], [], [], left)[0]:
