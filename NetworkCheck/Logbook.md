@@ -270,14 +270,14 @@ router fails badly.
 | 1 | **Reboot via the Deco's local admin API** | ✅ **chosen** | Reachable during the exact fault (LAN plane survives). Fails safe — a failed call changes nothing. Zero hardware. |
 | 2 | Power-cut the Deco with an eWeLink/Sonoff plug | ❌ rejected | **One-way trip.** The plug rides the WiFi the Deco serves; the instant the load dies the plug loses its AP and can never be told to switch back on. |
 | 3 | Sonoff `pulse` / inching as the restore timer | ❌ rejected | Wrong polarity — it is ON-then-auto-OFF. There is no OFF-then-auto-ON and no countdown endpoint. See the [itead DIY protocol doc](https://github.com/itead/Sonoff_Devices_DIY_Tools/blob/master/SONOFF%20DIY%20MODE%20Protocol%20Doc%20v1.4.md). |
-| 4 | **Shelly plug with `Switch.Set?toggle_after=`** | ⏸️ viable, not built | The device schedules its own restore, so it survives the network vanishing — the only plug approach that works. Not implemented: no such hardware in this deployment, and speculative code for absent hardware is worse than none. If one is ever bought, it is a small self-contained PR, and it must join the **main** SSID (see Landmines). |
+| 4 | **Shelly plug with `Switch.Set?toggle_after=`** | ⏸️ viable, not built | The device schedules its own restore, so it survives the network vanishing — the only plug approach that works. Not implemented: no such hardware in this deployment, and speculative code for absent hardware is worse than none. If one is ever bought, it is a small self-contained PR; verify the host can reach it before relying on it (see Landmines). |
 | 5 | Flash a Sonoff to Tasmota (`Backlog Power1 OFF; Delay …; Power1 ON`) | ⚠️ viable, not taken | Genuinely solves the restore problem on hardware already owned, but needs the plug opened and UART pads soldered. |
 | 6 | Power-cycle the **modem/ONT** instead of the Deco | ⚠️ viable, not taken | Safe by construction — the Deco stays up, so the plug keeps its WiFi and can be switched back on remotely. But it does not fix a Deco wedge, which is the observed fault. |
 | 7 | Rescue AP on the monitoring host (`hostapd`, same SSID) so the plug re-associates after the cut | ❌ rejected | Clever and free, but many moving parts (association, DHCP, changed IP, mDNS re-announce). If any step fails the house loses LAN *and* WAN — strictly worse than the fault. |
 | 8 | Inverted deadman — plug cuts power unless the host keeps pinging it | ❌ rejected | Any crash or reboot of the monitoring host power-cycles the router. Unacceptable coupling for infrastructure. |
 | 9 | TP-Link cloud / phone app remote reboot | ❌ rejected | Needs the internet that is down. |
 | 10 | The Deco's own scheduled nightly auto-reboot | ❌ rejected | Blind and unconditional; does not respond to the fault and reboots on good nights too. |
-| 11 | Drive an existing eWeLink plug over LAN from the monitoring host | ❌ blocked | Measured: from the wired host, ARP itself returns `FAILED`/`INCOMPLETE` for every IoT device and TCP/8081 never connects. They sit on a client-isolated IoT/Guest SSID. |
+| 11 | Drive an existing eWeLink plug over LAN from the monitoring host | ❌ blocked when measured | Measured then: from the wired host, ARP returned `FAILED`/`INCOMPLETE` for every IoT device tried and TCP/8081 never connected. On 2026-11-09 two IoT clients answered ARP and ping (see Landmines), so recheck before relying on this verdict. |
 
 ### Tuning the policy
 
@@ -392,7 +392,7 @@ Labelling every client by hand showed what identifies a device, in the order wor
   Alexa show, while the app shows no MAC. Resolve it to an IP, then the Deco gives the MAC.
 - **Tuya devices broadcast on UDP 6666/6667** about every 20 seconds, with their `gwId`. Newer
   firmware encrypts it under a public key derived from a fixed seed. A wired host hears them
-  even from the IoT network, where client isolation stops ARP and ping.
+  even from the IoT network.
 - **Some cloud IDs embed the MAC.** Older Tuya `gwId`s, Meross UUIDs and Magic Home IDs end
   in it. Newer Tuya IDs do not.
 - **A sibling MAC is evidence, not proof.** An August lock's Bluetooth MAC from the API was
@@ -404,11 +404,31 @@ Two Deco behaviours caught us while doing it: `sync` reports only what it rename
 so `renamed=3` for four labels meant one device was offline, not a success. And a device on
 the blocklist appears to show in the app's offline list, so clearing that list brings it back.
 
+### Capturing a client's traffic (2026-11-09)
+
+An unknown Espressif board had no open TCP port in 1-65535, closed every common UDP discovery
+port, sent no Tuya broadcast and announced no mDNS name. Only its traffic could name it, and
+`client_capture.py` exists for that. What the first run showed:
+
+- **A one-way ARP redirect is enough.** Only the client is told the gateway is at the wired
+  host. The gateway keeps its true ARP entry, so replies go straight to the client and TCP still
+  works. The capture shows only what the client sends, which is all that identifies it.
+- **Redirects must be off on both `all` and the interface.** The kernel ORs the two
+  `send_redirects` values; with either one on, it sends the client an ICMP redirect back to
+  the real gateway and the capture goes empty.
+- **Each forwarded frame is recorded twice** on the capturing host, in and out, with a lower
+  TTL the second time. Count only frames whose Ethernet source is the client.
+- **What came out:** a cloud MQTT endpoint in the DNS questions and the TLS server name, a
+  hard-coded public DNS server instead of the Deco, and a new TLS session every 12 s that ended
+  after about 2 s, which looks like a device whose cloud login fails. An endpoint named after an
+  account ID names no vendor alone; compare it with a known device's capture.
+
 ## Landmines
 
-- **IoT/Guest SSID client isolation is real and measured.** Any plug on that
-  SSID is unreachable from the wired monitoring host — not slow, not filtered,
-  *ARP does not resolve*. Verify reachability before trusting any plug path.
+- **IoT SSID reachability from the wired host varies.** An earlier measurement found a plug on
+  the IoT or Guest SSID unreachable from the wired monitoring host — not slow, not filtered,
+  *ARP did not resolve*. On 2026-11-09 two IoT clients answered ARP and ping from the same host.
+  Verify reachability per device before trusting any plug path.
 - **The Deco's request-signing RSA key is only 512-bit** (the password key is
   1024-bit). The sign text spans multiple PKCS#1 blocks, and TP-Link
   concatenates the hex of each block rather than encrypting once. Get the
