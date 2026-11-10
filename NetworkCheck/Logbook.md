@@ -428,7 +428,8 @@ port, sent no Tuya broadcast and announced no mDNS name. Only its traffic could 
 - **IoT SSID reachability from the wired host varies.** An earlier measurement found a plug on
   the IoT or Guest SSID unreachable from the wired monitoring host — not slow, not filtered,
   *ARP did not resolve*. On 2026-11-09 two IoT clients answered ARP and ping from the same host.
-  Verify reachability per device before trusting any plug path.
+  Verify reachability per device before trusting any plug path. For an IoT client the likely
+  cause is the Deco app's per-device isolation, not the SSID: see the [NodeCheck Logbook](../NodeCheck/Logbook.md).
 - **The Deco's request-signing RSA key is only 512-bit** (the password key is
   1024-bit). The sign text spans multiple PKCS#1 blocks, and TP-Link
   concatenates the hex of each block rather than encrypting once. Get the

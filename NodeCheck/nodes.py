@@ -10,7 +10,7 @@ from lib import NetHelpers
 from lib.config import NodeConfig, get_config
 from lib.logger import SystemLogger
 from NetworkCheck.common import deco_admin_lock
-from NetworkCheck.deco_client import DecoAPIError, DecoAuthError, DecoClient
+from NetworkCheck.deco_client import DecoAPIError, DecoClient
 
 logger = SystemLogger.get_logger(__name__)
 
@@ -280,8 +280,8 @@ class SshNode(GenericNode):
         raise NotImplementedError("check_state pings ip, which an SSH-only host does not answer")
 
 
-# Short of the watchdog's own wait: a poll that cannot get the lock fails, and the
-# flap suppression absorbs one miss.
+# Short of the watchdog's own wait: a poll that cannot get the lock leaves the deco nodes
+# unknown for that poll.
 DECO_LOCK_WAIT_S = 30
 
 
@@ -290,6 +290,38 @@ def read_deco_clients() -> list[dict[str, Any]]:
     wd = get_config().network_check.uplink_watchdog
     with deco_admin_lock(timeout_s=DECO_LOCK_WAIT_S):
         return DecoClient(wd.deco_host, wd.deco_username, wd.deco_password).list_clients()
+
+
+class ProbeUnavailable(Exception):
+    """The probe could not run, so the node's state is unknown. Not evidence that it is down."""
+
+
+class CycleCachedRead:
+    """One Deco read per heartbeat cycle, shared by every deco node. A failed read is kept too."""
+
+    def __init__(self, read: Callable[[], list[dict[str, Any]]] = read_deco_clients):
+        self._read = read
+        self._outcome: list[dict[str, Any]] | Exception | None = None
+
+    def reset(self) -> None:
+        self._outcome = None
+
+    def __call__(self) -> list[dict[str, Any]]:
+        if self._outcome is None:
+            try:
+                self._outcome = self._read()
+            except Exception as e:
+                self._outcome = e
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        return self._outcome
+
+
+def _checked(clients: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A list the Deco cannot mean. The prod host is a client, so the true list is never empty."""
+    if not clients or not all(isinstance(c, dict) for c in clients):
+        raise DecoAPIError(f"implausible client list: {str(clients)[:80]!r}")
+    return clients
 
 
 def _normalize_mac(mac: str) -> str:
@@ -313,13 +345,17 @@ class DecoNode(GenericNode):
         self._list_clients = list_clients
 
     def heartbeat(self) -> bool:
-        """No ping first: the Deco sees the client where the prod host cannot."""
+        """No ping first: the Deco sees the client where the prod host cannot.
+
+        Raises ProbeUnavailable when the list cannot be read: that says nothing about this node.
+        """
         if not self.config.mac:
             return self._probe_failed("deco node has no mac configured")
+        # Any error: an unexpected one must not count as an outage of every deco node.
         try:
-            clients = self._list_clients()
-        except (DecoAPIError, DecoAuthError, OSError) as e:
-            return self._probe_failed(f"Deco client list unreadable: {e!r}")
+            clients = _checked(self._list_clients())
+        except Exception as e:
+            raise ProbeUnavailable(f"Deco client list unreadable: {e!r}") from e
         want = _normalize_mac(self.config.mac)
         client = next((c for c in clients if _normalize_mac(str(c.get("mac") or "")) == want), None)
         if client is None:
