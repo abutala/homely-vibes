@@ -280,8 +280,8 @@ class SshNode(GenericNode):
         raise NotImplementedError("check_state pings ip, which an SSH-only host does not answer")
 
 
-# Short of the watchdog's own wait: a poll that cannot get the lock fails, and the
-# flap suppression absorbs one miss.
+# Short of the watchdog's own wait: a poll that cannot get the lock leaves the deco nodes
+# unknown for that poll.
 DECO_LOCK_WAIT_S = 30
 
 

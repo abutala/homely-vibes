@@ -20,8 +20,9 @@ With several deco nodes, the first design had two faults (found by reading, befo
   the lock.
 - **An unreadable list marked every deco node down together**: one false emergency page for
   the whole set. Now `DecoNode` raises `ProbeUnavailable`, and the monitor leaves the down
-  streak as it is. From the third unknown poll in a row the node counts as a failed probe, so
-  a Deco that stays unreadable still pages.
+  streak as it is, so a node already confirmed down stays down. From the third unknown poll
+  in a row each one counts as a failed probe, so a Deco that stays unreadable pages on the
+  fourth poll.
 
 What the Deco probe does not prove: `online` means the device is associated to the Wi-Fi. A
 device with a hung application reads as up. A node that needs a deeper check (an API call, an

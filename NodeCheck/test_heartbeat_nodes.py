@@ -6,8 +6,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from NodeCheck.heartbeat_nodes import _MAX_CONSECUTIVE_UNKNOWN, HeartbeatMonitor
-from NodeCheck.nodes import CycleCachedRead, GenericNode, ProbeUnavailable
+from lib.config import NodeConfig, NodeType
+from NodeCheck.heartbeat_nodes import _MAX_CONSECUTIVE_UNKNOWN, HeartbeatMonitor, _build_node
+from NodeCheck.nodes import CycleCachedRead, GenericNode, ProbeUnavailable, SshNode
 
 
 def _fake_node(name: str, healthy_sequence: List[bool | Exception]) -> MagicMock:
@@ -93,6 +94,23 @@ class TestUnknownProbe:
         assert monitor.consecutive_down["Sensor"] == 1
         assert monitor.check_monitored_nodes() == {"Sensor"}  # streak=2
 
+    def test_unknown_probe_keeps_a_confirmed_down_node_down(self) -> None:
+        """Else the monitor would send "recovered", then page again on the next poll."""
+        node = _fake_node("Sensor", [False, False, ProbeUnavailable("list unreadable")])
+        monitor = _monitor([node])
+
+        monitor.check_monitored_nodes()
+        assert monitor.check_monitored_nodes() == {"Sensor"}
+        assert monitor.check_monitored_nodes() == {"Sensor"}
+
+    def test_another_error_breaks_the_unknown_streak(self) -> None:
+        node = _fake_node("Sensor", [ProbeUnavailable("x"), RuntimeError("boom")])
+        monitor = _monitor([node])
+
+        monitor.check_monitored_nodes()
+        monitor.check_monitored_nodes()
+        assert monitor.consecutive_unknown["Sensor"] == 0
+
     def test_unknown_probes_never_page_while_under_the_limit(self) -> None:
         node = _fake_node("Sensor", [ProbeUnavailable("x")] * (_MAX_CONSECUTIVE_UNKNOWN - 1))
         monitor = _monitor([node])
@@ -134,6 +152,26 @@ class TestUnknownProbe:
             monitor.check_monitored_nodes()
             monitor.deco_clients()
         assert len(calls) == 3  # one before the first cycle, then one per cycle
+
+
+class TestBuildNode:
+    def test_deco_nodes_get_the_shared_read(self) -> None:
+        calls: List[int] = []
+
+        def read() -> List[dict[str, Any]]:
+            calls.append(1)
+            return [{"mac": "AA-BB-CC-00-11-22", "online": True}]
+
+        shared = CycleCachedRead(read)
+        config = NodeConfig(ip="192.0.2.79", node_type=NodeType.DECO, mac="AA-BB-CC-00-11-22")
+        nodes = [_build_node(f"Node {i}", config, shared) for i in range(3)]
+
+        assert all(node.heartbeat() for node in nodes)
+        assert len(calls) == 1
+
+    def test_other_types_keep_their_class(self) -> None:
+        config = NodeConfig(ip="192.0.2.80", node_type=NodeType.SSH)
+        assert type(_build_node("Host", config, CycleCachedRead(lambda: []))) is SshNode
 
 
 if __name__ == "__main__":

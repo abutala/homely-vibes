@@ -3,7 +3,7 @@ import argparse
 import sys
 import time
 from typing import Dict, List, Set
-from lib.config import NodeType, get_config
+from lib.config import NodeConfig, NodeType, get_config
 from lib.logger import SystemLogger
 from lib.MyPushover import Pushover
 from NodeCheck.nodes import (
@@ -41,6 +41,14 @@ _MAX_CONSECUTIVE_UNKNOWN = 3
 logger = SystemLogger.get_logger(__name__)
 
 
+def _build_node(name: str, config: NodeConfig, deco_clients: CycleCachedRead) -> GenericNode:
+    """The node for its type. Every deco node gets the one shared Deco read."""
+    node_cls = _NODE_CLASS_BY_TYPE.get(config.node_type, GenericNode)
+    if node_cls is DecoNode:
+        return DecoNode(name, config, list_clients=deco_clients)
+    return node_cls(name, config)
+
+
 class HeartbeatMonitor:
     def __init__(self, specific_nodes: Set[str] | None = None) -> None:
         cfg = get_config()
@@ -61,11 +69,7 @@ class HeartbeatMonitor:
         nodes: List[GenericNode] = []
 
         for name, config in cfg.node_check.node_configs.items():
-            node_cls = _NODE_CLASS_BY_TYPE.get(config.node_type, GenericNode)
-            if node_cls is DecoNode:
-                nodes.append(DecoNode(name, config, list_clients=self.deco_clients))
-            else:
-                nodes.append(node_cls(name, config))
+            nodes.append(_build_node(name, config, self.deco_clients))
 
         if self.specific_nodes:
             available_node_names = {node.name.lower() for node in nodes}
@@ -96,8 +100,9 @@ class HeartbeatMonitor:
         before appearing in the returned set. A single successful probe resets
         the streak. This applies uniformly to every NodeType.
 
-        A probe that could not run neither adds to the streak nor resets it, until it has
-        failed to run `_MAX_CONSECUTIVE_UNKNOWN` times in a row.
+        A probe that could not run neither adds to the streak nor resets it, so a node that
+        was confirmed down stays in the set. From `_MAX_CONSECUTIVE_UNKNOWN` such polls in a
+        row, each one counts as a failed probe.
         """
         confirmed_down: Set[str] = set()
         self.deco_clients.reset()
@@ -112,11 +117,14 @@ class HeartbeatMonitor:
                 self.consecutive_unknown[node.name] = unknown
                 if unknown < _MAX_CONSECUTIVE_UNKNOWN:
                     logger.warning(f"Node {node.name} state unknown ({unknown=}): {e}")
+                    if self.consecutive_down.get(node.name, 0) >= _MIN_CONSECUTIVE_DOWN_FOR_ALERT:
+                        confirmed_down.add(node.name)
                     continue
                 logger.error(f"Node {node.name} unknown for {unknown} polls, counting as down: {e}")
                 healthy = False
             except Exception as e:
                 logger.error(f"Error checking node {node.name}: {e}")
+                self.consecutive_unknown[node.name] = 0
                 healthy = False
 
             if healthy:
