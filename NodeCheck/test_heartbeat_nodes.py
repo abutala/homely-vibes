@@ -114,6 +114,25 @@ class TestPerNodeThreshold:
         results = [monitor.check_monitored_nodes() for _ in range(6)]
         assert results == [set(), set(), set(), set(), {"Phone"}, {"Phone"}]
 
+    def test_threshold_of_one_alerts_on_the_first_failed_poll(self) -> None:
+        monitor = _monitor([_fake_node("Server", [False], down_polls_for_alert=1)])
+
+        assert monitor.check_monitored_nodes() == {"Server"}
+
+    def test_a_blind_probe_pages_later_for_a_higher_threshold(self) -> None:
+        """Unknown polls past the limit count as failed polls toward the node's own threshold."""
+        cycles = _MAX_CONSECUTIVE_UNKNOWN + 3
+        node = _fake_node("Phone", [ProbeUnavailable("x")] * cycles, down_polls_for_alert=4)
+        monitor = _monitor([node])
+
+        results = [monitor.check_monitored_nodes() for _ in range(cycles)]
+        assert results == [set()] * (cycles - 1) + [{"Phone"}]
+
+    @pytest.mark.parametrize("bad", [0, -1])
+    def test_threshold_below_one_is_a_config_error(self, bad: int) -> None:
+        with pytest.raises(ValueError, match="down_polls_for_alert"):
+            NodeConfig("192.0.2.1", NodeType.GENERIC, down_polls_for_alert=bad)
+
 
 class TestUnknownProbe:
     def test_unknown_probe_is_not_a_failure(self) -> None:

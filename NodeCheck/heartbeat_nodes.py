@@ -52,7 +52,8 @@ def _build_node(name: str, config: NodeConfig, deco_clients: CycleCachedRead) ->
 
 def _alert_threshold(node: GenericNode) -> int:
     """Failed polls in a row before this node counts as down."""
-    return node.config.down_polls_for_alert or _MIN_CONSECUTIVE_DOWN_FOR_ALERT
+    own = node.config.down_polls_for_alert
+    return _MIN_CONSECUTIVE_DOWN_FOR_ALERT if own is None else own
 
 
 class HeartbeatMonitor:
@@ -102,8 +103,8 @@ class HeartbeatMonitor:
     def check_monitored_nodes(self) -> Set[str]:
         """Probe every node and return only the flap-suppressed down set.
 
-        A node must fail `_MIN_CONSECUTIVE_DOWN_FOR_ALERT` consecutive probes
-        (or its own `down_polls_for_alert`) before appearing in the returned set.
+        A node must fail its own `down_polls_for_alert` consecutive probes, else
+        `_MIN_CONSECUTIVE_DOWN_FOR_ALERT`, before appearing in the returned set.
         A single successful probe resets the streak. This applies to every NodeType.
 
         A probe that could not run neither adds to the streak nor resets it, so a node that
