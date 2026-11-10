@@ -31,7 +31,8 @@ _NODE_CLASS_BY_TYPE: dict[NodeType, type[GenericNode]] = {
 # Flap suppression: require this many consecutive down probes before alerting.
 # Absorbs one-off blips (WiFi power-save, transient packet loss, cold ARP cache)
 # without waiting a full cooloff period. Costs one extra poll cycle of latency
-# before a real outage triggers a page.
+# before a real outage triggers a page. A node's `down_polls_for_alert` replaces it for
+# that node.
 _MIN_CONSECUTIVE_DOWN_FOR_ALERT = 2
 
 # A probe that could not run (ProbeUnavailable) is not a failure. From this many in a row it
@@ -47,6 +48,11 @@ def _build_node(name: str, config: NodeConfig, deco_clients: CycleCachedRead) ->
     if node_cls is DecoNode:
         return DecoNode(name, config, list_clients=deco_clients)
     return node_cls(name, config)
+
+
+def _alert_threshold(node: GenericNode) -> int:
+    """Failed polls in a row before this node counts as down."""
+    return node.config.down_polls_for_alert or _MIN_CONSECUTIVE_DOWN_FOR_ALERT
 
 
 class HeartbeatMonitor:
@@ -97,8 +103,8 @@ class HeartbeatMonitor:
         """Probe every node and return only the flap-suppressed down set.
 
         A node must fail `_MIN_CONSECUTIVE_DOWN_FOR_ALERT` consecutive probes
-        before appearing in the returned set. A single successful probe resets
-        the streak. This applies uniformly to every NodeType.
+        (or its own `down_polls_for_alert`) before appearing in the returned set.
+        A single successful probe resets the streak. This applies to every NodeType.
 
         A probe that could not run neither adds to the streak nor resets it, so a node that
         was confirmed down stays in the set. From `_MAX_CONSECUTIVE_UNKNOWN` such polls in a
@@ -109,6 +115,7 @@ class HeartbeatMonitor:
 
         for node in self.monitored_nodes:
             logger.debug(f"Checking {node.name} ({node.config.ip})...")
+            threshold = _alert_threshold(node)
             try:
                 healthy = node.heartbeat()
                 self.consecutive_unknown[node.name] = 0
@@ -117,7 +124,7 @@ class HeartbeatMonitor:
                 self.consecutive_unknown[node.name] = unknown
                 if unknown < _MAX_CONSECUTIVE_UNKNOWN:
                     logger.warning(f"Node {node.name} state unknown ({unknown=}): {e}")
-                    if self.consecutive_down.get(node.name, 0) >= _MIN_CONSECUTIVE_DOWN_FOR_ALERT:
+                    if self.consecutive_down.get(node.name, 0) >= threshold:
                         confirmed_down.add(node.name)
                     continue
                 logger.error(f"Node {node.name} unknown for {unknown} polls, counting as down: {e}")
@@ -135,7 +142,7 @@ class HeartbeatMonitor:
 
             streak = self.consecutive_down.get(node.name, 0) + 1
             self.consecutive_down[node.name] = streak
-            if streak >= _MIN_CONSECUTIVE_DOWN_FOR_ALERT:
+            if streak >= threshold:
                 confirmed_down.add(node.name)
                 logger.warning(f"Node {node.name} is down (streak={streak})")
             else:

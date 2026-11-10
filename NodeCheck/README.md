@@ -111,7 +111,11 @@ node_check:
       ip: "192.168.1.xxx"      # for the record; not probed
       node_type: deco
       mac: "AA-BB-CC-DD-EE-FF"
+      down_polls_for_alert: 4  # optional, any node type
 ```
+
+The heartbeat alerts after two failed polls in a row. `down_polls_for_alert` sets that number
+for one node: use it for a device that leaves the network for short times, such as a phone.
 
 ## Command Reference
 

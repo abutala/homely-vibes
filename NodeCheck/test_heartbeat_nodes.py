@@ -11,10 +11,13 @@ from NodeCheck.heartbeat_nodes import _MAX_CONSECUTIVE_UNKNOWN, HeartbeatMonitor
 from NodeCheck.nodes import CycleCachedRead, GenericNode, ProbeUnavailable, SshNode
 
 
-def _fake_node(name: str, healthy_sequence: List[bool | Exception]) -> MagicMock:
+def _fake_node(
+    name: str, healthy_sequence: List[bool | Exception], down_polls_for_alert: int | None = None
+) -> MagicMock:
     """Build a mock node whose heartbeat() returns the given sequence in order."""
     node = MagicMock()
     node.name = name
+    node.config.down_polls_for_alert = down_polls_for_alert
     node.config.ip = f"192.0.2.{abs(hash(name)) % 200 + 1}"
     node.heartbeat.side_effect = healthy_sequence
     return node
@@ -81,6 +84,35 @@ class TestFlapSuppression:
         assert monitor.check_monitored_nodes() == {"Phone"}
         assert monitor.consecutive_down["Server"] == 0
         assert monitor.consecutive_down["Phone"] == 2
+
+
+class TestPerNodeThreshold:
+    def test_node_with_a_higher_threshold_alerts_later(self) -> None:
+        """A device that leaves Wi-Fi often pages only after its own number of failed polls."""
+        node = _fake_node("Phone", [False] * 4, down_polls_for_alert=4)
+        monitor = _monitor([node])
+
+        results = [monitor.check_monitored_nodes() for _ in range(4)]
+        assert results == [set(), set(), set(), {"Phone"}]
+
+    def test_threshold_is_per_node(self) -> None:
+        slow = _fake_node("Phone", [False, False], down_polls_for_alert=4)
+        default = _fake_node("Server", [False, False])
+        monitor = _monitor([slow, default])
+
+        monitor.check_monitored_nodes()
+        assert monitor.check_monitored_nodes() == {"Server"}
+
+    def test_unknown_probe_keeps_down_only_past_the_nodes_own_threshold(self) -> None:
+        node = _fake_node(
+            "Phone",
+            [False, False, ProbeUnavailable("x"), False, False, ProbeUnavailable("x")],
+            down_polls_for_alert=4,
+        )
+        monitor = _monitor([node])
+
+        results = [monitor.check_monitored_nodes() for _ in range(6)]
+        assert results == [set(), set(), set(), set(), {"Phone"}, {"Phone"}]
 
 
 class TestUnknownProbe:

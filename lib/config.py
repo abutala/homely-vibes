@@ -94,6 +94,8 @@ class NodeConfig:
     host: str | None = None
     # Deco-probed nodes are found by this MAC on the Deco client list
     mac: str | None = None
+    # Failed polls in a row before the heartbeat alerts; unset uses the monitor's default
+    down_polls_for_alert: int | None = None
 
 
 @dataclass
