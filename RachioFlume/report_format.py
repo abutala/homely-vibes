@@ -106,10 +106,10 @@ def format_text(report: WaterUsageReport) -> str:
         lines.append("No problems.")
     ran = _ran(report)
     if ran:
-        lines += ["", f"{'Zone':<8} {'Min':>5} {'Gal':>5} {'GPM':>5}"]
+        lines += ["", f"{'Zone':<8} {'Min':>5} {'Gal':>5} {'GPM':>11}"]
         lines.extend(
             f"{z.zone_name[:8]:<8} {z.total_duration_minutes:>5.0f} "
-            f"{z.total_water_gallons:>5.0f} {z.average_flow_rate_gpm:>5.1f}"
+            f"{z.total_water_gallons:>5.0f} {_gpm(z):>11}"
             for z in ran
         )
     if report.soil:
@@ -143,6 +143,12 @@ def _problem_box(found: List[Problem]) -> str:
     )
 
 
+def _gpm(z: ZoneStats) -> str:
+    """Measured GPM, then the configured baseline (no alert slack) in brackets: "4.24(1.58)"."""
+    measured = f"{z.average_flow_rate_gpm:.2f}"
+    return f"{measured}({z.baseline_gpm:g})" if z.baseline_gpm else measured
+
+
 def _flagged(z: ZoneStats) -> bool:
     return bool(z.alert_sessions) or z.total_water_gallons == 0
 
@@ -160,7 +166,7 @@ def _zone_table(ran: List[ZoneStats]) -> str:
         f'<td style="{CELL}">{escape(z.zone_name)}</td>'
         f'<td style="{NUM}">{z.total_duration_minutes:.0f}</td>'
         f'<td style="{NUM}">{z.total_water_gallons:.0f}</td>'
-        f'<td style="{NUM}">{z.average_flow_rate_gpm:.1f}</td></tr>'
+        f'<td style="{NUM}">{_gpm(z)}</td></tr>'
         for z in ran
     )
     return (

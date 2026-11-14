@@ -106,3 +106,14 @@ def test_html_escapes_zone_names() -> None:
     html = rf.format_html(report)
     assert "&lt;b&gt;Z1&lt;/b&gt;" in html
     assert "<b>Z1</b>" not in html
+
+
+def test_gpm_shows_the_configured_baseline_in_brackets() -> None:
+    z8 = _zone(8, "Z8 BD", 1, 15.0, 63, 4.24, thr=1.8, alerts=1)
+    z8.baseline_gpm = 1.58
+    no_baseline = _zone(1, "Z1 FS", 1, 6.1, 41, 6.66)
+    report = _report([z8, no_baseline])
+    html = rf.format_html(report)
+    assert ">4.24(1.58)</td>" in html
+    assert ">6.66</td>" in html
+    assert "4.24(1.58)" in rf.format_text(report)
