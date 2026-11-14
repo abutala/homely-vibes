@@ -33,6 +33,7 @@ class ZoneStats:
     alert_sessions: int
     note: str = ""  # why the zone did not run in the period; "" when it ran
     problem: bool = False  # an idle zone that needs a look (missed run, valve offline)
+    baseline_gpm: float = 0.0  # configured avg_gpm, before the alert slack; 0.0 when none
 
 
 @dataclass
@@ -280,6 +281,7 @@ class WeeklyReporter:
                 average_flow_rate_gpm=round(stat["avg_flow_rate"] or 0, 2),
                 threshold_gpm=threshold_gpm,
                 alert_sessions=ctrl_alerts.get(stat["zone_number"], 0),
+                baseline_gpm=stat_zt.avg_gpm if stat_zt else 0.0,
             )
             formatted_zones.append(zone_stats_obj)
 
@@ -325,9 +327,10 @@ class WeeklyReporter:
                         (v["duration_sec_total"] / max(v["sessions"], 1)) / 60.0, 1
                     ),
                     total_water_gallons=round(v["gal_total"], 1),
-                    average_flow_rate_gpm=round(avg_gpm, 1),
+                    average_flow_rate_gpm=round(avg_gpm, 2),
                     threshold_gpm=threshold_gpm,
                     alert_sessions=hose_alerts.get((label, name), 0),
+                    baseline_gpm=zt.avg_gpm if zt else 0.0,
                 )
             )
 

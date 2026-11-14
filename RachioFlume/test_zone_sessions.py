@@ -326,6 +326,7 @@ class TestWeeklyReportAlerts:
 
         (zone,) = report.zones
         assert zone.threshold_gpm == 1.0
+        assert zone.baseline_gpm == 0.5
         assert zone.alert_sessions == 1
 
     def test_runs_shorter_than_min_runtime_are_not_counted_as_alerts(
