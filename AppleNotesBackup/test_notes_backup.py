@@ -18,7 +18,9 @@ from AppleNotesBackup.notes_backup import (
     note_filename,
     parse_stream,
     prune_stale,
+    RunLockBusy,
     run_export,
+    run_lock,
     write_notes,
 )
 
@@ -349,3 +351,36 @@ def test_export_notes_kills_notes_when_quit_times_out() -> None:
 
     assert export_notes(timeout=5, runner=runner_with_hung_quit, sleep=_no_sleep) == "STREAM"
     assert "pkill Notes" in runner.programs()
+
+
+# ── run_lock ──────────────────────────────────────────────────────────────────
+
+
+def test_run_lock_waits_for_holder_then_fails_after_budget(tmp_path: Path) -> None:
+    lock = tmp_path / "notes.lock"
+    waits: list[float] = []
+    with run_lock(lock, wait_seconds=10):
+        with pytest.raises(RunLockBusy):
+            with run_lock(lock, wait_seconds=10, sleep=waits.append):
+                pass
+    assert sum(waits) >= 10  # polled for the whole budget before giving up
+
+
+def test_run_lock_is_free_after_holder_exits(tmp_path: Path) -> None:
+    lock = tmp_path / "notes.lock"
+    with run_lock(lock, wait_seconds=0):
+        pass
+    with run_lock(lock, wait_seconds=0):
+        pass
+
+
+def test_run_lock_acquires_once_holder_releases(tmp_path: Path) -> None:
+    lock = tmp_path / "notes.lock"
+    holder = run_lock(lock, wait_seconds=0)
+    holder.__enter__()
+
+    def release_on_first_wait(_: float) -> None:
+        holder.__exit__(None, None, None)
+
+    with run_lock(lock, wait_seconds=60, sleep=release_on_first_wait):
+        pass

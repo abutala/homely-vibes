@@ -494,6 +494,9 @@ apple_notes_backup:
   git_remote: "origin"        # remote to push to after commit; "" skips push
   git_branch: "main"          # branch to commit/push
   osascript_timeout_seconds: 300   # Notes.app export can be slow with many notes
+  # One run at a time: nightly-sync and daily-digest both run this script.
+  lock_file: "~/.cache/apple_notes_backup.lock"
+  lock_wait_seconds: 900           # > a worst-case run: two exports + a Notes restart
 
 # === Constants ===
 my_external_ip: "hoiboi.tplinkdns.com"

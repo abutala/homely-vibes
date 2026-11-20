@@ -20,6 +20,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
+import fcntl
 import hashlib
 import os
 import subprocess
@@ -27,7 +29,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Iterator
 
 from lib.config import get_config
 from lib.logger import get_logger
@@ -66,6 +68,45 @@ Sleep = Callable[[float], None]
 
 class NotesUnresponsive(RuntimeError):
     """Notes.app did not answer an Apple Event in time (-1712)."""
+
+
+class RunLockBusy(RuntimeError):
+    """Another backup run still held the lock when the wait budget ran out."""
+
+
+_LOCK_POLL_SECONDS = 5.0
+
+
+@contextlib.contextmanager
+def run_lock(path: Path, wait_seconds: float, sleep: Sleep = time.sleep) -> Iterator[None]:
+    """Hold an exclusive flock on `path`, waiting up to `wait_seconds` for another run.
+
+    Two routines (nightly-sync, daily-digest) run this script. Overlapping exports hit a
+    busy Notes.app, and one run's restart kills the other's export. The kernel drops the
+    lock when the process exits, so a crashed run never leaves a stale lock.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w") as handle:
+        waited = 0.0
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if waited >= wait_seconds:
+                    raise RunLockBusy(
+                        f"another notes backup still running after {waited:.0f}s"
+                    ) from None
+                if waited == 0:
+                    logger.info(
+                        "another notes backup is running; waiting up to %.0fs", wait_seconds
+                    )
+                sleep(_LOCK_POLL_SECONDS)
+                waited += _LOCK_POLL_SECONDS
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 @dataclass(frozen=True)
@@ -368,8 +409,10 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="export and report; no writes")
     args = parser.parse_args()
 
+    cfg = get_config().apple_notes_backup
     try:
-        backup(dry_run=args.dry_run)
+        with run_lock(Path(cfg.lock_file).expanduser(), cfg.lock_wait_seconds):
+            backup(dry_run=args.dry_run)
     except Exception as e:
         logger.error("Apple Notes backup failed: %s", e)
         # Backup silently not running is bad: actionable within hours -> P1.
