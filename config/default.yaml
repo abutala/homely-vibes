@@ -496,7 +496,7 @@ apple_notes_backup:
   osascript_timeout_seconds: 300   # Notes.app export can be slow with many notes
   # One run at a time: nightly-sync and daily-digest both run this script.
   lock_file: "~/.cache/apple_notes_backup.lock"
-  lock_wait_seconds: 900           # > a worst-case run: two exports + a Notes restart
+  lock_wait_seconds: 1200          # > a worst-case run: ~685s export path + ~480s git
 
 # === Constants ===
 my_external_ip: "hoiboi.tplinkdns.com"

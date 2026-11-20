@@ -409,8 +409,8 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="export and report; no writes")
     args = parser.parse_args()
 
-    cfg = get_config().apple_notes_backup
     try:
+        cfg = get_config().apple_notes_backup
         with run_lock(Path(cfg.lock_file).expanduser(), cfg.lock_wait_seconds):
             backup(dry_run=args.dry_run)
     except Exception as e:
