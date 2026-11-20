@@ -20,6 +20,12 @@ Learnings and landmines. How to use this module: [README.md](README.md).
   fingerprint of the note's stable id) anchors identity, so renaming a note in
   Notes.app shows up as a git **edit**, not delete+add. Without it, every rename
   would look like an accidental delete and bury the real ones.
+- **One run at a time (`flock`).** nightly-sync and daily-digest both run this
+  script. Two exports at once hit a busy Notes.app, and one run's restart kills
+  the other's export (2026-11-02; again on 2026-11-20 the digest posted while its
+  refresh still ran). `run_lock` waits up to `lock_wait_seconds` for the other run,
+  then fails loudly. The kernel drops the lock when a run exits, so a crash never
+  leaves a stale lock.
 
 ### Limitations (v1)
 

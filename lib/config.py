@@ -544,6 +544,8 @@ class AppleNotesBackupConfig:
     git_remote: str  # remote name to push to; empty string skips push
     git_branch: str  # branch to commit/push
     osascript_timeout_seconds: int
+    lock_file: str  # flock path shared by every run of the script
+    lock_wait_seconds: int  # how long a run waits for another to finish
 
 
 @dataclass
