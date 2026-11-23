@@ -4,10 +4,12 @@
 Two CSV files under `<paths.logging_dir>/power/`:
 - `power_samples.csv`: one row per manage_power poll (live watts). It adds no
   API calls: manage_power already fetches live_status each poll.
-- `power_daily.csv`: daily Wh from calendar_history (`home_wh` = total home use), written by this script's
-  CLI (one API call per run).
+- `power_daily.csv`: one row per day from calendar_history, written by this
+  script's CLI (one API call per month). Tesla returns 30-min intervals, which
+  this groups by day: `home_wh` (total home use, Wh) and `night_floor_w` (the
+  lowest 30-min average home load, in W, from 00:00 to 05:00: the idle floor).
 
-    uv run Tesla/power_log.py --days 30
+    uv run Tesla/power_log.py --months 12
 """
 
 import argparse
@@ -49,15 +51,27 @@ def sample_row(live: Dict[str, Any], now: float) -> Dict[str, Any]:
     return row
 
 
-def daily_rows(history: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Daily rows from a calendar_history response, with total home use in Wh."""
-    rows = []
-    for entry in history.get("time_series", []):
-        row: Dict[str, Any] = {"date": str(entry.get("timestamp", ""))[:10]}
-        row["home_wh"] = sum(entry.get(key, 0) or 0 for key in HOME_SOURCES)
-        row.update({k: v for k, v in entry.items() if k != "timestamp"})
-        rows.append(row)
-    return rows
+NIGHT_HOURS = range(0, 5)
+INTERVALS_PER_HOUR = 2  # calendar_history returns 30-min intervals
+
+
+def daily_rows(series: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Group calendar_history 30-min intervals into one row per day."""
+    days: Dict[str, Dict[str, Any]] = {}
+    for entry in series:
+        stamp = str(entry.get("timestamp", ""))
+        date, hour = stamp[:10], int(stamp[11:13] or 0)
+        home_wh = sum(entry.get(key, 0) or 0 for key in HOME_SOURCES)
+        day = days.setdefault(
+            date, {"date": date, "home_wh": 0, "grid_imported_wh": 0, "night_floor_w": None}
+        )
+        day["home_wh"] += home_wh
+        day["grid_imported_wh"] += entry.get("grid_energy_imported", 0) or 0
+        if hour in NIGHT_HOURS:
+            watts = home_wh * INTERVALS_PER_HOUR
+            floor = day["night_floor_w"]
+            day["night_floor_w"] = watts if floor is None else min(floor, watts)
+    return [days[d] for d in sorted(days)]
 
 
 def append_rows(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
@@ -82,15 +96,17 @@ def main() -> None:
     from Tesla.tesla_client import BatteryProduct, TeslaAPIClient
 
     parser = argparse.ArgumentParser(description="Write daily home energy to CSV")
-    parser.add_argument("--days", type=int, default=30, help="Days of history to fetch")
+    parser.add_argument("--months", type=int, default=12, help="Months of history to fetch")
     args = parser.parse_args()
 
     client = TeslaAPIClient()
     product = BatteryProduct(client.get_energy_sites()[0], client)
-    history = product.get_energy_history(days=args.days)
+    series: List[Dict[str, Any]] = []
+    for offset in range(args.months):
+        series += product.get_energy_month(months_ago=offset).get("time_series", [])
     path = power_dir() / "power_daily.csv"
     path.unlink(missing_ok=True)  # Tesla's history is the source of truth: rewrite it whole
-    rows = daily_rows(history)
+    rows = daily_rows(series)
     append_rows(path, rows)
     print(f"Wrote {len(rows)} days to {path}")
 
