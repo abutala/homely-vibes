@@ -165,8 +165,8 @@ def test_floor_drift_quiet_on_small_change_or_short_history() -> None:
 def test_floor_drift_skips_car_charging_nights() -> None:
     from Tesla.power_log import floor_drift
 
-    # Three all-night charges in the last week must not read as a rise.
-    recent = [450, 7400, 450, 7600, 450, 7300, 450, 450, 450, 450]
+    # Four all-night charges in the last week: unfiltered, the median would be 7.3 kW.
+    recent = [450] * 7 + [7400, 7600, 7300, 7500, 450, 450, 450]
     assert floor_drift(_nights([450] * 90 + recent), 50) is None
 
 
