@@ -5,7 +5,9 @@ Two CSV files under `<paths.logging_dir>/power/`:
 - `power_samples.csv`: one row per manage_power poll (live watts). It adds no
   API calls: manage_power already fetches live_status each poll.
 - `power_daily.csv`: one row per day from calendar_history, written by this
-  script's CLI (one API call per month). Tesla returns 30-min intervals, which
+  script's CLI (one API call per month). Each run merges by date: the fetched
+  days replace their old rows and older days stay, so a daily `--months 2` run
+  keeps the full history. Tesla returns 30-min intervals, which
   this groups by day: `home_wh` (total home use, Wh) and `night_floor_w` (the
   lowest 30-min average home load, in W, from 00:00 to 05:00: the idle floor).
 
@@ -88,6 +90,26 @@ def append_rows(path: Path, rows: Iterable[Dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def merge_daily(path: Path, rows: List[Dict[str, Any]]) -> int:
+    """Merge rows into the daily CSV by date: new rows replace old ones, older days stay.
+
+    Writes a temp file and renames it, so a crash never leaves a half-written history.
+    Returns the number of days in the file.
+    """
+    days: Dict[str, Dict[str, Any]] = {}
+    if path.exists():
+        with path.open(newline="") as f:
+            days = {row["date"]: row for row in csv.DictReader(f)}
+    days.update({row["date"]: row for row in rows})
+    if not days:
+        return 0
+    tmp = path.with_suffix(".tmp")
+    tmp.unlink(missing_ok=True)
+    append_rows(tmp, [days[d] for d in sorted(days)])
+    tmp.replace(path)
+    return len(days)
+
+
 def record_sample(live: Dict[str, Any], path: Optional[Path] = None) -> None:
     append_rows(path or power_dir() / "power_samples.csv", [sample_row(live, time.time())])
 
@@ -105,10 +127,9 @@ def main() -> None:
     for offset in range(args.months):
         series += product.get_energy_month(months_ago=offset).get("time_series", [])
     path = power_dir() / "power_daily.csv"
-    path.unlink(missing_ok=True)  # Tesla's history is the source of truth: rewrite it whole
     rows = daily_rows(series)
-    append_rows(path, rows)
-    print(f"Wrote {len(rows)} days to {path}")
+    total = merge_daily(path, rows)
+    print(f"Updated {len(rows)} days in {path} ({total} days in all)")
 
 
 if __name__ == "__main__":
