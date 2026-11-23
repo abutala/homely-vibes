@@ -9,6 +9,7 @@ from typing import Callable, List, Optional, Dict, Any, Tuple
 from lib.config import get_config, reset_config
 from lib.MyPushover import Pushover
 from Tesla.tesla_client import TeslaAPIClient, BatteryProduct
+from Tesla.power_log import POWER_FIELDS, record_sample
 from lib.logger import get_logger
 
 
@@ -74,6 +75,7 @@ class PowerwallManager:
         *,
         pushover: Optional["Pushover"] = None,
         clock: Callable[[], float] = time.time,
+        record_power: Callable[[Dict[str, Any]], None] = record_sample,
     ):
         # Injectable Pushover so tests can pass a recording double and never
         # touch real config or the maintainer's phone. See CLAUDE.md "NEVER use patch()".
@@ -91,6 +93,7 @@ class PowerwallManager:
             pushover = Pushover(cfg.pushover.user, cfg.pushover.tokens["Powerwall"])
         self.pushover = pushover
         self.clock = clock
+        self.record_power = record_power
         # A reading the API cannot supply is never written to history, so these
         # two timestamps are the only memory that an outage is in progress.
         self.bad_read_since: Optional[float] = None
@@ -204,6 +207,13 @@ class PowerwallManager:
             "can_export": can_export,
             "can_grid_charge": can_grid_charge,
         }
+
+    def log_power(self, product: Any) -> None:
+        """Append live watts to the power CSV. A write failure never stops the control loop."""
+        try:
+            self.record_power({f: product.get(f) for f in POWER_FIELDS})
+        except Exception as e:
+            self.logger.warning(f"Power sample not recorded: {type(e).__name__}: {e}")
 
     def calculate_trigger_percentages(
         self, decision_point: DecisionPoint, current_time: Any, sleep_time: int
@@ -348,6 +358,7 @@ class PowerwallManager:
                 self.logger.debug("→ get_powerwall_data() start")
                 fetch_start = time.time()
                 data = self.get_powerwall_data(product)
+                self.log_power(product)
                 self.logger.debug(
                     f"← get_powerwall_data() done in {time.time() - fetch_start:.2f}s"
                 )
