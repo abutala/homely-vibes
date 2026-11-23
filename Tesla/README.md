@@ -14,6 +14,7 @@ A Python system for managing Tesla Powerwall operations via the **Tesla Fleet AP
 - **Pushover Notifications**: Alerts on mode/reserve changes
 - **Trail Stop Protection**: Trailing-stop logic for reserve management
 - **Comprehensive Logging**: Detailed logs under the configured `paths.logging_dir`
+- **Power Log**: each poll appends live watts (home, solar, grid, battery) to `<logging_dir>/power/power_samples.csv`, to track idle load. It reuses the poll's `live_status` call, so it adds no API calls
 
 ## Day-to-day Usage
 
@@ -22,6 +23,9 @@ Run from the project root.
 ```bash
 # Run the monitoring loop (long-running)
 uv run Tesla/manage_power.py --send-notifications --quiet
+
+# Daily home energy (Wh, as Tesla reports it) for the last 30 days → <logging_dir>/power/power_daily.csv
+uv run Tesla/power_log.py --days 30
 
 # Re-mint tokens if expired (refresh tokens last 90+ days; access tokens ~8 hr auto-refresh)
 uv run Tesla/tesla_auth.py

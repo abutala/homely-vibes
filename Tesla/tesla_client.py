@@ -18,6 +18,8 @@ import asyncio
 import json
 import os
 import threading
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar
 
 import aiohttp
@@ -192,6 +194,24 @@ class BatteryProduct:
         resp = self._client._run(call)
         self._data.update(resp.get("response", {}))
         return self
+
+    def get_energy_history(self, days: int) -> Dict[str, Any]:
+        """Daily energy totals (Wh) for the last `days` days, from calendar_history."""
+        tz = self._data.get("installation_time_zone") or "America/Los_Angeles"
+        end = datetime.now(ZoneInfo(tz)).replace(hour=23, minute=59, second=59, microsecond=0)
+        start = (end - timedelta(days=days)).replace(hour=0, minute=0, second=0)
+
+        async def call(oauth: TeslaFleetOAuth) -> Dict[str, Any]:
+            site = EnergySite(oauth, self.site_id)
+            return await site.energy_history(
+                period="day",
+                start_date=start.isoformat(),
+                end_date=end.isoformat(),
+                time_zone=tz,
+            )
+
+        resp = self._client._run(call)
+        return dict(resp.get("response", {}))
 
     def set_operation(self, mode: str) -> str:
         async def call(oauth: TeslaFleetOAuth) -> Dict[str, Any]:
