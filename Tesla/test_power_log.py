@@ -115,3 +115,24 @@ def test_manager_logs_power_from_battery_product() -> None:
     mgr = PowerwallManager("x", pushover=MagicMock(spec=Pushover), record_power=seen.append)
     mgr.log_power(product)
     assert seen[0]["load_power"] == 610
+
+
+def test_merge_daily_keeps_old_days_and_replaces_fetched_ones(tmp_path: Path) -> None:
+    from Tesla.power_log import merge_daily
+
+    path = tmp_path / "power" / "power_daily.csv"
+    old = [
+        {"date": "2025-12-01", "home_wh": 100, "grid_imported_wh": 1, "night_floor_w": 400},
+        {"date": "2026-11-22", "home_wh": 50, "grid_imported_wh": 2, "night_floor_w": 450},
+    ]
+    assert merge_daily(path, old) == 2
+    new = [
+        {"date": "2026-11-22", "home_wh": 60, "grid_imported_wh": 3, "night_floor_w": 460},
+        {"date": "2026-11-23", "home_wh": 70, "grid_imported_wh": 4, "night_floor_w": 470},
+    ]
+    assert merge_daily(path, new) == 3
+    with path.open() as f:
+        rows = list(csv.DictReader(f))
+    assert [r["date"] for r in rows] == ["2025-12-01", "2026-11-22", "2026-11-23"]
+    assert rows[1]["home_wh"] == "60"
+    assert not path.with_suffix(".tmp").exists()
