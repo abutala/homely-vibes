@@ -163,6 +163,16 @@ class TeslaAPIClient:
         return self._run(call)
 
 
+def month_end(now: datetime, months_ago: int) -> datetime:
+    """Last second of the month `months_ago` months before `now`; the current month ends now."""
+    if months_ago == 0:
+        return now.replace(microsecond=0)
+    first = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    for _ in range(months_ago - 1):
+        first = (first - timedelta(days=1)).replace(day=1)
+    return first - timedelta(seconds=1)
+
+
 class BatteryProduct:
     """Compatibility wrapper preserving the dict-like interface used by manage_power.py."""
 
@@ -195,20 +205,18 @@ class BatteryProduct:
         self._data.update(resp.get("response", {}))
         return self
 
-    def get_energy_history(self, days: int) -> Dict[str, Any]:
-        """Daily energy totals (Wh) for the last `days` days, from calendar_history."""
+    def get_energy_month(self, months_ago: int) -> Dict[str, Any]:
+        """One calendar month of 30-min energy intervals (Wh), from calendar_history.
+
+        period="month" returns the 30-min intervals of the month that holds end_date
+        (probed on aibo, 2026-11-23); period="day" returns only one day.
+        """
         tz = self._data.get("installation_time_zone") or "America/Los_Angeles"
-        end = datetime.now(ZoneInfo(tz)).replace(hour=23, minute=59, second=59, microsecond=0)
-        start = (end - timedelta(days=days)).replace(hour=0, minute=0, second=0)
+        end = month_end(datetime.now(ZoneInfo(tz)), months_ago)
 
         async def call(oauth: TeslaFleetOAuth) -> Dict[str, Any]:
             site = EnergySite(oauth, self.site_id)
-            return await site.energy_history(
-                period="day",
-                start_date=start.isoformat(),
-                end_date=end.isoformat(),
-                time_zone=tz,
-            )
+            return await site.energy_history(period="month", end_date=end.isoformat(), time_zone=tz)
 
         resp = self._client._run(call)
         return dict(resp.get("response", {}))

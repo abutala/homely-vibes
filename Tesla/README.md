@@ -24,8 +24,8 @@ Run from the project root.
 # Run the monitoring loop (long-running)
 uv run Tesla/manage_power.py --send-notifications --quiet
 
-# Daily home energy (Wh, as Tesla reports it) for the last 30 days → <logging_dir>/power/power_daily.csv
-uv run Tesla/power_log.py --days 30
+# Daily home energy (Wh) and overnight idle floor (W) for the last 12 months → <logging_dir>/power/power_daily.csv
+uv run Tesla/power_log.py --months 12
 
 # Re-mint tokens if expired (refresh tokens last 90+ days; access tokens ~8 hr auto-refresh)
 uv run Tesla/tesla_auth.py

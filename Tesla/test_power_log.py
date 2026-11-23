@@ -48,22 +48,39 @@ def test_append_rows_ignores_empty_list(tmp_path: Path) -> None:
     assert not path.exists()
 
 
-def test_daily_rows_sums_home_energy() -> None:
-    history = {
-        "time_series": [
-            {
-                "timestamp": "2026-11-22T00:00:00-08:00",
-                "consumer_energy_imported_from_grid": 4000,
-                "consumer_energy_imported_from_solar": 3000,
-                "consumer_energy_imported_from_battery": 7000,
-                "grid_energy_imported": 4100,
-            }
-        ]
-    }
-    (row,) = daily_rows(history)
-    assert row["date"] == "2026-11-22"
-    assert row["home_wh"] == 14000
-    assert row["grid_energy_imported"] == 4100
+def test_daily_rows_groups_intervals_and_finds_night_floor() -> None:
+    def interval(stamp: str, grid: int, battery: int) -> dict:
+        return {
+            "timestamp": stamp,
+            "consumer_energy_imported_from_grid": grid,
+            "consumer_energy_imported_from_battery": battery,
+            "grid_energy_imported": grid,
+        }
+
+    series = [
+        interval("2026-11-22T01:00:00-08:00", 0, 300),  # 600 W
+        interval("2026-11-22T03:30:00-08:00", 0, 250),  # 500 W: the floor
+        interval("2026-11-22T19:00:00-08:00", 900, 100),  # evening, not night
+        interval("2026-11-21T02:00:00-08:00", 0, 260),
+    ]
+    rows = daily_rows(series)
+    assert [r["date"] for r in rows] == ["2026-11-21", "2026-11-22"]
+    day = rows[1]
+    assert day["home_wh"] == 1550
+    assert day["grid_imported_wh"] == 900
+    assert day["night_floor_w"] == 500
+
+
+def test_month_end() -> None:
+    from datetime import datetime
+
+    from Tesla.tesla_client import month_end
+
+    now = datetime(2026, 11, 23, 9, 30, 15, 123)
+    assert month_end(now, 0) == datetime(2026, 11, 23, 9, 30, 15)
+    assert month_end(now, 1) == datetime(2026, 10, 31, 23, 59, 59)
+    assert month_end(now, 3) == datetime(2026, 8, 31, 23, 59, 59)
+    assert month_end(datetime(2026, 1, 5), 1) == datetime(2025, 12, 31, 23, 59, 59)
 
 
 def test_manager_logs_power_and_survives_write_failure() -> None:
