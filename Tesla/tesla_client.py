@@ -209,7 +209,7 @@ class BatteryProduct:
         """One calendar month of 30-min energy intervals (Wh), from calendar_history.
 
         period="month" returns the 30-min intervals of the month that holds end_date
-        (probed on aibo, 2026-11-23); period="day" returns only one day.
+        (probed against the live API, 2026-11-23); period="day" returns only one day.
         """
         tz = self._data.get("installation_time_zone") or "America/Los_Angeles"
         end = month_end(datetime.now(ZoneInfo(tz)), months_ago)
