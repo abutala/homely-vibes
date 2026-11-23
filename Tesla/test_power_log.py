@@ -83,3 +83,18 @@ def test_manager_logs_power_and_survives_write_failure() -> None:
 
     mgr = PowerwallManager("x", pushover=MagicMock(spec=Pushover), record_power=boom)
     mgr.log_power(product)  # must not raise
+
+
+def test_manager_logs_power_from_battery_product() -> None:
+    from typing import Any, cast
+    from unittest.mock import MagicMock
+
+    from lib.MyPushover import Pushover
+    from Tesla.manage_power import PowerwallManager
+    from Tesla.tesla_client import BatteryProduct
+
+    product = BatteryProduct({"energy_site_id": 1, "load_power": 610}, client=cast(Any, None))
+    seen: list = []
+    mgr = PowerwallManager("x", pushover=MagicMock(spec=Pushover), record_power=seen.append)
+    mgr.log_power(product)
+    assert seen[0]["load_power"] == 610
