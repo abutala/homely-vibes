@@ -4,7 +4,7 @@
 Two CSV files under `<paths.logging_dir>/power/`:
 - `power_samples.csv`: one row per manage_power poll (live watts). It adds no
   API calls: manage_power already fetches live_status each poll.
-- `power_daily.csv`: daily kWh from calendar_history, written by this script's
+- `power_daily.csv`: daily Wh from calendar_history (`home_wh` = total home use), written by this script's
   CLI (one API call per run).
 
     uv run Tesla/power_log.py --days 30
