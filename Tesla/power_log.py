@@ -7,7 +7,10 @@ Two CSV files under `<paths.logging_dir>/power/`:
 - `power_daily.csv`: one row per day from calendar_history, written by this
   script's CLI (one API call per month). Each run merges by date: the fetched
   days replace their old rows and older days stay, so a daily `--months 2` run
-  keeps the full history. Tesla returns 30-min intervals, which
+  keeps the full history. After the merge, through NodeCheck's Pushover: a P1
+  alert when the last 7 nights' floor median is more than
+  `tesla.idle_alert_threshold_w` above the 90 nights before, and on
+  `tesla.idle_report_weekday` a weekly heartbeat (idle floor, kWh/day). Tesla returns 30-min intervals, which
   this groups by day: `home_wh` (total home use, Wh) and `night_floor_w` (the
   lowest 30-min average home load, in W, from 00:00 to 05:00: the idle floor).
 
@@ -17,9 +20,10 @@ Two CSV files under `<paths.logging_dir>/power/`:
 import argparse
 import csv
 import os
+import statistics
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from lib.config import get_config
 
@@ -53,6 +57,9 @@ def sample_row(live: Dict[str, Any], now: float) -> Dict[str, Any]:
     return row
 
 
+CHARGING_W = 3000  # a night floor above this is the car charging all night, not idle load
+RECENT_DAYS = 7
+BASELINE_DAYS = 90
 NIGHT_HOURS = range(0, 5)
 INTERVALS_PER_HOUR = 2  # calendar_history returns 30-min intervals
 
@@ -110,6 +117,43 @@ def merge_daily(path: Path, rows: List[Dict[str, Any]]) -> int:
     return len(days)
 
 
+def idle_floors(rows: Iterable[Dict[str, Any]]) -> List[float]:
+    """Night floors by date, without the nights the car charged all night."""
+    return [
+        float(r["night_floor_w"])
+        for r in sorted(rows, key=lambda r: r["date"])
+        if r.get("night_floor_w") not in (None, "") and float(r["night_floor_w"]) < CHARGING_W
+    ]
+
+
+def floor_drift(rows: List[Dict[str, Any]], threshold_w: int) -> Optional[str]:
+    """Alert text when the recent night floor sits threshold_w above its baseline, else None.
+
+    Recent: median of the last RECENT_DAYS usable nights. Baseline: median of the
+    BASELINE_DAYS nights before them. Nights the car charged all night are skipped.
+    """
+    floors = idle_floors(rows)
+    recent, baseline = floors[-RECENT_DAYS:], floors[-RECENT_DAYS - BASELINE_DAYS : -RECENT_DAYS]
+    if len(recent) < RECENT_DAYS or len(baseline) < 30:
+        return None
+    now, before = statistics.median(recent), statistics.median(baseline)
+    if now - before <= threshold_w:
+        return None
+    return (
+        f"House idle power rose: night floor {now:.0f} W over the last {RECENT_DAYS} nights, "
+        f"vs {before:.0f} W over the {len(baseline)} before (+{now - before:.0f} W)."
+    )
+
+
+def weekly_report(rows: List[Dict[str, Any]]) -> str:
+    """Heartbeat text: idle floor and average daily use over the last RECENT_DAYS days."""
+    last = sorted(rows, key=lambda r: r["date"])[-RECENT_DAYS:]
+    floors = idle_floors(last)
+    floor = f"{statistics.median(floors):.0f} W" if floors else "n/a"
+    kwh = statistics.mean(float(r["home_wh"]) for r in last) / 1000 if last else 0.0
+    return f"Last {len(last)} days: idle floor {floor}, average use {kwh:.1f} kWh/day."
+
+
 def record_sample(live: Dict[str, Any], path: Optional[Path] = None) -> None:
     append_rows(path or power_dir() / "power_samples.csv", [sample_row(live, time.time())])
 
@@ -130,6 +174,35 @@ def main() -> None:
     rows = daily_rows(series)
     total = merge_daily(path, rows)
     print(f"Updated {len(rows)} days in {path} ({total} days in all)")
+    with path.open(newline="") as f:
+        history = list(csv.DictReader(f))
+    notify_power(history, today_weekday=time.localtime().tm_wday)
+
+
+def notify_power(
+    history: List[Dict[str, Any]],
+    today_weekday: int,
+    send: Optional[Callable[[str, int], None]] = None,
+) -> None:
+    """P1 alert on idle drift; on the report weekday, a weekly heartbeat. Through NodeCheck's Pushover."""
+    cfg = get_config().tesla
+    if send is None:
+        send = _nodecheck_pushover
+    alert = floor_drift(history, cfg.idle_alert_threshold_w)
+    if alert:
+        send(alert, 1)
+    if today_weekday == cfg.idle_report_weekday:
+        send(weekly_report(history), 0)
+
+
+def _nodecheck_pushover(message: str, priority: int) -> None:
+    from lib.MyPushover import Pushover
+
+    cfg = get_config()
+    Pushover(cfg.pushover.user, cfg.pushover.tokens["NodeCheck"]).send_message(
+        message, title="House idle power", priority=priority
+    )
+    print(message)
 
 
 if __name__ == "__main__":

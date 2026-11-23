@@ -136,3 +136,51 @@ def test_merge_daily_keeps_old_days_and_replaces_fetched_ones(tmp_path: Path) ->
     assert [r["date"] for r in rows] == ["2025-12-01", "2026-11-22", "2026-11-23"]
     assert rows[1]["home_wh"] == "60"
     assert not path.with_suffix(".tmp").exists()
+
+
+def _nights(floors: list) -> list:
+    from datetime import date, timedelta
+
+    start = date(2026, 1, 1)
+    return [
+        {"date": (start + timedelta(days=i)).isoformat(), "night_floor_w": str(w)}
+        for i, w in enumerate(floors)
+    ]
+
+
+def test_floor_drift_alerts_on_a_step_up() -> None:
+    from Tesla.power_log import floor_drift
+
+    alert = floor_drift(_nights([450] * 90 + [560] * 7), 50)
+    assert alert is not None and "+110 W" in alert
+
+
+def test_floor_drift_quiet_on_small_change_or_short_history() -> None:
+    from Tesla.power_log import floor_drift
+
+    assert floor_drift(_nights([450] * 90 + [495] * 7), 50) is None
+    assert floor_drift(_nights([450] * 20 + [600] * 7), 50) is None
+
+
+def test_floor_drift_skips_car_charging_nights() -> None:
+    from Tesla.power_log import floor_drift
+
+    # Three all-night charges in the last week must not read as a rise.
+    recent = [450, 7400, 450, 7600, 450, 7300, 450, 450, 450, 450]
+    assert floor_drift(_nights([450] * 90 + recent), 50) is None
+
+
+def test_notify_power_p1_on_drift_and_weekly_heartbeat() -> None:
+    from Tesla.power_log import notify_power
+
+    history = _nights([450] * 90 + [560] * 7)
+    for r in history:
+        r["home_wh"] = "24000"
+    sent: list = []
+    notify_power(history, today_weekday=0, send=lambda m, p: sent.append((p, m)))
+    assert [p for p, _ in sent] == [1, 0]
+    assert "idle floor 560 W, average use 24.0 kWh/day" in sent[1][1]
+
+    sent.clear()
+    notify_power(history, today_weekday=3, send=lambda m, p: sent.append((p, m)))
+    assert [p for p, _ in sent] == [1]

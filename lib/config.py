@@ -185,6 +185,8 @@ class TeslaConfig:
     staleness_alert_after_min: int
     staleness_realert_hours: int
     decision_points: list[OpModeConfig]
+    idle_alert_threshold_w: int = 50  # P1 when the night floor rises this much
+    idle_report_weekday: int = 0  # weekly heartbeat day, 0 = Monday
 
 
 @dataclass
