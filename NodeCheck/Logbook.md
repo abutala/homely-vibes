@@ -4,6 +4,15 @@ Learnings and landmines. How to use this module: [README.md](README.md).
 
 ---
 
+## The clip purge must fail loudly on a dead mount (2026-11-28)
+
+On a day with no network, the purge failed in 60 ms with "cannot access local variable
+'pushover_msg'": entering the mount raised before any alert text was set, and the `finally`
+that sends the alert crashed on it, hiding the real error. Two rules now hold. Every path
+builds its alert text, and a failure to send the alert is logged, never raised. And the root
+is read once before the walk: `Path.rglob` skips a directory it cannot read without an error,
+so a stale mount would otherwise report "no old files" and pass.
+
 ## A phone on the Deco list drops off for an hour or two — give the node its own threshold (2026-11-10)
 
 A phone watched as a `deco` node left the Deco client list for two or three hourly polls many
